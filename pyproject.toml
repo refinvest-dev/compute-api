@@ -1,7 +1,7 @@
 [project]
 name = "refinvest"
 version = "0.1.0"
-description = "Add your description here"
+description = "Internal, deterministic computation service for refinvest"
 readme = "README.md"
 authors = [
     { name = "liveforpresent", email = "dailynsteady@gmail.com" }
@@ -13,6 +13,18 @@ dependencies = [
 
 [project.scripts]
 refinvest = "refinvest:main"
+
+[tool.pyright]
+include = ["src"]
+pythonVersion = "3.11"
+typeCheckingMode = "strict"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
 
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]
