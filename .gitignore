@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Local pull-request draft; intentionally not versioned.
+PR_BODY.md
