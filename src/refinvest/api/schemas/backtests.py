@@ -2,6 +2,7 @@
 
 from datetime import date
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -160,3 +161,16 @@ class CreateBacktestRequestTransport(BaseModel):
             period=self.period.to_domain(),
             dataset_snapshot_id=self.dataset_snapshot_id,
         )
+
+
+class BacktestAcceptedTransport(BaseModel):
+    run_id: str = Field(alias="runId")
+    strategy_version_id: str | None = Field(default=None, alias="strategyVersionId")
+    status: Literal["PENDING"]
+
+
+class BacktestStatusTransport(BaseModel):
+    run_id: str = Field(alias="runId")
+    strategy_version_id: str | None = Field(default=None, alias="strategyVersionId")
+    status: Literal["PENDING", "RUNNING", "COMPLETED", "FAILED"]
+    dataset_snapshot_id: str | None = Field(default=None, alias="datasetSnapshotId")

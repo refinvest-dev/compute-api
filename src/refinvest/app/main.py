@@ -1,9 +1,25 @@
 """FastAPI application entrypoint."""
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
+from refinvest.api.routes.backtests import router as backtests_router
 from refinvest.api.routes.health import router as health_router
+from refinvest.api.schemas.errors import map_transport_validation_error
+
+
+def request_validation_error_handler(
+    request: Request,
+    error: Exception,
+) -> JSONResponse:
+    """Keep request-shape validation aligned with the OpenAPI 400 contract."""
+    del request
+    if not isinstance(error, RequestValidationError):
+        raise error
+    response = map_transport_validation_error(error)
+    return JSONResponse(status_code=400, content=response.model_dump(by_alias=True))
 
 
 def create_app() -> FastAPI:
@@ -13,6 +29,8 @@ def create_app() -> FastAPI:
     # Deployment probes are deliberately unauthenticated. Future Core-facing
     # contract routes must apply app.security.require_internal_api_key.
     application.include_router(health_router)
+    application.include_router(backtests_router)
+    application.add_exception_handler(RequestValidationError, request_validation_error_handler)
     return application
 
 
