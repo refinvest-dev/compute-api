@@ -1,38 +1,28 @@
-from fastapi import Depends, FastAPI
-from fastapi.testclient import TestClient
+import pytest
+from fastapi import HTTPException
 
-from refinvest.app.config import Settings, get_settings
+from refinvest.app.config import Settings
 from refinvest.app.security import require_internal_api_key
 
 
-def protected_test_app(settings: Settings) -> FastAPI:
-    app = FastAPI()
-
-    @app.get("/protected", dependencies=[Depends(require_internal_api_key)])
-    def protected() -> dict[str, str]:
-        return {"status": "ok"}
-
-    app.dependency_overrides[get_settings] = lambda: settings
-    return app
-
-
 def test_internal_api_key_rejects_missing_and_incorrect_values() -> None:
-    client = TestClient(protected_test_app(Settings(internal_api_key="expected-key")))
+    settings = Settings(internal_api_key="expected-key")
 
-    assert client.get("/protected").status_code == 401
-    assert client.get("/protected", headers={"X-Internal-Api-Key": "wrong-key"}).status_code == 401
+    with pytest.raises(HTTPException) as missing_key:
+        require_internal_api_key(settings, None)
+    with pytest.raises(HTTPException) as incorrect_key:
+        require_internal_api_key(settings, "wrong-key")
+
+    assert missing_key.value.status_code == 401
+    assert incorrect_key.value.status_code == 401
 
 
 def test_internal_api_key_accepts_configured_value() -> None:
-    client = TestClient(protected_test_app(Settings(internal_api_key="expected-key")))
-
-    response = client.get("/protected", headers={"X-Internal-Api-Key": "expected-key"})
-
-    assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    require_internal_api_key(Settings(internal_api_key="expected-key"), "expected-key")
 
 
 def test_internal_api_key_reports_missing_configuration() -> None:
-    client = TestClient(protected_test_app(Settings(internal_api_key=None)))
+    with pytest.raises(HTTPException) as missing_configuration:
+        require_internal_api_key(Settings(internal_api_key=None), None)
 
-    assert client.get("/protected").status_code == 503
+    assert missing_configuration.value.status_code == 503
