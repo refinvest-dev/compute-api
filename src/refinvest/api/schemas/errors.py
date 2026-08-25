@@ -2,6 +2,7 @@
 
 from typing import Literal
 
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from refinvest.engine.validation import StrategyValidationError
@@ -24,7 +25,9 @@ def map_strategy_validation_error(error: StrategyValidationError) -> ValidationE
     )
 
 
-def map_transport_validation_error(error: ValidationError) -> ValidationErrorResponse:
+def map_transport_validation_error(
+    error: ValidationError | RequestValidationError,
+) -> ValidationErrorResponse:
     """Map transport shape errors to the same contract error representation."""
     return ValidationErrorResponse(
         message="Backtest request validation failed.",

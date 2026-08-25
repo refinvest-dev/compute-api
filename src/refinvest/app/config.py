@@ -9,10 +9,14 @@ class Settings:
     """Runtime settings supplied by the deployment environment."""
 
     internal_api_key: str | None
+    database_url: str | None = None
 
     @classmethod
     def from_environment(cls) -> "Settings":
-        return cls(internal_api_key=getenv("REFINVEST_INTERNAL_API_KEY") or None)
+        return cls(
+            internal_api_key=getenv("REFINVEST_INTERNAL_API_KEY") or None,
+            database_url=getenv("REFINVEST_DATABASE_URL") or None,
+        )
 
 
 def get_settings() -> Settings:
