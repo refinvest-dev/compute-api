@@ -51,3 +51,15 @@ class PostgresBacktestJobRepository:
             dataset_snapshot_id=dataset_snapshot_id,
             status=BacktestJobStatus(status_value),
         )
+
+    def pin_dataset_snapshot(self, run_id: str, snapshot_id: str) -> bool:
+        with connect(self._database_url) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE compute_backtest_jobs
+                SET resolved_dataset_snapshot_id = %s
+                WHERE run_id = %s AND status = 'PENDING' AND resolved_dataset_snapshot_id IS NULL
+                """,
+                (snapshot_id, run_id),
+            )
+            return cursor.rowcount == 1
