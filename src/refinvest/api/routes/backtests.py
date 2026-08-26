@@ -10,6 +10,7 @@ from refinvest.api.schemas.backtests import (
     BacktestAcceptedTransport,
     BacktestStatusTransport,
     CreateBacktestRequestTransport,
+    FatalErrorCodeTransport,
 )
 from refinvest.api.schemas.errors import map_strategy_validation_error
 from refinvest.app.security import require_internal_api_key
@@ -42,7 +43,9 @@ def create_backtest(
     )
 
 
-@router.get("/{run_id}", response_model=BacktestStatusTransport)
+@router.get(
+    "/{run_id}", response_model=BacktestStatusTransport, response_model_exclude_none=True
+)
 def get_backtest_status(
     run_id: str,
     repository: Annotated[BacktestJobRepository, Depends(get_backtest_job_repository)],
@@ -57,4 +60,6 @@ def get_backtest_status(
         strategyVersionId=job.strategy_version_id,
         datasetSnapshotId=job.dataset_snapshot_id,
         status=job.status.value,
+        failureReason=job.failure_reason,
+        errorCode=FatalErrorCodeTransport(job.error_code) if job.error_code is not None else None,
     )

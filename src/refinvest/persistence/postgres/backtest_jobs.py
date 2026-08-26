@@ -36,7 +36,8 @@ class PostgresBacktestJobRepository:
             cursor.execute(
                 """
                 SELECT run_id, strategy_version_id,
-                    COALESCE(resolved_dataset_snapshot_id, dataset_snapshot_id), status
+                    COALESCE(resolved_dataset_snapshot_id, dataset_snapshot_id), status,
+                    failure_reason, error_code
                 FROM compute_backtest_jobs
                 WHERE run_id = %s
                 """,
@@ -45,14 +46,24 @@ class PostgresBacktestJobRepository:
             row = cursor.fetchone()
         if row is None:
             return None
-        run_id_value, strategy_version_id, dataset_snapshot_id, status_value = cast(
-            tuple[str, str | None, str | None, str], row
+        status_row = cast(
+            tuple[str, str | None, str | None, str, str | None, str | None], row
         )
+        (
+            run_id_value,
+            strategy_version_id,
+            dataset_snapshot_id,
+            status_value,
+            failure_reason,
+            error_code,
+        ) = status_row
         return BacktestJobStatusView(
             run_id=run_id_value,
             strategy_version_id=strategy_version_id,
             dataset_snapshot_id=dataset_snapshot_id,
             status=BacktestJobStatus(status_value),
+            failure_reason=failure_reason,
+            error_code=error_code,
         )
 
     def pin_dataset_snapshot(self, run_id: str, snapshot_id: str) -> bool:
