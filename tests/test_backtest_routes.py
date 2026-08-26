@@ -90,11 +90,6 @@ def test_backtest_submission_is_authenticated_and_durable() -> None:
             "status": "PENDING",
             "datasetSnapshotId": "snapshot-1",
         }
-
-
-def test_backtest_submission_maps_dsl_validation_to_400() -> None:
-    repository = FakeBacktestJobRepository()
-    with configured_client(repository) as client:
         payload = valid_request()
         payload["strategyVersion"] = {
             **payload["strategyVersion"],
@@ -111,4 +106,4 @@ def test_backtest_submission_maps_dsl_validation_to_400() -> None:
         )
         assert response.status_code == 400
         assert response.json()["errorCode"] == "DSL_INVALID"
-        assert repository.jobs == {}
+        assert len(repository.jobs) == 1
