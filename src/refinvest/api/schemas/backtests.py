@@ -48,6 +48,14 @@ class DuplicateEntryTransport(StrEnum):
     IGNORE = "IGNORE"
 
 
+class FatalErrorCodeTransport(StrEnum):
+    MISSING_REQUIRED_DATA = "MISSING_REQUIRED_DATA"
+    DATASET_CORRUPTION = "DATASET_CORRUPTION"
+    CALENDAR_RESOLUTION_FAILED = "CALENDAR_RESOLUTION_FAILED"
+    PRICE_DATA_MISSING = "PRICE_DATA_MISSING"
+    DSL_INVALID = "DSL_INVALID"
+
+
 class MetricReferenceTransport(BaseModel):
     asset: AssetSymbolTransport
     metric: MetricTypeTransport
@@ -174,3 +182,5 @@ class BacktestStatusTransport(BaseModel):
     strategy_version_id: str | None = Field(default=None, alias="strategyVersionId")
     status: Literal["PENDING", "RUNNING", "COMPLETED", "FAILED"]
     dataset_snapshot_id: str | None = Field(default=None, alias="datasetSnapshotId")
+    failure_reason: str | None = Field(default=None, alias="failureReason")
+    error_code: FatalErrorCodeTransport | None = Field(default=None, alias="errorCode")

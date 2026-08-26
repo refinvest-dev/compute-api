@@ -9,6 +9,7 @@ from refinvest.app.main import app
 from refinvest.application.backtests import (
     BacktestJob,
     BacktestJobRepository,
+    BacktestJobStatus,
     BacktestJobStatusView,
 )
 
@@ -16,11 +17,14 @@ from refinvest.application.backtests import (
 class FakeBacktestJobRepository:
     def __init__(self) -> None:
         self.jobs: dict[str, BacktestJob] = {}
+        self.status_views: dict[str, BacktestJobStatusView] = {}
 
     def create(self, job: BacktestJob) -> None:
         self.jobs[job.run_id] = job
 
     def get(self, run_id: str) -> BacktestJobStatusView | None:
+        if run_id in self.status_views:
+            return self.status_views[run_id]
         job = self.jobs.get(run_id)
         if job is None:
             return None
@@ -107,3 +111,26 @@ def test_backtest_submission_is_authenticated_and_durable() -> None:
         assert response.status_code == 400
         assert response.json()["errorCode"] == "DSL_INVALID"
         assert len(repository.jobs) == 1
+
+
+def test_failed_backtest_status_includes_documented_failure_fields() -> None:
+    repository = FakeBacktestJobRepository()
+    repository.status_views["run-failed"] = BacktestJobStatusView(
+        run_id="run-failed",
+        strategy_version_id="strategy-v1",
+        dataset_snapshot_id="snapshot-1",
+        status=BacktestJobStatus.FAILED,
+        failure_reason="The pinned DatasetSnapshot is unavailable.",
+        error_code="MISSING_REQUIRED_DATA",
+    )
+    with configured_client(repository) as client:
+        response = client.get("/backtests/run-failed", headers={"X-Internal-Api-Key": "test-key"})
+    assert response.status_code == 200
+    assert response.json() == {
+        "runId": "run-failed",
+        "strategyVersionId": "strategy-v1",
+        "datasetSnapshotId": "snapshot-1",
+        "status": "FAILED",
+        "failureReason": "The pinned DatasetSnapshot is unavailable.",
+        "errorCode": "MISSING_REQUIRED_DATA",
+    }

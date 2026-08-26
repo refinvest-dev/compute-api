@@ -32,6 +32,8 @@ class BacktestJobStatusView:
     strategy_version_id: str | None
     dataset_snapshot_id: str | None
     status: BacktestJobStatus
+    failure_reason: str | None = None
+    error_code: str | None = None
 
 
 class BacktestJobRepository(Protocol):
