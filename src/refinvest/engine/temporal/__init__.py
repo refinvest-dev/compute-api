@@ -4,6 +4,7 @@ from refinvest.engine.temporal.sessions import (
     TemporalResolutionError,
     resolve_holding_exit_signal_session,
     resolve_lagged_signal_session,
+    resolve_metric_anchor_session,
     resolve_next_execution_session,
 )
 
@@ -11,5 +12,6 @@ __all__ = [
     "TemporalResolutionError",
     "resolve_holding_exit_signal_session",
     "resolve_lagged_signal_session",
+    "resolve_metric_anchor_session",
     "resolve_next_execution_session",
 ]
