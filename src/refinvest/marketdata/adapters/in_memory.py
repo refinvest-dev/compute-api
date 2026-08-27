@@ -47,6 +47,15 @@ class InMemorySnapshotCalendar:
                 "The selected DatasetSnapshot lacks an AssetSession calendar classification."
             ) from error
 
+    def expected_sessions(self, asset: str) -> tuple[date, ...]:
+        return tuple(
+            sorted(
+                asset_session.session_date
+                for asset_session, state in self._sessions.items()
+                if asset_session.asset == asset and state is CalendarSessionState.EXPECTED
+            )
+        )
+
 
 class InMemorySnapshotDailyBars:
     """One immutable set of canonical Daily Bars for one DatasetSnapshot."""
@@ -64,6 +73,7 @@ class InMemorySnapshotDailyBars:
                     "A DatasetSnapshot cannot contain duplicate AssetSession Daily Bars."
                 )
             self._bars[bar.asset_session] = bar
+
     @property
     def asset_sessions(self) -> frozenset[AssetSession]:
         return frozenset(self._bars)
