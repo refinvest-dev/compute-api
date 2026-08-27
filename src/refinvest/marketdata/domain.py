@@ -50,6 +50,10 @@ class CompletedAssetSession:
     asset_session: AssetSession
     completed_at: datetime
 
+    def __post_init__(self) -> None:
+        if self.completed_at.tzinfo is not UTC:
+            raise ValueError("completed_at must be a timezone-aware UTC datetime.")
+
 
 @dataclass(frozen=True)
 class CalendarProvenance:
