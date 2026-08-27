@@ -1,7 +1,7 @@
 """Canonical, vendor-independent Daily Bar values."""
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from enum import StrEnum
 
@@ -28,6 +28,27 @@ def calendar_for_asset(asset: str) -> AssetCalendar:
 class CalendarSessionState(StrEnum):
     EXPECTED = "EXPECTED"
     NON_TRADING = "NON_TRADING"
+
+
+@dataclass(frozen=True)
+class CalendarSession:
+    state: CalendarSessionState
+    completed_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if self.state is CalendarSessionState.EXPECTED:
+            if self.completed_at is None:
+                raise ValueError("An expected AssetSession must include completed_at.")
+            if self.completed_at.tzinfo is not UTC:
+                raise ValueError("completed_at must be a timezone-aware UTC datetime.")
+        elif self.completed_at is not None:
+            raise ValueError("A non-trading AssetSession must not include completed_at.")
+
+
+@dataclass(frozen=True)
+class CompletedAssetSession:
+    asset_session: AssetSession
+    completed_at: datetime
 
 
 @dataclass(frozen=True)

@@ -8,7 +8,9 @@ from refinvest.marketdata.domain import (
     AssetCalendar,
     AssetSession,
     CalendarProvenance,
+    CalendarSession,
     CalendarSessionState,
+    CompletedAssetSession,
     DailyBar,
     DailyBarAvailability,
     DailyBarLookup,
@@ -27,19 +29,40 @@ class InMemorySnapshotCalendar:
         self,
         snapshot_id: str,
         provenance: CalendarProvenance,
-        sessions: Mapping[AssetSession, CalendarSessionState],
+        sessions: Mapping[AssetSession, CalendarSession],
     ) -> None:
         self.snapshot_id = snapshot_id
         self.provenance = provenance
         self._sessions = dict(sessions)
-        for asset_session, state in self._sessions.items():
+        for asset_session, session in self._sessions.items():
             if (
                 calendar_for_asset(asset_session.asset) is AssetCalendar.CRYPTO_UTC
-                and state is not CalendarSessionState.EXPECTED
+                and session.state is not CalendarSessionState.EXPECTED
             ):
                 raise ValueError("CRYPTO_UTC sessions must always be expected.")
+        self._validate_completion_ordering()
 
     def session_state(self, asset_session: AssetSession) -> CalendarSessionState:
+        return self._session(asset_session).state
+
+    def expected_sessions(self, asset: str) -> tuple[date, ...]:
+        return tuple(
+            completed.asset_session.session_date
+            for completed in self.expected_session_completions(asset)
+        )
+
+    def expected_session_completions(self, asset: str) -> tuple[CompletedAssetSession, ...]:
+        expected_sessions: list[CompletedAssetSession] = []
+        for asset_session, session in self._sessions.items():
+            if asset_session.asset != asset or session.state is not CalendarSessionState.EXPECTED:
+                continue
+            assert session.completed_at is not None
+            expected_sessions.append(CompletedAssetSession(asset_session, session.completed_at))
+        return tuple(
+            sorted(expected_sessions, key=lambda session: session.asset_session.session_date)
+        )
+
+    def _session(self, asset_session: AssetSession) -> CalendarSession:
         try:
             return self._sessions[asset_session]
         except KeyError as error:
@@ -47,14 +70,15 @@ class InMemorySnapshotCalendar:
                 "The selected DatasetSnapshot lacks an AssetSession calendar classification."
             ) from error
 
-    def expected_sessions(self, asset: str) -> tuple[date, ...]:
-        return tuple(
-            sorted(
-                asset_session.session_date
-                for asset_session, state in self._sessions.items()
-                if asset_session.asset == asset and state is CalendarSessionState.EXPECTED
-            )
-        )
+    def _validate_completion_ordering(self) -> None:
+        assets = {asset_session.asset for asset_session in self._sessions}
+        for asset in assets:
+            completions = self.expected_session_completions(asset)
+            if any(
+                later.completed_at <= earlier.completed_at
+                for earlier, later in zip(completions, completions[1:], strict=False)
+            ):
+                raise ValueError("Expected AssetSession completion times must be strictly ordered.")
 
 
 class InMemorySnapshotDailyBars:

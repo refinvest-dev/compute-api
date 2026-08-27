@@ -3,7 +3,12 @@
 from datetime import date
 from typing import Protocol
 
-from refinvest.marketdata.domain import DailyBar, DailyBarAvailability, DailyBarLookup
+from refinvest.marketdata.domain import (
+    CompletedAssetSession,
+    DailyBar,
+    DailyBarAvailability,
+    DailyBarLookup,
+)
 
 
 class MissingRequiredMarketDataError(ValueError):
@@ -20,6 +25,8 @@ class SessionCalendarPort(Protocol):
     """Immutable expected-session sequence for one pinned DatasetSnapshot."""
 
     def expected_sessions(self, asset: str) -> tuple[date, ...]: ...
+
+    def expected_session_completions(self, asset: str) -> tuple[CompletedAssetSession, ...]: ...
 
 
 def require_daily_bar(lookup: DailyBarLookup) -> DailyBar:

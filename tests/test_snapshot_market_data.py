@@ -1,4 +1,4 @@
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -14,6 +14,7 @@ from refinvest.marketdata.domain import (
     AssetCalendar,
     AssetSession,
     CalendarProvenance,
+    CalendarSession,
     CalendarSessionState,
     DailyBar,
     DailyBarAvailability,
@@ -53,7 +54,17 @@ def calendar(
     states: dict[AssetSession, CalendarSessionState], snapshot_id: str = "snapshot-1"
 ) -> InMemorySnapshotCalendar:
     return InMemorySnapshotCalendar(
-        snapshot_id, CalendarProvenance("exchange-calendar", "2025.1", "calendar-hash"), states
+        snapshot_id,
+        CalendarProvenance("exchange-calendar", "2025.1", "calendar-hash"),
+        {
+            asset_session: CalendarSession(
+                state,
+                datetime.combine(asset_session.session_date, time(21), UTC)
+                if state is CalendarSessionState.EXPECTED
+                else None,
+            )
+            for asset_session, state in states.items()
+        },
     )
 
 
@@ -137,7 +148,12 @@ def test_calendar_provenance_must_match_snapshot_metadata() -> None:
             InMemorySnapshotCalendar(
                 "snapshot-1",
                 CalendarProvenance("exchange-calendar", "2025.2", "calendar-hash"),
-                {bar().asset_session: CalendarSessionState.EXPECTED},
+                {
+                    bar().asset_session: CalendarSession(
+                        CalendarSessionState.EXPECTED,
+                        datetime(2025, 1, 2, 21, tzinfo=UTC),
+                    )
+                },
             ),
             InMemorySnapshotDailyBars("snapshot-1", [bar()]),
         )
@@ -158,3 +174,63 @@ def test_mvp_asset_calendar_policy(asset: str, expected_calendar: AssetCalendar)
 def test_crypto_calendar_rejects_non_trading_sessions() -> None:
     with pytest.raises(ValueError, match="always be expected"):
         calendar({AssetSession("BTCUSDT", date(2025, 1, 4)): CalendarSessionState.NON_TRADING})
+
+
+def test_expected_session_requires_an_immutable_utc_completion_time() -> None:
+    with pytest.raises(ValueError, match="must include"):
+        CalendarSession(CalendarSessionState.EXPECTED)
+    with pytest.raises(ValueError, match="UTC"):
+        CalendarSession(
+            CalendarSessionState.EXPECTED,
+            datetime(2025, 1, 2, 16, tzinfo=timezone(timedelta(hours=-5))),
+        )
+
+
+def test_non_trading_session_cannot_have_a_completion_time() -> None:
+    with pytest.raises(ValueError, match="must not"):
+        CalendarSession(
+            CalendarSessionState.NON_TRADING,
+            datetime(2025, 1, 4, 21, tzinfo=UTC),
+        )
+
+
+def test_calendar_exposes_expected_session_completion_times() -> None:
+    sessions = {
+        AssetSession("BTCUSDT", date(2025, 1, 3)): CalendarSession(
+            CalendarSessionState.EXPECTED,
+            datetime(2025, 1, 4, tzinfo=UTC),
+        ),
+        AssetSession("BTCUSDT", date(2025, 1, 4)): CalendarSession(
+            CalendarSessionState.EXPECTED,
+            datetime(2025, 1, 5, tzinfo=UTC),
+        ),
+    }
+    completions = InMemorySnapshotCalendar(
+        "snapshot-1", CalendarProvenance("exchange-calendar", "2025.1", "calendar-hash"), sessions
+    ).expected_session_completions("BTCUSDT")
+    assert [item.asset_session.session_date for item in completions] == [
+        date(2025, 1, 3),
+        date(2025, 1, 4),
+    ]
+    assert [item.completed_at for item in completions] == [
+        datetime(2025, 1, 4, tzinfo=UTC),
+        datetime(2025, 1, 5, tzinfo=UTC),
+    ]
+
+
+def test_calendar_rejects_non_increasing_completion_times() -> None:
+    with pytest.raises(ValueError, match="strictly ordered"):
+        InMemorySnapshotCalendar(
+            "snapshot-1",
+            CalendarProvenance("exchange-calendar", "2025.1", "calendar-hash"),
+            {
+                AssetSession("QQQ", date(2025, 1, 2)): CalendarSession(
+                    CalendarSessionState.EXPECTED,
+                    datetime(2025, 1, 2, 21, tzinfo=UTC),
+                ),
+                AssetSession("QQQ", date(2025, 1, 3)): CalendarSession(
+                    CalendarSessionState.EXPECTED,
+                    datetime(2025, 1, 2, 21, tzinfo=UTC),
+                ),
+            },
+        )
