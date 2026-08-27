@@ -137,12 +137,19 @@ DatasetSnapshot
 ├── source
 ├── coverage
 ├── adjustmentPolicy
-└── storagePath
+├── storagePath
+├── calendarSource
+├── calendarVersion
+└── calendarHash
 ```
 
 Snapshot은 immutable이다.
 
 동일 Backtest는 계산 중 Snapshot을 변경하지 않는다.
+
+Calendar artifact의 source, version, content hash도 Snapshot에 고정된다. Engine은 해당
+artifact의 `EXPECTED` / `NON_TRADING` 분류만 사용하며, 실행 중 exchange calendar나 vendor의
+latest 데이터를 조회하지 않는다.
 
 ## 7. Execution Semantics
 
