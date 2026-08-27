@@ -17,7 +17,8 @@ class PostgresDatasetSnapshotRepository:
         with connect(self._database_url) as connection, connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT snapshot_id, created_at, source, coverage, adjustment_policy, storage_path
+                SELECT snapshot_id, created_at, source, coverage, adjustment_policy, storage_path,
+                    calendar_source, calendar_version, calendar_hash
                 FROM compute_dataset_snapshots
                 WHERE snapshot_id = %s
                 """,
@@ -29,7 +30,8 @@ class PostgresDatasetSnapshotRepository:
         with connect(self._database_url) as connection, connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT snapshot_id, created_at, source, coverage, adjustment_policy, storage_path
+                SELECT snapshot_id, created_at, source, coverage, adjustment_policy, storage_path,
+                    calendar_source, calendar_version, calendar_hash
                 FROM compute_dataset_snapshots
                 ORDER BY created_at DESC, snapshot_id DESC
                 LIMIT 1
@@ -41,11 +43,30 @@ class PostgresDatasetSnapshotRepository:
 def _snapshot_from_row(row: tuple[object, ...] | None) -> DatasetSnapshot | None:
     if row is None:
         return None
-    snapshot_id, created_at, source, coverage, adjustment_policy, storage_path = cast(
-        tuple[str, datetime, str, dict[str, object], str, str], row
+    (
+        snapshot_id,
+        created_at,
+        source,
+        coverage,
+        adjustment_policy,
+        storage_path,
+        calendar_source,
+        calendar_version,
+        calendar_hash,
+    ) = cast(
+        tuple[str, datetime, str, dict[str, object], str, str, str | None, str | None, str | None],
+        row,
     )
     return DatasetSnapshot(
-        snapshot_id, created_at, source, coverage, adjustment_policy, storage_path
+        snapshot_id,
+        created_at,
+        source,
+        coverage,
+        adjustment_policy,
+        storage_path,
+        calendar_source,
+        calendar_version,
+        calendar_hash,
     )
 
 
@@ -55,8 +76,9 @@ def insert_dataset_snapshot(database_url: str, snapshot: DatasetSnapshot) -> Non
         cursor.execute(
             """
             INSERT INTO compute_dataset_snapshots
-                (snapshot_id, created_at, source, coverage, adjustment_policy, storage_path)
-            VALUES (%s, %s, %s, %s, %s, %s)
+                    (snapshot_id, created_at, source, coverage, adjustment_policy, storage_path,
+                    calendar_source, calendar_version, calendar_hash)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 snapshot.snapshot_id,
@@ -65,5 +87,8 @@ def insert_dataset_snapshot(database_url: str, snapshot: DatasetSnapshot) -> Non
                 Jsonb(snapshot.coverage),
                 snapshot.adjustment_policy,
                 snapshot.storage_path,
+                snapshot.calendar_source,
+                snapshot.calendar_version,
+                snapshot.calendar_hash,
             ),
         )

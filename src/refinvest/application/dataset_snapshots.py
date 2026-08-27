@@ -13,6 +13,9 @@ class DatasetSnapshot:
     coverage: dict[str, object]
     adjustment_policy: str
     storage_path: str
+    calendar_source: str | None = None
+    calendar_version: str | None = None
+    calendar_hash: str | None = None
 
 
 class DatasetSnapshotRepository(Protocol):

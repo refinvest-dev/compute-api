@@ -12,6 +12,31 @@ class AssetSession:
     session_date: date
 
 
+class AssetCalendar(StrEnum):
+    US_EQUITY = "US_EQUITY"
+    CRYPTO_UTC = "CRYPTO_UTC"
+
+
+def calendar_for_asset(asset: str) -> AssetCalendar:
+    if asset in {"QQQ", "SPY", "TQQQ", "SOXL", "VIX"}:
+        return AssetCalendar.US_EQUITY
+    if asset == "BTCUSDT":
+        return AssetCalendar.CRYPTO_UTC
+    raise ValueError(f"Unsupported Asset calendar: {asset}")
+
+
+class CalendarSessionState(StrEnum):
+    EXPECTED = "EXPECTED"
+    NON_TRADING = "NON_TRADING"
+
+
+@dataclass(frozen=True)
+class CalendarProvenance:
+    source: str
+    version: str
+    content_hash: str
+
+
 @dataclass(frozen=True)
 class DailyBar:
     asset: str
