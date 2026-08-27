@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed for the Daily Bar MVP.
+Accepted for the Daily Bar MVP.
 
 ## Context
 
