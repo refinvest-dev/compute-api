@@ -16,6 +16,12 @@ class MarketDataPort(Protocol):
     def get_daily_bar(self, asset: str, session_date: date) -> DailyBarLookup: ...
 
 
+class SessionCalendarPort(Protocol):
+    """Immutable expected-session sequence for one pinned DatasetSnapshot."""
+
+    def expected_sessions(self, asset: str) -> tuple[date, ...]: ...
+
+
 def require_daily_bar(lookup: DailyBarLookup) -> DailyBar:
     """Return a bar only when present; never fabricate or fall back to another session."""
     if lookup.availability is DailyBarAvailability.AVAILABLE:
