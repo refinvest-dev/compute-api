@@ -83,6 +83,10 @@ def test_backtest_submission_is_authenticated_and_durable() -> None:
         assert response.json()["status"] == "PENDING"
         run_id = response.json()["runId"]
         assert repository.jobs[run_id].request_payload["datasetSnapshotId"] == "snapshot-1"
+        assert (
+            repository.jobs[run_id].request_payload["strategyVersion"]["conditions"][0]["operandB"]
+            == "0.01"
+        )
 
         status_response = client.get(
             f"/backtests/{run_id}", headers={"X-Internal-Api-Key": "test-key"}

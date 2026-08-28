@@ -1,12 +1,19 @@
+from decimal import Decimal
+
 import pytest
 
 from refinvest.api.schemas.backtests import CreateBacktestRequestTransport
 from refinvest.api.schemas.errors import map_strategy_validation_error
-from refinvest.engine.validation import StrategyValidationError, validate_strategy_version
+from refinvest.engine.validation import (
+    StrategyValidationError,
+    ValidationIssue,
+    validate_strategy_version,
+)
 from refinvest.engine.validation.models import (
     AssetSymbol,
     ComparisonOperator,
     Condition,
+    LogicalCombinator,
     MetricReference,
     MetricType,
     PositionPolicy,
@@ -134,6 +141,46 @@ def test_requires_combinators_after_the_first_condition() -> None:
         validate_strategy_version(request.strategy_version)
 
     assert raised.value.issues[0].path == "conditions[1].logicalCombinator"
+
+
+def test_rejects_mixed_condition_group_combinators() -> None:
+    strategy = StrategyVersion(
+        primary_signal_asset=AssetSymbol.QQQ,
+        conditions=(
+            Condition(
+                ComparisonOperator.GT,
+                None,
+                MetricReference(AssetSymbol.QQQ, MetricType.SIMPLE, None),
+                Decimal("0"),
+            ),
+            Condition(
+                ComparisonOperator.LT,
+                LogicalCombinator.AND,
+                MetricReference(AssetSymbol.VIX, MetricType.SIMPLE, None),
+                Decimal("20"),
+            ),
+            Condition(
+                ComparisonOperator.GT,
+                LogicalCombinator.OR,
+                MetricReference(AssetSymbol.QQQ, MetricType.SIMPLE, None),
+                Decimal("0"),
+            ),
+        ),
+        execution_asset=AssetSymbol.TQQQ,
+        lag=0,
+        holding_signal_sessions=1,
+        position_policy=None,
+    )
+
+    with pytest.raises(StrategyValidationError) as raised:
+        validate_strategy_version(strategy)
+
+    assert raised.value.issues == (
+        ValidationIssue(
+            "conditions[2].logicalCombinator",
+            "MVP Condition Groups cannot mix AND and OR combinators.",
+        ),
+    )
 
 
 @pytest.mark.parametrize(
