@@ -140,8 +140,8 @@ class StrategyVersionTransport(BaseModel):
 
 
 class FeeModelTransport(BaseModel):
-    commission: float
-    slippage: float
+    commission: Decimal
+    slippage: Decimal
 
     def to_domain(self) -> domain.FeeModel:
         return domain.FeeModel(commission=self.commission, slippage=self.slippage)

@@ -77,8 +77,8 @@ def _request_payload(request: BacktestRequest) -> dict[str, object]:
             "positionPolicy": _position_policy_payload(strategy.position_policy),
         },
         "feeModel": {
-            "commission": request.fee_model.commission,
-            "slippage": request.fee_model.slippage,
+            "commission": str(request.fee_model.commission),
+            "slippage": str(request.fee_model.slippage),
         },
         "period": {
             "start": _json_value(request.period.start),

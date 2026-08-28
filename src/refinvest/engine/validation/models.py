@@ -74,8 +74,8 @@ class StrategyVersion:
 
 @dataclass(frozen=True)
 class FeeModel:
-    commission: float
-    slippage: float
+    commission: Decimal
+    slippage: Decimal
 
 
 @dataclass(frozen=True)
