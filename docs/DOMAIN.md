@@ -87,6 +87,12 @@ window: int | null
 - holdingSignalSessions > 0
 - executionAsset에 VIX 불가
 - PositionPolicy는 Long Only / Single Position / Duplicate Ignore
+- 단일 Condition Group의 후속 `logicalCombinator`는 모두 `AND` 또는 모두 `OR`
+  이어야 하며, mixed combinator와 중첩은 MVP에서 지원하지 않음
+
+Condition Group은 선언 순서대로 모든 operand를 평가한 뒤 Boolean 결과를 결합한다.
+Short-circuit로 뒤 condition의 Calendar 또는 Market Data 오류를 숨기지 않는다.
+Metric 값과 literal은 `Decimal`로 정확 비교한다.
 
 ## 4. Temporal Semantics
 

@@ -268,7 +268,10 @@ components:
       type: string
       enum: [AND, OR]
       nullable: true
-      description: 첫 번째 Condition은 null. MVP는 단일 Condition Group만 허용, 중첩 없음(§5.2).
+      description: |
+        첫 번째 Condition은 null. MVP는 단일 Condition Group만 허용하며 중첩은 없다.
+        후속 Condition은 모두 동일한 combinator(전부 AND 또는 전부 OR)를 사용해야 한다.
+        혼합 combinator는 DSL_INVALID이며, 모든 condition은 short-circuit 없이 평가된다.
 
     Condition:
       type: object
