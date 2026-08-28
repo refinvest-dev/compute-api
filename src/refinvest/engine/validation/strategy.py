@@ -47,6 +47,8 @@ def validate_strategy_version(strategy: StrategyVersion) -> None:
         if isinstance(condition.operand_b, MetricReference):
             _validate_metric(condition.operand_b, f"conditions[{index}].operandB", issues)
 
+    _validate_condition_group_combinators(strategy, issues)
+
     if strategy.execution_asset is AssetSymbol.VIX:
         issues.append(ValidationIssue("executionAsset", "VIX cannot be an execution asset."))
     if strategy.lag < 0:
@@ -80,6 +82,26 @@ def _validate_metric(
                 "RETURN and CHANGE metrics require a window greater than zero.",
             )
         )
+
+
+def _validate_condition_group_combinators(
+    strategy: StrategyVersion, issues: list[ValidationIssue]
+) -> None:
+    """Reject ambiguous mixed AND/OR groups before snapshot-backed evaluation."""
+    combinators = [
+        condition.logical_combinator for condition in strategy.conditions[1:]
+    ]
+    expected = next((combinator for combinator in combinators if combinator is not None), None)
+    if expected is None:
+        return
+    for index, combinator in enumerate(combinators, start=1):
+        if combinator is not None and combinator is not expected:
+            issues.append(
+                ValidationIssue(
+                    f"conditions[{index}].logicalCombinator",
+                    "MVP Condition Groups cannot mix AND and OR combinators.",
+                )
+            )
 
 
 def _validate_position_policy(
