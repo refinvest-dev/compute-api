@@ -18,6 +18,25 @@ from refinvest.marketdata.ports import (
 METRIC_DECIMAL_CONTEXT = Context(prec=28, rounding=ROUND_HALF_EVEN)
 
 
+def evaluate_metric(
+    calendar: SessionCalendarPort,
+    market_data: MarketDataPort,
+    primary_signal_asset: AssetSymbol,
+    signal_session: date,
+    metric: MetricReference,
+) -> Decimal:
+    """Evaluate one supported metric reference from immutable snapshot data."""
+    if metric.metric is MetricType.SIMPLE:
+        return evaluate_simple_metric(
+            calendar, market_data, primary_signal_asset, signal_session, metric
+        )
+    if metric.metric in {MetricType.RETURN, MetricType.CHANGE}:
+        return evaluate_lookback_metric(
+            calendar, market_data, primary_signal_asset, signal_session, metric
+        )
+    raise ValueError(f"Unsupported metric type: {metric.metric}")
+
+
 def evaluate_simple_metric(
     calendar: SessionCalendarPort,
     market_data: MarketDataPort,
