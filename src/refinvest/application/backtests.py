@@ -92,7 +92,7 @@ def _condition_payload(condition: Condition) -> dict[str, object]:
     operand_b: object = (
         _metric_payload(condition.operand_b)
         if isinstance(condition.operand_b, MetricReference)
-        else condition.operand_b
+        else str(condition.operand_b)
     )
     return {
         "operator": condition.operator.value,

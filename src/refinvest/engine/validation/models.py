@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal
 from enum import StrEnum
 
 
@@ -43,7 +44,7 @@ class MetricReference:
     window: int | None
 
 
-MetricOperand = MetricReference | float
+MetricOperand = MetricReference | Decimal
 
 
 @dataclass(frozen=True)

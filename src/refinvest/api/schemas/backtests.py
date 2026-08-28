@@ -1,6 +1,7 @@
 """OpenAPI transport models for future Backtest submission routes."""
 
 from datetime import date
+from decimal import Decimal
 from enum import StrEnum
 from typing import Literal
 
@@ -76,7 +77,7 @@ class ConditionTransport(BaseModel):
         alias="logicalCombinator",
     )
     operand_a: MetricReferenceTransport = Field(alias="operandA")
-    operand_b: MetricReferenceTransport | float = Field(alias="operandB")
+    operand_b: MetricReferenceTransport | Decimal = Field(alias="operandB")
 
     def to_domain(self) -> domain.Condition:
         operand_b: domain.MetricOperand

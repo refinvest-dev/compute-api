@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
@@ -38,6 +39,7 @@ def test_request_transport_maps_to_immutable_domain_values() -> None:
     assert request.strategy_version_id == "strategy-v1"
     assert request.strategy_version.execution_asset.value == "TQQQ"
     assert request.strategy_version.conditions[0].operand_a.window == 5
+    assert request.strategy_version.conditions[0].operand_b == Decimal("0.01")
     assert request.period.start == date(2024, 1, 1)
     assert request.dataset_snapshot_id == "snapshot-1"
 
