@@ -87,6 +87,10 @@ def test_backtest_submission_is_authenticated_and_durable() -> None:
             repository.jobs[run_id].request_payload["strategyVersion"]["conditions"][0]["operandB"]
             == "0.01"
         )
+        assert repository.jobs[run_id].request_payload["feeModel"] == {
+            "commission": "0.001",
+            "slippage": "0.002",
+        }
 
         status_response = client.get(
             f"/backtests/{run_id}", headers={"X-Internal-Api-Key": "test-key"}
