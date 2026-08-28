@@ -9,5 +9,8 @@ wheels/
 # Virtual environments
 .venv
 
+# Local environment configuration; intentionally never versioned.
+.env
+
 # Local pull-request draft; intentionally not versioned.
 PR_BODY.md
