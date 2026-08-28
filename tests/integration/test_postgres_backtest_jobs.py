@@ -1,6 +1,6 @@
 """PostgreSQL worker lifecycle integration checks.
 
-Set REFINVEST_TEST_DATABASE_URL to an isolated database with migrations 0001-0003 applied.
+Set REFINVEST_TEST_DATABASE_URL to an isolated database with migrations 0001-0004 applied.
 """
 
 from concurrent.futures import ThreadPoolExecutor
