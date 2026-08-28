@@ -1,7 +1,7 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from fastapi.testclient import TestClient
+from starlette.testclient import TestClient
 
 from refinvest.api.dependencies.backtests import get_backtest_job_repository
 from refinvest.app.config import Settings, get_settings
