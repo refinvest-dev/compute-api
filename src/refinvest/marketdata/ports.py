@@ -14,6 +14,8 @@ from refinvest.marketdata.domain import (
 class MissingRequiredMarketDataError(ValueError):
     """An expected session has no data in the selected immutable snapshot."""
 
+    error_code = "MISSING_REQUIRED_DATA"
+
 
 class MarketDataPort(Protocol):
     """Reads only the DatasetSnapshot selected before Backtest execution starts."""
