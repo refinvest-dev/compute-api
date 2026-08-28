@@ -3,7 +3,11 @@ from decimal import Decimal
 
 import pytest
 
-from refinvest.engine.metrics import evaluate_lookback_metric, evaluate_simple_metric
+from refinvest.engine.metrics import (
+    evaluate_lookback_metric,
+    evaluate_metric,
+    evaluate_simple_metric,
+)
 from refinvest.engine.temporal import TemporalResolutionError
 from refinvest.engine.validation.models import AssetSymbol, MetricReference, MetricType
 from refinvest.marketdata.domain import (
@@ -149,6 +153,61 @@ def test_simple_metric_is_deterministic_for_the_same_snapshot_inputs() -> None:
         for _ in range(2)
     ]
     assert values == [Decimal("18.50"), Decimal("18.50")]
+
+
+@pytest.mark.parametrize(
+    ("metric", "expected"),
+    [
+        (MetricReference(AssetSymbol.QQQ, MetricType.SIMPLE, None), Decimal("121")),
+        (MetricReference(AssetSymbol.QQQ, MetricType.RETURN, 2), Decimal("0.21")),
+        (MetricReference(AssetSymbol.QQQ, MetricType.CHANGE, 2), Decimal("21")),
+    ],
+)
+def test_metric_dispatches_each_supported_metric_type(
+    metric: MetricReference, expected: Decimal
+) -> None:
+    qqq_bars = [
+        bar("QQQ", date(2025, 1, 2), "100"),
+        bar("QQQ", date(2025, 1, 3), "110"),
+        bar("QQQ", date(2025, 1, 6), "121"),
+    ]
+    calendar = StaticCalendar(
+        {
+            "QQQ": tuple(
+                completion(
+                    "QQQ",
+                    daily_bar.session_date,
+                    datetime.combine(daily_bar.session_date, datetime.min.time(), UTC),
+                )
+                for daily_bar in qqq_bars
+            ),
+        }
+    )
+    market_data = StaticMarketData(
+        {
+            daily_bar.asset_session: DailyBarLookup(DailyBarAvailability.AVAILABLE, daily_bar)
+            for daily_bar in qqq_bars
+        }
+    )
+
+    assert evaluate_metric(
+        calendar, market_data, AssetSymbol.QQQ, date(2025, 1, 6), metric
+    ) == expected
+
+
+@pytest.mark.parametrize(
+    "metric",
+    [
+        MetricReference(AssetSymbol.QQQ, MetricType.SIMPLE, 1),
+        MetricReference(AssetSymbol.QQQ, MetricType.RETURN, None),
+        MetricReference(AssetSymbol.QQQ, MetricType.CHANGE, 0),
+    ],
+)
+def test_metric_dispatch_preserves_invalid_metric_rejection(metric: MetricReference) -> None:
+    with pytest.raises(ValueError):
+        evaluate_metric(
+            StaticCalendar({}), StaticMarketData({}), AssetSymbol.QQQ, date(2025, 1, 3), metric
+        )
 
 
 @pytest.mark.parametrize(
