@@ -58,7 +58,7 @@ class PostgresBacktestJobRepository:
             error_code,
         ) = status_row
         return BacktestJobStatusView(
-            run_id=run_id_value,
+            run_id=str(run_id_value),
             strategy_version_id=strategy_version_id,
             dataset_snapshot_id=dataset_snapshot_id,
             status=BacktestJobStatus(status_value),
@@ -175,7 +175,7 @@ class PostgresBacktestJobRepository:
         if status != BacktestJobStatus.RUNNING.value or dataset_snapshot_id is None:
             return None
         return ClaimedBacktestJob(
-            run_id=run_id,
+            run_id=str(run_id),
             worker_id=worker_id,
             dataset_snapshot_id=dataset_snapshot_id,
             attempt_count=attempt_count,
