@@ -40,6 +40,8 @@ def test_request_transport_maps_to_immutable_domain_values() -> None:
     assert request.strategy_version.execution_asset.value == "TQQQ"
     assert request.strategy_version.conditions[0].operand_a.window == 5
     assert request.strategy_version.conditions[0].operand_b == Decimal("0.01")
+    assert request.fee_model.commission == Decimal("0.001")
+    assert request.fee_model.slippage == Decimal("0.002")
     assert request.period.start == date(2024, 1, 1)
     assert request.dataset_snapshot_id == "snapshot-1"
 
