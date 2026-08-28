@@ -60,6 +60,22 @@ def resolve_metric_anchor_session(
     raise TemporalResolutionError("No Reference Asset session completed by the Signal Timestamp.")
 
 
+def resolve_metric_lookback_session(
+    calendar: SessionCalendarPort, reference_asset: str, anchor_session: date, window: int
+) -> date:
+    """Return the exact earlier Reference Asset session for a positive metric window."""
+    if window < 1:
+        raise ValueError("Metric window must be positive.")
+    sessions = _expected_sessions(calendar, reference_asset)
+    try:
+        anchor_index = sessions.index(anchor_session)
+    except ValueError as error:
+        raise TemporalResolutionError("The metric anchor is not calendar-expected.") from error
+    if anchor_index < window:
+        raise TemporalResolutionError("The requested metric lookback session is unavailable.")
+    return sessions[anchor_index - window]
+
+
 def _session_at_offset(
     calendar: SessionCalendarPort, asset: str, anchor_session: date, offset: int
 ) -> date:

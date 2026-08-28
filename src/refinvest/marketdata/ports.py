@@ -17,6 +17,12 @@ class MissingRequiredMarketDataError(ValueError):
     error_code = "MISSING_REQUIRED_DATA"
 
 
+class DatasetCorruptionError(ValueError):
+    """Snapshot data violates a canonical market-data invariant."""
+
+    error_code = "DATASET_CORRUPTION"
+
+
 class MarketDataPort(Protocol):
     """Reads only the DatasetSnapshot selected before Backtest execution starts."""
 

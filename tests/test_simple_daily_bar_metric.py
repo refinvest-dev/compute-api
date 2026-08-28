@@ -3,7 +3,8 @@ from decimal import Decimal
 
 import pytest
 
-from refinvest.engine.metrics import evaluate_simple_metric
+from refinvest.engine.metrics import evaluate_lookback_metric, evaluate_simple_metric
+from refinvest.engine.temporal import TemporalResolutionError
 from refinvest.engine.validation.models import AssetSymbol, MetricReference, MetricType
 from refinvest.marketdata.domain import (
     AssetSession,
@@ -12,7 +13,7 @@ from refinvest.marketdata.domain import (
     DailyBarAvailability,
     DailyBarLookup,
 )
-from refinvest.marketdata.ports import MissingRequiredMarketDataError
+from refinvest.marketdata.ports import DatasetCorruptionError, MissingRequiredMarketDataError
 
 
 class StaticCalendar:
@@ -52,6 +53,10 @@ def bar(asset: str, session_date: date, close: str) -> DailyBar:
 
 def simple_metric(asset: AssetSymbol) -> MetricReference:
     return MetricReference(asset, MetricType.SIMPLE, None)
+
+
+def lookback_metric(asset: AssetSymbol, metric_type: MetricType, window: int) -> MetricReference:
+    return MetricReference(asset, metric_type, window)
 
 
 def test_simple_metric_uses_the_selected_anchor_close() -> None:
@@ -144,3 +149,155 @@ def test_simple_metric_is_deterministic_for_the_same_snapshot_inputs() -> None:
         for _ in range(2)
     ]
     assert values == [Decimal("18.50"), Decimal("18.50")]
+
+
+@pytest.mark.parametrize(
+    ("metric_type", "expected"),
+    [
+        (MetricType.RETURN, Decimal("0.21")),
+        (MetricType.CHANGE, Decimal("21")),
+    ],
+)
+def test_lookback_metric_uses_exact_referenced_asset_sessions(
+    metric_type: MetricType, expected: Decimal
+) -> None:
+    qqq_bars = [
+        bar("QQQ", date(2025, 1, 2), "100"),
+        bar("QQQ", date(2025, 1, 3), "110"),
+        bar("QQQ", date(2025, 1, 6), "121"),
+    ]
+    calendar = StaticCalendar(
+        {
+            "QQQ": tuple(
+                completion("QQQ", daily_bar.session_date, datetime.combine(
+                    daily_bar.session_date, datetime.min.time(), UTC
+                ))
+                for daily_bar in qqq_bars
+            ),
+        }
+    )
+    market_data = StaticMarketData(
+        {
+            daily_bar.asset_session: DailyBarLookup(DailyBarAvailability.AVAILABLE, daily_bar)
+            for daily_bar in qqq_bars
+        }
+    )
+    assert evaluate_lookback_metric(
+        calendar,
+        market_data,
+        AssetSymbol.QQQ,
+        date(2025, 1, 6),
+        lookback_metric(AssetSymbol.QQQ, metric_type, 2),
+    ) == expected
+
+
+def test_cross_calendar_lookback_stays_on_the_referenced_asset_calendar() -> None:
+    qqq_bars = [bar("QQQ", date(2025, 1, 2), "100"), bar("QQQ", date(2025, 1, 3), "110")]
+    calendar = StaticCalendar(
+        {
+            "BTCUSDT": (
+                completion("BTCUSDT", date(2025, 1, 4), datetime(2025, 1, 5, tzinfo=UTC)),
+            ),
+            "QQQ": (
+                completion("QQQ", date(2025, 1, 2), datetime(2025, 1, 2, 21, tzinfo=UTC)),
+                completion("QQQ", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),
+            ),
+        }
+    )
+    market_data = StaticMarketData(
+        {
+            daily_bar.asset_session: DailyBarLookup(DailyBarAvailability.AVAILABLE, daily_bar)
+            for daily_bar in qqq_bars
+        }
+    )
+    assert evaluate_lookback_metric(
+        calendar,
+        market_data,
+        AssetSymbol.BTCUSDT,
+        date(2025, 1, 4),
+        lookback_metric(AssetSymbol.QQQ, MetricType.RETURN, 1),
+    ) == Decimal("0.1")
+
+
+def test_lookback_history_outside_the_snapshot_fails_fast() -> None:
+    qqq_bar = bar("QQQ", date(2025, 1, 3), "110")
+    calendar = StaticCalendar(
+        {
+            "QQQ": (
+                completion("QQQ", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),
+            ),
+        }
+    )
+    market_data = StaticMarketData(
+        {qqq_bar.asset_session: DailyBarLookup(DailyBarAvailability.AVAILABLE, qqq_bar)}
+    )
+    with pytest.raises(TemporalResolutionError) as error:
+        evaluate_lookback_metric(
+            calendar,
+            market_data,
+            AssetSymbol.QQQ,
+            date(2025, 1, 3),
+            lookback_metric(AssetSymbol.QQQ, MetricType.RETURN, 1),
+        )
+    assert error.value.error_code == "CALENDAR_RESOLUTION_FAILED"
+
+
+def test_missing_lookback_daily_bar_fails_fast() -> None:
+    anchor_bar = bar("QQQ", date(2025, 1, 3), "110")
+    calendar = StaticCalendar(
+        {
+            "QQQ": (
+                completion("QQQ", date(2025, 1, 2), datetime(2025, 1, 2, 21, tzinfo=UTC)),
+                completion("QQQ", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),
+            ),
+        }
+    )
+    market_data = StaticMarketData(
+        {
+            AssetSession("QQQ", date(2025, 1, 2)): DailyBarLookup(
+                DailyBarAvailability.MISSING_EXPECTED_SESSION
+            ),
+            anchor_bar.asset_session: DailyBarLookup(DailyBarAvailability.AVAILABLE, anchor_bar),
+        }
+    )
+    with pytest.raises(MissingRequiredMarketDataError) as error:
+        evaluate_lookback_metric(
+            calendar,
+            market_data,
+            AssetSymbol.QQQ,
+            date(2025, 1, 3),
+            lookback_metric(AssetSymbol.QQQ, MetricType.CHANGE, 1),
+        )
+    assert error.value.error_code == "MISSING_REQUIRED_DATA"
+
+
+def test_return_with_non_positive_lookback_close_is_dataset_corruption() -> None:
+    anchor_bar = bar("QQQ", date(2025, 1, 3), "110")
+    lookback_bar = bar("QQQ", date(2025, 1, 2), "0")
+    calendar = StaticCalendar(
+        {
+            "QQQ": (
+                completion("QQQ", date(2025, 1, 2), datetime(2025, 1, 2, 21, tzinfo=UTC)),
+                completion("QQQ", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),
+            ),
+        }
+    )
+    market_data = StaticMarketData(
+        {
+            lookback_bar.asset_session: DailyBarLookup(
+                DailyBarAvailability.AVAILABLE, lookback_bar
+            ),
+            anchor_bar.asset_session: DailyBarLookup(
+                DailyBarAvailability.AVAILABLE, anchor_bar
+            ),
+        }
+    )
+    with pytest.raises(DatasetCorruptionError) as error:
+        evaluate_lookback_metric(
+            calendar,
+            market_data,
+            AssetSymbol.QQQ,
+            date(2025, 1, 3),
+            lookback_metric(AssetSymbol.QQQ, MetricType.RETURN, 1),
+        )
+    assert error.value.error_code == "DATASET_CORRUPTION"
