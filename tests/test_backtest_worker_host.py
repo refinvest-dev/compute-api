@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from threading import Event
 from time import sleep
 
@@ -6,11 +6,13 @@ import pytest
 
 from refinvest.application.backtest_worker_host import (
     BacktestWorkerHost,
+    CompletedBacktestExecution,
     RetryableBacktestFailure,
     TerminalBacktestFailure,
 )
 from refinvest.application.backtest_workers import ClaimedBacktestJob
 from refinvest.application.dataset_snapshots import DatasetSnapshot
+from refinvest.engine.validation.models import Period
 
 
 class FakeSnapshots:
@@ -31,6 +33,7 @@ class FakeJobs:
         self.heartbeats = 0
         self.failed: list[tuple[str, str, str, str | None]] = []
         self.retries: list[tuple[str, str, timedelta, str]] = []
+        self.completed: list[tuple[str, str, dict[str, object], Period, str]] = []
 
     def claim_next(
         self, worker_id: str, lease_duration: timedelta
@@ -47,6 +50,13 @@ class FakeJobs:
         self.failed.append((run_id, worker_id, failure_reason, error_code))
         return True
 
+    def mark_completed(
+        self, run_id: str, worker_id: str, result_payload: dict[str, object], actual_period: Period,
+        engine_version: str,
+    ) -> bool:
+        self.completed.append((run_id, worker_id, result_payload, actual_period, engine_version))
+        return True
+
     def schedule_retry(
         self, run_id: str, worker_id: str, retry_delay: timedelta, failure_reason: str
     ) -> bool:
@@ -55,13 +65,16 @@ class FakeJobs:
 
 
 class FakeExecutor:
-    def __init__(self, outcome: TerminalBacktestFailure | RetryableBacktestFailure) -> None:
+    def __init__(
+        self,
+        outcome: CompletedBacktestExecution | TerminalBacktestFailure | RetryableBacktestFailure,
+    ) -> None:
         self.outcome = outcome
         self.executed: list[str] = []
 
     def execute(
         self, job: object,
-    ) -> TerminalBacktestFailure | RetryableBacktestFailure:
+    ) -> CompletedBacktestExecution | TerminalBacktestFailure | RetryableBacktestFailure:
         self.executed.append(job.claim.run_id)  # type: ignore[attr-defined]
         return self.outcome
 
@@ -103,6 +116,15 @@ def test_terminal_failure_is_recorded_without_retry() -> None:
     assert worker.process_once()
     assert jobs.failed == [("run-1", "worker-1", "data corrupt", "DATASET_CORRUPTION")]
     assert jobs.retries == []
+
+
+def test_successful_execution_is_persisted_by_lease_owner() -> None:
+    jobs = FakeJobs([claim()])
+    outcome = CompletedBacktestExecution(
+        {"metrics": {}}, Period(date(2025, 1, 2), date(2025, 1, 3)), "v1"
+    )
+    assert host(jobs, FakeExecutor(outcome)).process_once()
+    assert jobs.completed == [("run-1", "worker-1", {"metrics": {}}, outcome.actual_period, "v1")]
 
 
 def test_retryable_failure_uses_the_existing_retry_policy() -> None:

@@ -12,6 +12,7 @@ from refinvest.application.backtest_workers import (
     record_transient_failure,
 )
 from refinvest.application.dataset_snapshots import DatasetSnapshotRepository
+from refinvest.engine.validation.models import Period
 
 FatalErrorCode = Literal[
     "MISSING_REQUIRED_DATA",
@@ -32,11 +33,20 @@ class RetryableBacktestFailure:
     failure_reason: str
 
 
-BacktestExecutionOutcome = TerminalBacktestFailure | RetryableBacktestFailure
+@dataclass(frozen=True)
+class CompletedBacktestExecution:
+    result_payload: dict[str, object]
+    actual_period: Period
+    engine_version: str
+
+
+BacktestExecutionOutcome = (
+    CompletedBacktestExecution | TerminalBacktestFailure | RetryableBacktestFailure
+)
 
 
 class BacktestJobExecutor(Protocol):
-    """Future engine adapter; this slice intentionally has no successful outcome yet."""
+    """Engine adapter that returns a canonical payload after successful execution."""
 
     def execute(self, job: ExecutableBacktestJob) -> BacktestExecutionOutcome: ...
 
@@ -120,7 +130,15 @@ class BacktestWorkerHost:
         finally:
             heartbeat.stop()
 
-        if isinstance(outcome, TerminalBacktestFailure):
+        if isinstance(outcome, CompletedBacktestExecution):
+            self._jobs.mark_completed(
+                job.claim.run_id,
+                self._worker_id,
+                outcome.result_payload,
+                outcome.actual_period,
+                outcome.engine_version,
+            )
+        elif isinstance(outcome, TerminalBacktestFailure):
             self._jobs.mark_failed(
                 job.claim.run_id,
                 self._worker_id,

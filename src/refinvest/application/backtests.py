@@ -7,7 +7,7 @@ from typing import Protocol
 from uuid import uuid4
 
 from refinvest.engine.validation import BacktestRequest, validate_strategy_version
-from refinvest.engine.validation.models import Condition, MetricReference, PositionPolicy
+from refinvest.engine.validation.models import Condition, MetricReference, Period, PositionPolicy
 
 
 class BacktestJobStatus(StrEnum):
@@ -34,6 +34,9 @@ class BacktestJobStatusView:
     status: BacktestJobStatus
     failure_reason: str | None = None
     error_code: str | None = None
+    actual_period: Period | None = None
+    engine_version: str | None = None
+    result_payload: dict[str, object] | None = None
 
 
 class BacktestJobRepository(Protocol):

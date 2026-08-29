@@ -1,6 +1,6 @@
 """PostgreSQL implementation of durable Backtest job runtime state."""
 
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import cast
 
 from psycopg import connect
@@ -8,6 +8,7 @@ from psycopg.types.json import Jsonb
 
 from refinvest.application.backtest_workers import ClaimedBacktestJob
 from refinvest.application.backtests import BacktestJob, BacktestJobStatus, BacktestJobStatusView
+from refinvest.engine.validation.models import Period
 
 
 class PostgresBacktestJobRepository:
@@ -37,7 +38,8 @@ class PostgresBacktestJobRepository:
                 """
                 SELECT run_id, strategy_version_id,
                     COALESCE(resolved_dataset_snapshot_id, dataset_snapshot_id), status,
-                    failure_reason, error_code
+                    failure_reason, error_code, actual_period_start, actual_period_end,
+                    engine_version, result_payload
                 FROM compute_backtest_jobs
                 WHERE run_id = %s
                 """,
@@ -47,7 +49,10 @@ class PostgresBacktestJobRepository:
         if row is None:
             return None
         status_row = cast(
-            tuple[str, str | None, str | None, str, str | None, str | None], row
+            tuple[
+                str, str | None, str | None, str, str | None, str | None,
+                object | None, object | None, str | None, dict[str, object] | None,
+            ], row
         )
         (
             run_id_value,
@@ -56,6 +61,10 @@ class PostgresBacktestJobRepository:
             status_value,
             failure_reason,
             error_code,
+            actual_period_start,
+            actual_period_end,
+            engine_version,
+            result_payload,
         ) = status_row
         return BacktestJobStatusView(
             run_id=str(run_id_value),
@@ -64,7 +73,40 @@ class PostgresBacktestJobRepository:
             status=BacktestJobStatus(status_value),
             failure_reason=failure_reason,
             error_code=error_code,
+            actual_period=(
+                Period(cast(date, actual_period_start), cast(date, actual_period_end))
+                if actual_period_start is not None and actual_period_end is not None
+                else None
+            ),
+            engine_version=engine_version,
+            result_payload=result_payload,
         )
+
+    def mark_completed(
+        self,
+        run_id: str,
+        worker_id: str,
+        result_payload: dict[str, object],
+        actual_period: Period,
+        engine_version: str,
+    ) -> bool:
+        with connect(self._database_url) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE compute_backtest_jobs
+                SET status = 'COMPLETED', result_payload = %s,
+                    actual_period_start = %s, actual_period_end = %s, engine_version = %s,
+                    completed_at = CURRENT_TIMESTAMP, failure_reason = NULL, error_code = NULL,
+                    worker_id = NULL, lease_expires_at = NULL, heartbeat_at = NULL,
+                    next_attempt_at = NULL
+                WHERE run_id = %s AND status = 'RUNNING' AND worker_id = %s
+                """,
+                (
+                    Jsonb(result_payload), actual_period.start, actual_period.end, engine_version,
+                    run_id, worker_id,
+                ),
+            )
+            return cursor.rowcount == 1
 
     def pin_dataset_snapshot(self, run_id: str, snapshot_id: str) -> bool:
         with connect(self._database_url) as connection, connection.cursor() as cursor:

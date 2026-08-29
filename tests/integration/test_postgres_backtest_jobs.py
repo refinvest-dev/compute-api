@@ -1,6 +1,6 @@
 """PostgreSQL worker lifecycle integration checks.
 
-Set REFINVEST_TEST_DATABASE_URL to an isolated database with migrations 0001-0004 applied.
+Set REFINVEST_TEST_DATABASE_URL to an isolated database with migrations 0001-0005 applied.
 """
 
 from concurrent.futures import ThreadPoolExecutor
@@ -13,6 +13,7 @@ from psycopg import connect
 
 from refinvest.application.backtests import BacktestJob, BacktestJobStatus
 from refinvest.application.dataset_snapshots import DatasetSnapshot
+from refinvest.engine.validation.models import Period
 from refinvest.persistence.postgres.backtest_jobs import PostgresBacktestJobRepository
 from refinvest.persistence.postgres.dataset_snapshots import insert_dataset_snapshot
 
@@ -64,6 +65,42 @@ def test_claim_is_exclusive_and_stale_lease_is_reclaimed() -> None:
         assert reclaimed.run_id == run_id
         assert reclaimed.dataset_snapshot_id == snapshot_id
         assert reclaimed.attempt_count == 2
+    finally:
+        with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
+            cursor.execute("DELETE FROM compute_backtest_jobs WHERE run_id = %s", (run_id,))
+            cursor.execute(
+                "DELETE FROM compute_dataset_snapshots WHERE snapshot_id = %s", (snapshot_id,)
+            )
+
+
+def test_lease_owner_persists_completed_result() -> None:
+    assert DATABASE_URL is not None
+    run_id = str(uuid4())
+    snapshot_id = f"snapshot-{uuid4()}"
+    repository = PostgresBacktestJobRepository(DATABASE_URL)
+    insert_dataset_snapshot(
+        DATABASE_URL,
+        DatasetSnapshot(snapshot_id, datetime.now(UTC), "test", {}, "adjusted", "test/path"),
+    )
+    repository.create(BacktestJob(run_id, None, snapshot_id, BacktestJobStatus.PENDING, {}))
+    try:
+        claim = repository.claim_next("worker-a", timedelta(seconds=30))
+        assert claim is not None
+        actual_period = Period(datetime(2025, 1, 2).date(), datetime(2025, 1, 3).date())
+        assert repository.mark_completed(
+            run_id,
+            "worker-a",
+            {"metrics": {"totalReturn": "0.12345678901234"}},
+            actual_period,
+            "v1",
+        )
+        assert not repository.mark_completed(run_id, "worker-b", {}, actual_period, "v2")
+        status = repository.get(run_id)
+        assert status is not None
+        assert status.status is BacktestJobStatus.COMPLETED
+        assert status.actual_period == actual_period
+        assert status.engine_version == "v1"
+        assert status.result_payload == {"metrics": {"totalReturn": "0.12345678901234"}}
     finally:
         with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
             cursor.execute("DELETE FROM compute_backtest_jobs WHERE run_id = %s", (run_id,))

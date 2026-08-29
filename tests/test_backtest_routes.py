@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import date
 
 from starlette.testclient import TestClient
 
@@ -12,6 +13,7 @@ from refinvest.application.backtests import (
     BacktestJobStatus,
     BacktestJobStatusView,
 )
+from refinvest.engine.validation.models import Period
 
 
 class FakeBacktestJobRepository:
@@ -142,3 +144,20 @@ def test_failed_backtest_status_includes_documented_failure_fields() -> None:
         "failureReason": "The pinned DatasetSnapshot is unavailable.",
         "errorCode": "MISSING_REQUIRED_DATA",
     }
+
+
+def test_completed_backtest_status_includes_result_metadata() -> None:
+    repository = FakeBacktestJobRepository()
+    repository.status_views["run-completed"] = BacktestJobStatusView(
+        "run-completed", "strategy-v1", "snapshot-1", BacktestJobStatus.COMPLETED,
+        actual_period=Period(date(2025, 1, 2), date(2025, 1, 3)), engine_version="v1",
+        result_payload={"metrics": {"totalReturn": "0.12345678901234"}},
+    )
+    with configured_client(repository) as client:
+        response = client.get(
+            "/backtests/run-completed", headers={"X-Internal-Api-Key": "test-key"}
+        )
+    assert response.status_code == 200
+    assert response.json()["actualPeriod"] == {"start": "2025-01-02", "end": "2025-01-03"}
+    assert response.json()["engineVersion"] == "v1"
+    assert response.json()["result"]["metrics"]["totalReturn"] == 0.123456789012
