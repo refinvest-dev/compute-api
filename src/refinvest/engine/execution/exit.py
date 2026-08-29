@@ -6,6 +6,7 @@ from decimal import Decimal, localcontext
 
 from refinvest.engine.entries import ExitCandidate
 from refinvest.engine.execution.entry import EXECUTION_DECIMAL_CONTEXT
+from refinvest.engine.execution.schedule import ExitExecutionSchedule
 from refinvest.engine.temporal import resolve_next_execution_session
 from refinvest.engine.validation.models import AssetSymbol
 from refinvest.marketdata.ports import MarketDataPort, SessionCalendarPort, require_daily_bar
@@ -34,6 +35,19 @@ def prepare_exit_executions(
     )
 
 
+def price_exit_execution_schedules(
+    market_data: MarketDataPort,
+    slippage: Decimal,
+    schedules: tuple[ExitExecutionSchedule, ...],
+) -> tuple[ExitExecution, ...]:
+    """Price only exit schedules belonging to admitted positions."""
+    return tuple(
+        _price_exit_execution(market_data, slippage, schedule.candidate, schedule.execution_asset,
+                              schedule.execution_session)
+        for schedule in schedules
+    )
+
+
 def _prepare_exit_execution(
     calendar: SessionCalendarPort,
     market_data: MarketDataPort,
@@ -44,6 +58,18 @@ def _prepare_exit_execution(
     execution_session = resolve_next_execution_session(
         calendar, execution_asset.value, candidate.exit_signal_session
     )
+    return _price_exit_execution(
+        market_data, slippage, candidate, execution_asset, execution_session
+    )
+
+
+def _price_exit_execution(
+    market_data: MarketDataPort,
+    slippage: Decimal,
+    candidate: ExitCandidate,
+    execution_asset: AssetSymbol,
+    execution_session: date,
+) -> ExitExecution:
     reference_price = require_daily_bar(
         market_data.get_daily_bar(execution_asset.value, execution_session)
     ).open

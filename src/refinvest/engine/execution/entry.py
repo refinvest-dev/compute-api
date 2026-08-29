@@ -5,6 +5,7 @@ from datetime import date
 from decimal import ROUND_HALF_EVEN, Context, Decimal, localcontext
 
 from refinvest.engine.entries import EntryCandidate
+from refinvest.engine.execution.schedule import EntryExecutionSchedule
 from refinvest.engine.temporal import resolve_next_execution_session
 from refinvest.engine.validation.models import AssetSymbol
 from refinvest.marketdata.ports import MarketDataPort, SessionCalendarPort, require_daily_bar
@@ -37,6 +38,19 @@ def prepare_entry_executions(
     )
 
 
+def price_entry_execution_schedules(
+    market_data: MarketDataPort,
+    slippage: Decimal,
+    schedules: tuple[EntryExecutionSchedule, ...],
+) -> tuple[EntryExecution, ...]:
+    """Price only schedules admitted by the single-position policy."""
+    return tuple(
+        _price_entry_execution(market_data, slippage, schedule.candidate, schedule.execution_asset,
+                               schedule.execution_session)
+        for schedule in schedules
+    )
+
+
 def _prepare_entry_execution(
     calendar: SessionCalendarPort,
     market_data: MarketDataPort,
@@ -47,6 +61,18 @@ def _prepare_entry_execution(
     execution_session = resolve_next_execution_session(
         calendar, execution_asset.value, candidate.entry_signal_session
     )
+    return _price_entry_execution(
+        market_data, slippage, candidate, execution_asset, execution_session
+    )
+
+
+def _price_entry_execution(
+    market_data: MarketDataPort,
+    slippage: Decimal,
+    candidate: EntryCandidate,
+    execution_asset: AssetSymbol,
+    execution_session: date,
+) -> EntryExecution:
     reference_price = require_daily_bar(
         market_data.get_daily_bar(execution_asset.value, execution_session)
     ).open
