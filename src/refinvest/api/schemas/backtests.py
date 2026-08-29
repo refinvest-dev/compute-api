@@ -183,5 +183,8 @@ class BacktestStatusTransport(BaseModel):
     strategy_version_id: str | None = Field(default=None, alias="strategyVersionId")
     status: Literal["PENDING", "RUNNING", "COMPLETED", "FAILED"]
     dataset_snapshot_id: str | None = Field(default=None, alias="datasetSnapshotId")
+    actual_period: PeriodTransport | None = Field(default=None, alias="actualPeriod")
+    engine_version: str | None = Field(default=None, alias="engineVersion")
+    result: dict[str, object] | None = None
     failure_reason: str | None = Field(default=None, alias="failureReason")
     error_code: FatalErrorCodeTransport | None = Field(default=None, alias="errorCode")

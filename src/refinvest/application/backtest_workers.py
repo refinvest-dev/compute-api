@@ -8,6 +8,7 @@ from refinvest.application.dataset_snapshots import (
     DatasetSnapshot,
     DatasetSnapshotRepository,
 )
+from refinvest.engine.validation.models import Period
 
 MISSING_REQUIRED_DATA = "MISSING_REQUIRED_DATA"
 RETRY_DELAYS = (timedelta(seconds=30), timedelta(minutes=2), timedelta(minutes=10))
@@ -41,6 +42,15 @@ class BacktestWorkerRepository(Protocol):
 
     def mark_failed(
         self, run_id: str, worker_id: str, failure_reason: str, error_code: str | None
+    ) -> bool: ...
+
+    def mark_completed(
+        self,
+        run_id: str,
+        worker_id: str,
+        result_payload: dict[str, object],
+        actual_period: Period,
+        engine_version: str,
     ) -> bool: ...
 
     def schedule_retry(
