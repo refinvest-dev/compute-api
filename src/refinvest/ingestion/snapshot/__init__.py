@@ -1,0 +1,1 @@
+"""Immutable DatasetSnapshot artifact publication."""
