@@ -14,6 +14,7 @@ dependencies = [
 
 [project.scripts]
 refinvest = "refinvest:main"
+refinvest-backtest-worker = "refinvest.app.worker:worker_main"
 
 [tool.pyright]
 include = ["src"]
