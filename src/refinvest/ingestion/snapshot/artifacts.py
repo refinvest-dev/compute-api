@@ -12,6 +12,7 @@ from refinvest.application.dataset_snapshots import DatasetSnapshot
 from refinvest.marketdata.adapters.in_memory import (
     InMemorySnapshotCalendar,
     InMemorySnapshotDailyBars,
+    InMemorySnapshotReferenceCloses,
     SnapshotMarketData,
 )
 from refinvest.marketdata.domain import (
@@ -20,6 +21,7 @@ from refinvest.marketdata.domain import (
     CalendarSession,
     CalendarSessionState,
     DailyBar,
+    ReferenceClose,
 )
 
 
@@ -33,6 +35,7 @@ class PublishedSnapshotArtifacts:
     storage_path: str
     calendar_sha256: str
     daily_bars_sha256: str
+    reference_closes_sha256: str | None = None
 
 
 class FilesystemSnapshotArtifactPublisher:
@@ -44,12 +47,14 @@ class FilesystemSnapshotArtifactPublisher:
         provenance: CalendarProvenance,
         sessions: Mapping[AssetSession, CalendarSession],
         daily_bars: Iterable[DailyBar],
+        reference_closes: Iterable[ReferenceClose] = (),
         *,
         corporate_actions_applied: bool,
         point_in_time_validation_passed: bool,
     ) -> PublishedSnapshotArtifacts:
         bars = tuple(daily_bars)
-        _validate_snapshot_inputs(snapshot, provenance, sessions, bars)
+        closes = tuple(reference_closes)
+        _validate_snapshot_inputs(snapshot, provenance, sessions, bars, closes)
         root = Path(snapshot.storage_path)
         if root.exists():
             raise SnapshotPublicationError("An immutable snapshot storage path already exists.")
@@ -58,12 +63,16 @@ class FilesystemSnapshotArtifactPublisher:
         try:
             calendar_content = _calendar_content(provenance, sessions)
             daily_bars_content = _daily_bars_content(bars)
+            reference_closes_content = _reference_closes_content(closes)
             _write_file(temporary_root / "calendar.json", calendar_content)
             _write_file(temporary_root / "daily-bars.ndjson", daily_bars_content)
+            if reference_closes_content is not None:
+                _write_file(temporary_root / "reference-closes.ndjson", reference_closes_content)
             manifest_content = _manifest_content(
                 snapshot.snapshot_id,
                 calendar_content,
                 daily_bars_content,
+                reference_closes_content,
                 corporate_actions_applied,
                 point_in_time_validation_passed,
             )
@@ -76,6 +85,7 @@ class FilesystemSnapshotArtifactPublisher:
             str(root),
             _sha256(calendar_content),
             _sha256(daily_bars_content),
+            _sha256(reference_closes_content) if reference_closes_content is not None else None,
         )
 
 
@@ -84,6 +94,7 @@ def _validate_snapshot_inputs(
     provenance: CalendarProvenance,
     sessions: Mapping[AssetSession, CalendarSession],
     bars: tuple[DailyBar, ...],
+    closes: tuple[ReferenceClose, ...],
 ) -> None:
     if not snapshot.snapshot_id.strip():
         raise SnapshotPublicationError("DatasetSnapshot ID must not be empty.")
@@ -98,7 +109,8 @@ def _validate_snapshot_inputs(
     try:
         calendar = InMemorySnapshotCalendar(snapshot.snapshot_id, provenance, sessions)
         daily_bar_store = InMemorySnapshotDailyBars(snapshot.snapshot_id, bars)
-        SnapshotMarketData(snapshot, calendar, daily_bar_store)
+        reference_close_store = InMemorySnapshotReferenceCloses(snapshot.snapshot_id, closes)
+        SnapshotMarketData(snapshot, calendar, daily_bar_store, reference_close_store)
     except ValueError as error:
         raise SnapshotPublicationError(
             "Snapshot artifacts violate canonical invariants."
@@ -150,28 +162,49 @@ def _daily_bars_content(bars: tuple[DailyBar, ...]) -> bytes:
     return b"".join(_json_bytes(record) + b"\n" for record in records)
 
 
+def _reference_closes_content(closes: tuple[ReferenceClose, ...]) -> bytes | None:
+    if not closes:
+        return None
+    records = (
+        {
+            "asset": reference_close.asset,
+            "sessionDate": reference_close.session_date.isoformat(),
+            "close": str(reference_close.close),
+        }
+        for reference_close in sorted(closes, key=lambda item: (item.asset, item.session_date))
+    )
+    return b"".join(_json_bytes(record) + b"\n" for record in records)
+
+
 def _manifest_content(
     snapshot_id: str,
     calendar_content: bytes,
     daily_bars_content: bytes,
+    reference_closes_content: bytes | None,
     corporate_actions_applied: bool,
     point_in_time_validation_passed: bool,
 ) -> bytes:
-    return _json_bytes(
-        {
-            "formatVersion": 1,
-            "snapshotId": snapshot_id,
-            "corporateActionsApplied": corporate_actions_applied,
-            "pointInTimeValidationPassed": point_in_time_validation_passed,
-            "calendar": {"path": "calendar.json", "sha256": _sha256(calendar_content)},
-            "dailyBars": {"path": "daily-bars.ndjson", "sha256": _sha256(daily_bars_content)},
+    manifest: dict[str, object] = {
+        "formatVersion": 1,
+        "snapshotId": snapshot_id,
+        "corporateActionsApplied": corporate_actions_applied,
+        "pointInTimeValidationPassed": point_in_time_validation_passed,
+        "calendar": {"path": "calendar.json", "sha256": _sha256(calendar_content)},
+        "dailyBars": {"path": "daily-bars.ndjson", "sha256": _sha256(daily_bars_content)},
+    }
+    if reference_closes_content is not None:
+        manifest["referenceCloses"] = {
+            "path": "reference-closes.ndjson",
+            "sha256": _sha256(reference_closes_content),
         }
-    )
+    return _json_bytes(manifest)
 
 
 def _publish_manifest_last(temporary_root: Path, root: Path) -> None:
     root.mkdir()
-    for name in ("calendar.json", "daily-bars.ndjson", "manifest.json"):
+    for name in ("calendar.json", "daily-bars.ndjson", "reference-closes.ndjson", "manifest.json"):
+        if not (temporary_root / name).exists():
+            continue
         move(str(temporary_root / name), root / name)
     temporary_root.rmdir()
 

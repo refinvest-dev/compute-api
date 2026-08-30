@@ -11,7 +11,7 @@ from refinvest.marketdata.ports import (
     DatasetCorruptionError,
     MarketDataPort,
     SessionCalendarPort,
-    require_daily_bar,
+    require_close,
 )
 
 
@@ -44,9 +44,7 @@ def evaluate_benchmark_references(
     actual_period: Period,
 ) -> BenchmarkReferences:
     """Return the execution benchmark and, for cross-market strategies, signal reference."""
-    primary = evaluate_buy_and_hold_reference(
-        calendar, market_data, execution_asset, actual_period
-    )
+    primary = evaluate_buy_and_hold_reference(calendar, market_data, execution_asset, actual_period)
     secondary_reference = None
     if primary_signal_asset is not execution_asset:
         secondary_reference = evaluate_buy_and_hold_reference(
@@ -63,9 +61,7 @@ def evaluate_buy_and_hold_reference(
 ) -> BuyAndHoldReference:
     """Evaluate a cost-free normalized Close-to-Close market reference for one asset."""
     sessions = _expected_sessions_in_period(calendar, asset, actual_period)
-    closes = tuple(
-        _require_positive_close(market_data, asset, session) for session in sessions
-    )
+    closes = tuple(_require_positive_close(market_data, asset, session) for session in sessions)
     with localcontext(EXECUTION_DECIMAL_CONTEXT):
         curve = tuple(
             BenchmarkCurvePoint(session, close / closes[0])
@@ -98,7 +94,7 @@ def _expected_sessions_in_period(
 def _require_positive_close(
     market_data: MarketDataPort, asset: AssetSymbol, session: date
 ) -> Decimal:
-    close = require_daily_bar(market_data.get_daily_bar(asset.value, session)).close
+    close = require_close(market_data.get_close(asset.value, session))
     if close <= 0:
         raise DatasetCorruptionError("Daily Bar close must be positive for benchmark valuation.")
     return close

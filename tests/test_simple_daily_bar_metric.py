@@ -12,6 +12,7 @@ from refinvest.engine.temporal import TemporalResolutionError
 from refinvest.engine.validation.models import AssetSymbol, MetricReference, MetricType
 from refinvest.marketdata.domain import (
     AssetSession,
+    ClosePriceLookup,
     CompletedAssetSession,
     DailyBar,
     DailyBarAvailability,
@@ -37,6 +38,12 @@ class StaticMarketData:
 
     def get_daily_bar(self, asset: str, session_date: date) -> DailyBarLookup:
         return self._lookups[AssetSession(asset, session_date)]
+
+    def get_close(self, asset: str, session_date: date) -> ClosePriceLookup:
+        lookup = self.get_daily_bar(asset, session_date)
+        return ClosePriceLookup(
+            lookup.availability, lookup.bar.close if lookup.bar is not None else None
+        )
 
 
 def completion(asset: str, session_date: date, completed_at: datetime) -> CompletedAssetSession:
@@ -67,9 +74,7 @@ def test_simple_metric_uses_the_selected_anchor_close() -> None:
     qqq_bar = bar("QQQ", date(2025, 1, 3), "501.25")
     calendar = StaticCalendar(
         {
-            "QQQ": (
-                completion("QQQ", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),
-            ),
+            "QQQ": (completion("QQQ", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),),
         }
     )
     market_data = StaticMarketData(
@@ -84,9 +89,7 @@ def test_btc_weekend_signal_uses_qqq_last_completed_close() -> None:
     qqq_friday_bar = bar("QQQ", date(2025, 1, 3), "500")
     calendar = StaticCalendar(
         {
-            "BTCUSDT": (
-                completion("BTCUSDT", date(2025, 1, 4), datetime(2025, 1, 5, tzinfo=UTC)),
-            ),
+            "BTCUSDT": (completion("BTCUSDT", date(2025, 1, 4), datetime(2025, 1, 5, tzinfo=UTC)),),
             "QQQ": (
                 completion("QQQ", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),
                 completion("QQQ", date(2025, 1, 6), datetime(2025, 1, 6, 21, tzinfo=UTC)),
@@ -108,9 +111,7 @@ def test_btc_weekend_signal_uses_qqq_last_completed_close() -> None:
 def test_expected_anchor_without_a_daily_bar_fails_fast() -> None:
     calendar = StaticCalendar(
         {
-            "QQQ": (
-                completion("QQQ", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),
-            ),
+            "QQQ": (completion("QQQ", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),),
         }
     )
     market_data = StaticMarketData(
@@ -135,12 +136,8 @@ def test_simple_metric_is_deterministic_for_the_same_snapshot_inputs() -> None:
     vix_bar = bar("VIX", date(2025, 1, 3), "18.50")
     calendar = StaticCalendar(
         {
-            "QQQ": (
-                completion("QQQ", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),
-            ),
-            "VIX": (
-                completion("VIX", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),
-            ),
+            "QQQ": (completion("QQQ", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),),
+            "VIX": (completion("VIX", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),),
         }
     )
     market_data = StaticMarketData(
@@ -190,9 +187,10 @@ def test_metric_dispatches_each_supported_metric_type(
         }
     )
 
-    assert evaluate_metric(
-        calendar, market_data, AssetSymbol.QQQ, date(2025, 1, 6), metric
-    ) == expected
+    assert (
+        evaluate_metric(calendar, market_data, AssetSymbol.QQQ, date(2025, 1, 6), metric)
+        == expected
+    )
 
 
 @pytest.mark.parametrize(
@@ -228,9 +226,11 @@ def test_lookback_metric_uses_exact_referenced_asset_sessions(
     calendar = StaticCalendar(
         {
             "QQQ": tuple(
-                completion("QQQ", daily_bar.session_date, datetime.combine(
-                    daily_bar.session_date, datetime.min.time(), UTC
-                ))
+                completion(
+                    "QQQ",
+                    daily_bar.session_date,
+                    datetime.combine(daily_bar.session_date, datetime.min.time(), UTC),
+                )
                 for daily_bar in qqq_bars
             ),
         }
@@ -241,22 +241,23 @@ def test_lookback_metric_uses_exact_referenced_asset_sessions(
             for daily_bar in qqq_bars
         }
     )
-    assert evaluate_lookback_metric(
-        calendar,
-        market_data,
-        AssetSymbol.QQQ,
-        date(2025, 1, 6),
-        lookback_metric(AssetSymbol.QQQ, metric_type, 2),
-    ) == expected
+    assert (
+        evaluate_lookback_metric(
+            calendar,
+            market_data,
+            AssetSymbol.QQQ,
+            date(2025, 1, 6),
+            lookback_metric(AssetSymbol.QQQ, metric_type, 2),
+        )
+        == expected
+    )
 
 
 def test_cross_calendar_lookback_stays_on_the_referenced_asset_calendar() -> None:
     qqq_bars = [bar("QQQ", date(2025, 1, 2), "100"), bar("QQQ", date(2025, 1, 3), "110")]
     calendar = StaticCalendar(
         {
-            "BTCUSDT": (
-                completion("BTCUSDT", date(2025, 1, 4), datetime(2025, 1, 5, tzinfo=UTC)),
-            ),
+            "BTCUSDT": (completion("BTCUSDT", date(2025, 1, 4), datetime(2025, 1, 5, tzinfo=UTC)),),
             "QQQ": (
                 completion("QQQ", date(2025, 1, 2), datetime(2025, 1, 2, 21, tzinfo=UTC)),
                 completion("QQQ", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),
@@ -282,9 +283,7 @@ def test_lookback_history_outside_the_snapshot_fails_fast() -> None:
     qqq_bar = bar("QQQ", date(2025, 1, 3), "110")
     calendar = StaticCalendar(
         {
-            "QQQ": (
-                completion("QQQ", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),
-            ),
+            "QQQ": (completion("QQQ", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),),
         }
     )
     market_data = StaticMarketData(
@@ -346,9 +345,7 @@ def test_return_with_non_positive_lookback_close_is_dataset_corruption() -> None
             lookback_bar.asset_session: DailyBarLookup(
                 DailyBarAvailability.AVAILABLE, lookback_bar
             ),
-            anchor_bar.asset_session: DailyBarLookup(
-                DailyBarAvailability.AVAILABLE, anchor_bar
-            ),
+            anchor_bar.asset_session: DailyBarLookup(DailyBarAvailability.AVAILABLE, anchor_bar),
         }
     )
     with pytest.raises(DatasetCorruptionError) as error:

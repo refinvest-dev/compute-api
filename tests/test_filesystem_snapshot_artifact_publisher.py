@@ -15,6 +15,7 @@ from refinvest.marketdata.domain import (
     CalendarSession,
     CalendarSessionState,
     DailyBar,
+    ReferenceClose,
 )
 from refinvest.persistence.object_storage.snapshot_artifacts import (
     FilesystemSnapshotExecutionDataLoader,
@@ -87,6 +88,29 @@ def test_rejects_existing_storage_path_without_overwrite(tmp_path: Path) -> None
         )
 
     assert marker.read_text(encoding="utf-8") == "must remain"
+
+
+def test_publishes_and_replays_vix_close_only_reference_artifacts(tmp_path: Path) -> None:
+    snapshot = _snapshot(tmp_path / "snapshot-1", "snapshot-1")
+
+    FilesystemSnapshotArtifactPublisher().publish(
+        snapshot,
+        _provenance(),
+        {
+            AssetSession("VIX", date(2025, 1, 2)): CalendarSession(
+                CalendarSessionState.EXPECTED, datetime(2025, 1, 2, 21, tzinfo=UTC)
+            )
+        },
+        (),
+        [ReferenceClose("VIX", date(2025, 1, 2), Decimal("18.50"))],
+        corporate_actions_applied=False,
+        point_in_time_validation_passed=True,
+    )
+
+    loaded = FilesystemSnapshotExecutionDataLoader().load(snapshot)
+
+    assert loaded.market_data.get_close("VIX", date(2025, 1, 2)).close == Decimal("18.50")
+    assert loaded.market_data.get_daily_bar("VIX", date(2025, 1, 2)).bar is None
 
 
 def test_rejects_snapshot_calendar_provenance_mismatch_before_writing(tmp_path: Path) -> None:

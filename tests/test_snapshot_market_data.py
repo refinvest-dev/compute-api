@@ -4,10 +4,13 @@ from decimal import Decimal
 import pytest
 
 from refinvest.application.dataset_snapshots import DatasetSnapshot
+from refinvest.engine.metrics import evaluate_simple_metric
+from refinvest.engine.validation.models import AssetSymbol, MetricReference, MetricType
 from refinvest.marketdata.adapters.in_memory import (
     CalendarResolutionError,
     InMemorySnapshotCalendar,
     InMemorySnapshotDailyBars,
+    InMemorySnapshotReferenceCloses,
     SnapshotMarketData,
 )
 from refinvest.marketdata.domain import (
@@ -19,9 +22,14 @@ from refinvest.marketdata.domain import (
     DailyBar,
     DailyBarAvailability,
     DailyBarLookup,
+    ReferenceClose,
     calendar_for_asset,
 )
-from refinvest.marketdata.ports import MissingRequiredMarketDataError, require_daily_bar
+from refinvest.marketdata.ports import (
+    MissingRequiredMarketDataError,
+    require_close,
+    require_daily_bar,
+)
 
 
 def snapshot(snapshot_id: str) -> DatasetSnapshot:
@@ -99,6 +107,49 @@ def test_expected_session_data_is_not_silently_corrected() -> None:
     assert lookup.availability is DailyBarAvailability.MISSING_EXPECTED_SESSION
     with pytest.raises(MissingRequiredMarketDataError):
         require_daily_bar(lookup)
+
+
+def test_vix_close_only_reference_supports_metrics_without_fabricating_a_daily_bar() -> None:
+    session = AssetSession("VIX", date(2025, 1, 2))
+    market_data = SnapshotMarketData(
+        snapshot("snapshot-1"),
+        calendar({session: CalendarSessionState.EXPECTED}),
+        InMemorySnapshotDailyBars("snapshot-1", []),
+        InMemorySnapshotReferenceCloses(
+            "snapshot-1", [ReferenceClose("VIX", session.session_date, Decimal("17.25"))]
+        ),
+    )
+
+    assert require_close(market_data.get_close("VIX", session.session_date)) == Decimal("17.25")
+    assert market_data.get_daily_bar("VIX", session.session_date).availability is (
+        DailyBarAvailability.MISSING_EXPECTED_SESSION
+    )
+    assert evaluate_simple_metric(
+        calendar({session: CalendarSessionState.EXPECTED}),
+        market_data,
+        AssetSymbol.VIX,
+        session.session_date,
+        MetricReference(AssetSymbol.VIX, MetricType.SIMPLE, None),
+    ) == Decimal("17.25")
+
+
+def test_vix_daily_bar_is_rejected() -> None:
+    vix_bar = DailyBar(
+        "VIX",
+        date(2025, 1, 2),
+        Decimal("17"),
+        Decimal("17"),
+        Decimal("17"),
+        Decimal("17"),
+        1,
+    )
+
+    with pytest.raises(ValueError, match="close-only"):
+        SnapshotMarketData(
+            snapshot("snapshot-1"),
+            calendar({vix_bar.asset_session: CalendarSessionState.EXPECTED}),
+            InMemorySnapshotDailyBars("snapshot-1", [vix_bar]),
+        )
 
 
 def test_calendar_classified_non_trading_session_is_distinct_from_missing_data() -> None:
