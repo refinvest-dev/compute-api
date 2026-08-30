@@ -39,6 +39,10 @@ class PostgresDatasetSnapshotRepository:
             )
             return _snapshot_from_row(cursor.fetchone())
 
+    def create(self, snapshot: DatasetSnapshot) -> None:
+        """Insert immutable metadata only after its artifact has been published."""
+        _insert_snapshot(self._database_url, snapshot)
+
 
 def _snapshot_from_row(row: tuple[object, ...] | None) -> DatasetSnapshot | None:
     if row is None:
@@ -72,6 +76,10 @@ def _snapshot_from_row(row: tuple[object, ...] | None) -> DatasetSnapshot | None
 
 def insert_dataset_snapshot(database_url: str, snapshot: DatasetSnapshot) -> None:
     """Used by future ingestion code; existing snapshots are never updated."""
+    _insert_snapshot(database_url, snapshot)
+
+
+def _insert_snapshot(database_url: str, snapshot: DatasetSnapshot) -> None:
     with connect(database_url) as connection, connection.cursor() as cursor:
         cursor.execute(
             """
