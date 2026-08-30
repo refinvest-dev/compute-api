@@ -1,9 +1,11 @@
 """Engine-facing Market Data port bound to one immutable DatasetSnapshot."""
 
 from datetime import date
+from decimal import Decimal
 from typing import Protocol
 
 from refinvest.marketdata.domain import (
+    ClosePriceLookup,
     CompletedAssetSession,
     DailyBar,
     DailyBarAvailability,
@@ -28,6 +30,8 @@ class MarketDataPort(Protocol):
 
     def get_daily_bar(self, asset: str, session_date: date) -> DailyBarLookup: ...
 
+    def get_close(self, asset: str, session_date: date) -> ClosePriceLookup: ...
+
 
 class SessionCalendarPort(Protocol):
     """Immutable expected-session sequence for one pinned DatasetSnapshot."""
@@ -47,3 +51,15 @@ def require_daily_bar(lookup: DailyBarLookup) -> DailyBar:
             "The selected DatasetSnapshot lacks an expected Daily Bar."
         )
     raise ValueError("A non-trading session cannot be used where a Daily Bar is required.")
+
+
+def require_close(lookup: ClosePriceLookup) -> Decimal:
+    """Return a close only when present; never derive it from a different session."""
+    if lookup.availability is DailyBarAvailability.AVAILABLE:
+        assert lookup.close is not None
+        return lookup.close
+    if lookup.availability is DailyBarAvailability.MISSING_EXPECTED_SESSION:
+        raise MissingRequiredMarketDataError(
+            "The selected DatasetSnapshot lacks an expected close price."
+        )
+    raise ValueError("A non-trading session cannot be used where a close is required.")

@@ -77,6 +77,25 @@ class DailyBar:
         return AssetSession(self.asset, self.session_date)
 
 
+@dataclass(frozen=True)
+class ReferenceClose:
+    """A canonical close-only value for a non-executable reference asset."""
+
+    asset: str
+    session_date: date
+    close: Decimal
+
+    def __post_init__(self) -> None:
+        if self.asset != "VIX":
+            raise ValueError("Only VIX is supported as a close-only reference asset in the MVP.")
+        if self.close <= 0:
+            raise ValueError("A reference close must be positive.")
+
+    @property
+    def asset_session(self) -> AssetSession:
+        return AssetSession(self.asset, self.session_date)
+
+
 class DailyBarAvailability(StrEnum):
     AVAILABLE = "AVAILABLE"
     NON_TRADING_SESSION = "NON_TRADING_SESSION"
@@ -92,4 +111,18 @@ class DailyBarLookup:
         if (self.availability is DailyBarAvailability.AVAILABLE) != (self.bar is not None):
             raise ValueError(
                 "An available DailyBarLookup must contain a bar, and other states must not."
+            )
+
+
+@dataclass(frozen=True)
+class ClosePriceLookup:
+    """A close lookup with the same expected-session semantics as DailyBarLookup."""
+
+    availability: DailyBarAvailability
+    close: Decimal | None = None
+
+    def __post_init__(self) -> None:
+        if (self.availability is DailyBarAvailability.AVAILABLE) != (self.close is not None):
+            raise ValueError(
+                "An available ClosePriceLookup must contain a close, and other states must not."
             )

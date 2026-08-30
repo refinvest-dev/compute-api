@@ -14,6 +14,7 @@ from refinvest.engine.validation.models import (
 )
 from refinvest.marketdata.domain import (
     AssetSession,
+    ClosePriceLookup,
     CompletedAssetSession,
     DailyBar,
     DailyBarAvailability,
@@ -39,6 +40,12 @@ class StaticMarketData:
 
     def get_daily_bar(self, asset: str, session_date: date) -> DailyBarLookup:
         return self._lookups[AssetSession(asset, session_date)]
+
+    def get_close(self, asset: str, session_date: date) -> ClosePriceLookup:
+        lookup = self.get_daily_bar(asset, session_date)
+        return ClosePriceLookup(
+            lookup.availability, lookup.bar.close if lookup.bar is not None else None
+        )
 
 
 def completion(asset: str, session_date: date, completed_at: datetime) -> CompletedAssetSession:
@@ -77,9 +84,11 @@ def test_emits_only_sessions_with_a_true_condition_result() -> None:
     calendar = StaticCalendar(
         {
             "QQQ": tuple(
-                completion("QQQ", daily_bar.session_date, datetime.combine(
-                    daily_bar.session_date, datetime.min.time(), UTC
-                ))
+                completion(
+                    "QQQ",
+                    daily_bar.session_date,
+                    datetime.combine(daily_bar.session_date, datetime.min.time(), UTC),
+                )
                 for daily_bar in qqq_bars
             ),
         }

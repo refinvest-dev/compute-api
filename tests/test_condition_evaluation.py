@@ -14,6 +14,7 @@ from refinvest.engine.validation.models import (
 )
 from refinvest.marketdata.domain import (
     AssetSession,
+    ClosePriceLookup,
     CompletedAssetSession,
     DailyBar,
     DailyBarAvailability,
@@ -39,6 +40,12 @@ class StaticMarketData:
 
     def get_daily_bar(self, asset: str, session_date: date) -> DailyBarLookup:
         return self._lookups[AssetSession(asset, session_date)]
+
+    def get_close(self, asset: str, session_date: date) -> ClosePriceLookup:
+        lookup = self.get_daily_bar(asset, session_date)
+        return ClosePriceLookup(
+            lookup.availability, lookup.bar.close if lookup.bar is not None else None
+        )
 
 
 def completion(asset: str, session_date: date, completed_at: datetime) -> CompletedAssetSession:
@@ -125,9 +132,7 @@ def test_relative_cross_calendar_condition_uses_metric_dispatch() -> None:
     ("combinator", "expected"),
     [(LogicalCombinator.AND, False), (LogicalCombinator.OR, True)],
 )
-def test_combines_a_uniform_condition_group(
-    combinator: LogicalCombinator, expected: bool
-) -> None:
+def test_combines_a_uniform_condition_group(combinator: LogicalCombinator, expected: bool) -> None:
     qqq_bar = bar("QQQ", date(2025, 1, 3), "100")
     vix_bar = bar("VIX", date(2025, 1, 3), "18")
     calendar = StaticCalendar(

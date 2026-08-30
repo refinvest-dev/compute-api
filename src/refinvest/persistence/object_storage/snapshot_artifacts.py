@@ -12,6 +12,7 @@ from refinvest.application.dataset_snapshots import DatasetSnapshot
 from refinvest.marketdata.adapters.in_memory import (
     InMemorySnapshotCalendar,
     InMemorySnapshotDailyBars,
+    InMemorySnapshotReferenceCloses,
     SnapshotMarketData,
 )
 from refinvest.marketdata.domain import (
@@ -20,6 +21,7 @@ from refinvest.marketdata.domain import (
     CalendarSession,
     CalendarSessionState,
     DailyBar,
+    ReferenceClose,
 )
 
 
@@ -37,9 +39,17 @@ class FilesystemSnapshotExecutionDataLoader:
         _require_equal(_integer(manifest, "formatVersion"), 1, "manifest formatVersion")
         calendar_bytes = _read_declared_artifact(root, _object(manifest, "calendar"))
         daily_bars_bytes = _read_declared_artifact(root, _object(manifest, "dailyBars"))
+        reference_closes_bytes = (
+            _read_declared_artifact(root, _object(manifest, "referenceCloses"))
+            if "referenceCloses" in manifest
+            else None
+        )
         calendar = _calendar_from_json(snapshot, calendar_bytes)
         daily_bars = _daily_bars_from_ndjson(snapshot.snapshot_id, daily_bars_bytes)
-        market_data = SnapshotMarketData(snapshot, calendar, daily_bars)
+        reference_closes = _reference_closes_from_ndjson(
+            snapshot.snapshot_id, reference_closes_bytes
+        )
+        market_data = SnapshotMarketData(snapshot, calendar, daily_bars, reference_closes)
         return SnapshotExecutionData(
             snapshot.snapshot_id,
             calendar,
@@ -96,6 +106,31 @@ def _daily_bars_from_ndjson(snapshot_id: str, content: bytes) -> InMemorySnapsho
         return InMemorySnapshotDailyBars(snapshot_id, bars)
     except ValueError as error:
         raise SnapshotArtifactError("Daily Bar artifact is invalid.") from error
+
+
+def _reference_closes_from_ndjson(
+    snapshot_id: str, content: bytes | None
+) -> InMemorySnapshotReferenceCloses:
+    if content is None:
+        return InMemorySnapshotReferenceCloses(snapshot_id, ())
+    try:
+        lines = content.decode("utf-8").splitlines()
+    except UnicodeDecodeError as error:
+        raise SnapshotArtifactError("Reference close artifact must be UTF-8.") from error
+    try:
+        closes = tuple(
+            ReferenceClose(
+                _string(record, "asset"),
+                _date(record, "sessionDate"),
+                _decimal(record, "close"),
+            )
+            for line in lines
+            if line
+            for record in (_json_object(line.encode(), "Reference close record"),)
+        )
+        return InMemorySnapshotReferenceCloses(snapshot_id, closes)
+    except ValueError as error:
+        raise SnapshotArtifactError("Reference close artifact is invalid.") from error
 
 
 def _asset_session(record: dict[str, object]) -> AssetSession:

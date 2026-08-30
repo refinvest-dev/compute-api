@@ -12,7 +12,7 @@ from refinvest.marketdata.ports import (
     DatasetCorruptionError,
     MarketDataPort,
     SessionCalendarPort,
-    require_daily_bar,
+    require_close,
 )
 
 METRIC_DECIMAL_CONTEXT = Context(prec=28, rounding=ROUND_HALF_EVEN)
@@ -53,7 +53,7 @@ def evaluate_simple_metric(
         signal_session,
         metric.asset.value,
     )
-    return require_daily_bar(market_data.get_daily_bar(metric.asset.value, anchor_session)).close
+    return require_close(market_data.get_close(metric.asset.value, anchor_session))
 
 
 def evaluate_lookback_metric(
@@ -79,12 +79,8 @@ def evaluate_lookback_metric(
     lookback_session = resolve_metric_lookback_session(
         calendar, metric.asset.value, anchor_session, metric.window
     )
-    anchor_close = require_daily_bar(
-        market_data.get_daily_bar(metric.asset.value, anchor_session)
-    ).close
-    lookback_close = require_daily_bar(
-        market_data.get_daily_bar(metric.asset.value, lookback_session)
-    ).close
+    anchor_close = require_close(market_data.get_close(metric.asset.value, anchor_session))
+    lookback_close = require_close(market_data.get_close(metric.asset.value, lookback_session))
     if metric.metric is MetricType.CHANGE:
         return anchor_close - lookback_close
     if lookback_close <= Decimal(0):

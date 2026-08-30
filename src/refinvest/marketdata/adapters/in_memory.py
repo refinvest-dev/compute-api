@@ -10,10 +10,12 @@ from refinvest.marketdata.domain import (
     CalendarProvenance,
     CalendarSession,
     CalendarSessionState,
+    ClosePriceLookup,
     CompletedAssetSession,
     DailyBar,
     DailyBarAvailability,
     DailyBarLookup,
+    ReferenceClose,
     calendar_for_asset,
 )
 
@@ -106,6 +108,27 @@ class InMemorySnapshotDailyBars:
         return self._bars.get(asset_session)
 
 
+class InMemorySnapshotReferenceCloses:
+    """Immutable close-only values for non-executable snapshot reference assets."""
+
+    def __init__(self, snapshot_id: str, closes: Iterable[ReferenceClose]) -> None:
+        self.snapshot_id = snapshot_id
+        self._closes: dict[AssetSession, ReferenceClose] = {}
+        for reference_close in closes:
+            if reference_close.asset_session in self._closes:
+                raise ValueError(
+                    "A DatasetSnapshot cannot contain duplicate AssetSession reference closes."
+                )
+            self._closes[reference_close.asset_session] = reference_close
+
+    @property
+    def asset_sessions(self) -> frozenset[AssetSession]:
+        return frozenset(self._closes)
+
+    def get(self, asset_session: AssetSession) -> ReferenceClose | None:
+        return self._closes.get(asset_session)
+
+
 class SnapshotMarketData:
     """MarketDataPort adapter fixed to exactly one resolved DatasetSnapshot."""
 
@@ -114,14 +137,17 @@ class SnapshotMarketData:
         snapshot: DatasetSnapshot,
         calendar: InMemorySnapshotCalendar,
         daily_bars: InMemorySnapshotDailyBars,
+        reference_closes: InMemorySnapshotReferenceCloses | None = None,
     ) -> None:
         if (
             snapshot.snapshot_id != calendar.snapshot_id
             or snapshot.snapshot_id != daily_bars.snapshot_id
-        ):
-            raise ValueError(
-                "Calendar and Daily Bars must belong to the resolved DatasetSnapshot."
+            or (
+                reference_closes is not None
+                and snapshot.snapshot_id != reference_closes.snapshot_id
             )
+        ):
+            raise ValueError("Calendar and Daily Bars must belong to the resolved DatasetSnapshot.")
         if (
             snapshot.calendar_source,
             snapshot.calendar_version,
@@ -135,11 +161,26 @@ class SnapshotMarketData:
                 "Calendar provenance must match the resolved DatasetSnapshot metadata."
             )
         for asset_session in daily_bars.asset_sessions:
+            if asset_session.asset == "VIX":
+                raise ValueError("VIX must use a close-only reference record, not a Daily Bar.")
             if calendar.session_state(asset_session) is not CalendarSessionState.EXPECTED:
                 raise ValueError("A Daily Bar can only exist for an expected AssetSession.")
+        if reference_closes is not None:
+            for asset_session in reference_closes.asset_sessions:
+                if calendar.session_state(asset_session) is not CalendarSessionState.EXPECTED:
+                    raise ValueError(
+                        "A reference close can only exist for an expected AssetSession."
+                    )
+                if asset_session in daily_bars.asset_sessions:
+                    raise ValueError(
+                        "An AssetSession cannot contain both a Daily Bar and a reference close."
+                    )
         self.snapshot = snapshot
         self._calendar = calendar
         self._daily_bars = daily_bars
+        self._reference_closes = reference_closes or InMemorySnapshotReferenceCloses(
+            snapshot.snapshot_id, ()
+        )
 
     def get_daily_bar(self, asset: str, session_date: date) -> DailyBarLookup:
         asset_session = AssetSession(asset, session_date)
@@ -150,3 +191,16 @@ class SnapshotMarketData:
         if bar is None:
             return DailyBarLookup(DailyBarAvailability.MISSING_EXPECTED_SESSION)
         return DailyBarLookup(DailyBarAvailability.AVAILABLE, bar)
+
+    def get_close(self, asset: str, session_date: date) -> ClosePriceLookup:
+        asset_session = AssetSession(asset, session_date)
+        state = self._calendar.session_state(asset_session)
+        if state is CalendarSessionState.NON_TRADING:
+            return ClosePriceLookup(DailyBarAvailability.NON_TRADING_SESSION)
+        bar = self._daily_bars.get(asset_session)
+        if bar is not None:
+            return ClosePriceLookup(DailyBarAvailability.AVAILABLE, bar.close)
+        reference_close = self._reference_closes.get(asset_session)
+        if reference_close is not None:
+            return ClosePriceLookup(DailyBarAvailability.AVAILABLE, reference_close.close)
+        return ClosePriceLookup(DailyBarAvailability.MISSING_EXPECTED_SESSION)

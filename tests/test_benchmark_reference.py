@@ -10,7 +10,13 @@ from refinvest.engine.benchmark import (
 from refinvest.engine.execution.entry import EXECUTION_DECIMAL_CONTEXT
 from refinvest.engine.temporal import TemporalResolutionError
 from refinvest.engine.validation.models import AssetSymbol, Period
-from refinvest.marketdata.domain import AssetSession, DailyBar, DailyBarAvailability, DailyBarLookup
+from refinvest.marketdata.domain import (
+    AssetSession,
+    ClosePriceLookup,
+    DailyBar,
+    DailyBarAvailability,
+    DailyBarLookup,
+)
 from refinvest.marketdata.ports import DatasetCorruptionError, MissingRequiredMarketDataError
 
 
@@ -31,6 +37,12 @@ class StaticMarketData:
 
     def get_daily_bar(self, asset: str, session_date: date) -> DailyBarLookup:
         return self.bars[AssetSession(asset, session_date)]
+
+    def get_close(self, asset: str, session_date: date) -> ClosePriceLookup:
+        lookup = self.get_daily_bar(asset, session_date)
+        return ClosePriceLookup(
+            lookup.availability, lookup.bar.close if lookup.bar is not None else None
+        )
 
 
 def period() -> Period:
@@ -73,16 +85,15 @@ def market_data() -> StaticMarketData:
 
 
 def test_builds_cost_free_close_to_close_reference_metrics() -> None:
-    result = evaluate_buy_and_hold_reference(
-        calendar(), market_data(), AssetSymbol.TQQQ, period()
-    )
+    result = evaluate_buy_and_hold_reference(calendar(), market_data(), AssetSymbol.TQQQ, period())
 
     with localcontext(EXECUTION_DECIMAL_CONTEXT):
-        expected_cagr = (
-            (Decimal("1.1").ln() * (Decimal("365.25") / Decimal(5))).exp() - Decimal(1)
-        )
+        expected_cagr = (Decimal("1.1").ln() * (Decimal("365.25") / Decimal(5))).exp() - Decimal(1)
     assert tuple(point.value for point in result.equity_curve) == (
-        Decimal("1"), Decimal("1.2"), Decimal("0.9"), Decimal("1.1")
+        Decimal("1"),
+        Decimal("1.2"),
+        Decimal("0.9"),
+        Decimal("1.1"),
     )
     assert result.total_return == Decimal("0.1")
     assert result.mdd == Decimal("-0.25")
@@ -133,7 +144,9 @@ def test_non_positive_close_is_dataset_corruption() -> None:
 def test_period_without_asset_session_is_calendar_resolution_failure() -> None:
     with pytest.raises(TemporalResolutionError) as error:
         evaluate_buy_and_hold_reference(
-            calendar(), market_data(), AssetSymbol.TQQQ,
+            calendar(),
+            market_data(),
+            AssetSymbol.TQQQ,
             Period(date(2025, 2, 1), date(2025, 2, 2)),
         )
 
