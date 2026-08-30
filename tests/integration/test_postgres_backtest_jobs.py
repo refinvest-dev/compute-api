@@ -3,19 +3,30 @@
 Set REFINVEST_TEST_DATABASE_URL to an isolated database with migrations 0001-0005 applied.
 """
 
+import hashlib
+import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from os import getenv
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from psycopg import connect
 
+from refinvest.application.backtest_executor import DailyBarBacktestExecutor
+from refinvest.application.backtest_worker_host import BacktestWorkerHost
 from refinvest.application.backtests import BacktestJob, BacktestJobStatus
 from refinvest.application.dataset_snapshots import DatasetSnapshot
 from refinvest.engine.validation.models import Period
+from refinvest.persistence.object_storage.snapshot_artifacts import (
+    FilesystemSnapshotExecutionDataLoader,
+)
 from refinvest.persistence.postgres.backtest_jobs import PostgresBacktestJobRepository
-from refinvest.persistence.postgres.dataset_snapshots import insert_dataset_snapshot
+from refinvest.persistence.postgres.dataset_snapshots import (
+    PostgresDatasetSnapshotRepository,
+    insert_dataset_snapshot,
+)
 
 DATABASE_URL = getenv("REFINVEST_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(
@@ -107,3 +118,132 @@ def test_lease_owner_persists_completed_result() -> None:
             cursor.execute(
                 "DELETE FROM compute_dataset_snapshots WHERE snapshot_id = %s", (snapshot_id,)
             )
+
+
+def test_worker_completes_a_manifest_backed_zero_trade_backtest(tmp_path: Path) -> None:
+    assert DATABASE_URL is not None
+    run_id = str(uuid4())
+    snapshot_id = f"snapshot-{uuid4()}"
+    _write_zero_trade_artifacts(tmp_path, snapshot_id)
+    snapshot = DatasetSnapshot(
+        snapshot_id,
+        datetime.now(UTC),
+        "test",
+        {},
+        "adjusted",
+        str(tmp_path),
+        "test-calendar",
+        "v1",
+        "calendar-provenance-hash",
+    )
+    jobs = PostgresBacktestJobRepository(DATABASE_URL)
+    insert_dataset_snapshot(DATABASE_URL, snapshot)
+    jobs.create(
+        BacktestJob(
+            run_id,
+            None,
+            snapshot_id,
+            BacktestJobStatus.PENDING,
+            _zero_trade_request_payload(snapshot_id),
+        )
+    )
+    try:
+        worker = BacktestWorkerHost(
+            "worker-a",
+            timedelta(seconds=30),
+            timedelta(seconds=10),
+            jobs,
+            PostgresDatasetSnapshotRepository(DATABASE_URL),
+            DailyBarBacktestExecutor(FilesystemSnapshotExecutionDataLoader(), "integration-v1"),
+        )
+
+        assert worker.process_once()
+        status = jobs.get(run_id)
+
+        assert status is not None
+        assert status.status is BacktestJobStatus.COMPLETED
+        assert status.engine_version == "integration-v1"
+        assert status.result_payload is not None
+        assert status.result_payload["sampleSizeWarning"] == "ZERO"
+    finally:
+        with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
+            cursor.execute("DELETE FROM compute_backtest_jobs WHERE run_id = %s", (run_id,))
+            cursor.execute(
+                "DELETE FROM compute_dataset_snapshots WHERE snapshot_id = %s", (snapshot_id,)
+            )
+
+
+def _write_zero_trade_artifacts(path: Path, snapshot_id: str) -> None:
+    calendar_content = json.dumps(
+        {
+            "provenance": {
+                "source": "test-calendar",
+                "version": "v1",
+                "contentHash": "calendar-provenance-hash",
+            },
+            "sessions": [
+                {
+                    "asset": "QQQ",
+                    "sessionDate": "2025-01-02",
+                    "state": "EXPECTED",
+                    "completedAt": "2025-01-02T21:00:00Z",
+                },
+                {
+                    "asset": "QQQ",
+                    "sessionDate": "2025-01-03",
+                    "state": "EXPECTED",
+                    "completedAt": "2025-01-03T21:00:00Z",
+                },
+            ],
+        },
+        separators=(",", ":"),
+    ).encode()
+    daily_bars_content = (
+        b'{"asset":"QQQ","sessionDate":"2025-01-02","open":"100",'
+        b'"high":"100","low":"100","close":"100","volume":1}\n'
+        b'{"asset":"QQQ","sessionDate":"2025-01-03","open":"100",'
+        b'"high":"100","low":"100","close":"100","volume":1}\n'
+    )
+    (path / "calendar.json").write_bytes(calendar_content)
+    (path / "daily-bars.ndjson").write_bytes(daily_bars_content)
+    (path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "formatVersion": 1,
+                "snapshotId": snapshot_id,
+                "corporateActionsApplied": True,
+                "pointInTimeValidationPassed": True,
+                "calendar": {"path": "calendar.json", "sha256": _sha256(calendar_content)},
+                "dailyBars": {"path": "daily-bars.ndjson", "sha256": _sha256(daily_bars_content)},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _zero_trade_request_payload(snapshot_id: str) -> dict[str, object]:
+    return {
+        "strategyVersionId": None,
+        "strategyVersion": {
+            "primarySignalAsset": "QQQ",
+            "conditions": [
+                {
+                    "operator": "LT",
+                    "logicalCombinator": None,
+                    "operandA": {"asset": "QQQ", "metric": "SIMPLE", "window": None},
+                    "operandB": "0",
+                }
+            ],
+            "executionAsset": "QQQ",
+            "lag": 0,
+            "exit": {"holdingSignalSessions": 1},
+            "positionPolicy": None,
+        },
+        "feeModel": {"commission": "0", "slippage": "0"},
+        "period": {"start": "2025-01-02", "end": "2025-01-03"},
+        "datasetSnapshotId": snapshot_id,
+    }
+
+
+def _sha256(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
