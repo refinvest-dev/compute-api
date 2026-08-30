@@ -5,6 +5,7 @@
 - 요청 기간과 전략 관련 자산 전체의 snapshot 가용 구간 교집합을 이용해 실제 실행 기간을 결정합니다.
 - 완료 결과는 `Decimal` 문자열 및 UTC ISO-8601 timestamp 형식으로 직렬화합니다.
 - BTC 주말 signal이 다음 TQQQ 거래 세션에서 체결되는 end-to-end 회귀 테스트를 추가했습니다.
+- SHA-256 manifest로 검증하는 filesystem 기반 immutable snapshot artifact loader를 추가했습니다.
 
 ## Behavior
 
@@ -12,6 +13,7 @@
 - Loader가 반환한 데이터의 snapshot ID는 worker가 claim한 고정 snapshot ID와 일치해야 합니다.
 - Calendar 및 expected session data 오류는 terminal failure로 처리하고, 정의된 fatal error 범주로 매핑합니다.
 - Expected session 데이터 결측은 fail-fast하며, 값을 채우거나 대체하지 않습니다.
+- Artifact hash mismatch, 잘못된 calendar provenance, malformed artifact는 `DATASET_CORRUPTION`으로 처리합니다.
 
 ## Validation
 
@@ -21,9 +23,9 @@
 
 ## Follow-up
 
-- Ingestion/object storage 기반 `SnapshotExecutionDataLoader` 구현
 - 배포 환경에서 worker process 구성 및 실행
-- Immutable snapshot artifact 영속화 이후 PostgreSQL 기반 end-to-end worker 실행 테스트 추가
+- Object storage provider adapter 구현 (filesystem adapter와 동일한 manifest contract 준수)
+- PostgreSQL 기반 end-to-end worker 실행 테스트 추가
 
 ## Determinism / Point-in-Time
 

@@ -11,6 +11,7 @@ from refinvest.application.backtest_worker_host import (
     FatalErrorCode,
     TerminalBacktestFailure,
 )
+from refinvest.application.dataset_snapshots import DatasetSnapshot
 from refinvest.engine.benchmark import (
     BenchmarkReferences,
     BuyAndHoldReference,
@@ -69,7 +70,7 @@ class SnapshotExecutionData:
 class SnapshotExecutionDataLoader(Protocol):
     """Loads only artifacts belonging to the worker's already-pinned snapshot."""
 
-    def load(self, snapshot_id: str) -> SnapshotExecutionData: ...
+    def load(self, snapshot: DatasetSnapshot) -> SnapshotExecutionData: ...
 
 
 class DailyBarBacktestExecutor:
@@ -87,7 +88,7 @@ class DailyBarBacktestExecutor:
         try:
             request = request_from_payload(job.claim.request_payload)
             validate_strategy_version(request.strategy_version)
-            data = self._data_loader.load(job.dataset_snapshot.snapshot_id)
+            data = self._data_loader.load(job.dataset_snapshot)
             if data.snapshot_id != job.dataset_snapshot.snapshot_id:
                 raise _TerminalExecutionError(
                     "Loaded market data does not belong to the pinned DatasetSnapshot.",

@@ -27,8 +27,8 @@ class SnapshotLoader:
         self.data = data
         self.loaded_snapshot_ids: list[str] = []
 
-    def load(self, snapshot_id: str) -> SnapshotExecutionData:
-        self.loaded_snapshot_ids.append(snapshot_id)
+    def load(self, snapshot: DatasetSnapshot) -> SnapshotExecutionData:
+        self.loaded_snapshot_ids.append(snapshot.snapshot_id)
         return self.data
 
 
