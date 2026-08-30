@@ -1,33 +1,31 @@
 ## Summary
 
-- 고정된 `DatasetSnapshot`을 입력으로 받아 결정론적인 Engine pipeline을 실행하는 Daily Bar `BacktestJobExecutor`를 추가했습니다.
-- FastAPI transport model에 의존하지 않고 canonical job payload를 복원하며, 문자열로 저장된 `Decimal` 값을 보존합니다.
-- 요청 기간과 전략 관련 자산 전체의 snapshot 가용 구간 교집합을 이용해 실제 실행 기간을 결정합니다.
-- 완료 결과는 `Decimal` 문자열 및 UTC ISO-8601 timestamp 형식으로 직렬화합니다.
-- BTC 주말 signal이 다음 TQQQ 거래 세션에서 체결되는 end-to-end 회귀 테스트를 추가했습니다.
-- SHA-256 manifest로 검증하는 filesystem 기반 immutable snapshot artifact loader를 추가했습니다.
+- 별도 실행 가능한 `refinvest-backtest-worker` worker entrypoint를 추가했습니다.
+- PostgreSQL job/snapshot repository, filesystem snapshot loader, Daily Bar executor, worker host를 조립했습니다.
+- worker ID, engine version, lease, heartbeat, poll interval을 환경 변수로 설정할 수 있습니다.
+- SIGINT/SIGTERM 수신 시 신규 claim을 중단하고 현재 lease가 recovery 가능하도록 graceful shutdown 합니다.
+- PostgreSQL + manifest-backed snapshot 기반의 end-to-end worker integration test를 추가했습니다.
 
 ## Behavior
 
-- Executor는 `SnapshotExecutionDataLoader`를 통해서만 데이터를 받으며, vendor API 또는 mutable latest data를 조회하지 않습니다.
-- Loader가 반환한 데이터의 snapshot ID는 worker가 claim한 고정 snapshot ID와 일치해야 합니다.
-- Calendar 및 expected session data 오류는 terminal failure로 처리하고, 정의된 fatal error 범주로 매핑합니다.
-- Expected session 데이터 결측은 fail-fast하며, 값을 채우거나 대체하지 않습니다.
-- Artifact hash mismatch, 잘못된 calendar provenance, malformed artifact는 `DATASET_CORRUPTION`으로 처리합니다.
+- worker는 worker 전용 process로 실행되며 API process와 분리됩니다.
+- 실행 중에는 이미 claim 및 pin된 `DatasetSnapshot`만 사용합니다.
+- lease heartbeat는 lease duration보다 짧아야 하며, 잘못된 runtime 설정은 시작 시 거부합니다.
+- `REFINVEST_DATABASE_URL`이 없으면 worker는 시작하지 않습니다.
 
 ## Validation
 
-- `uv run pytest` — 141 passed, 2 skipped
+- `uv run pytest` — 148 passed, 3 skipped
 - `uv run ruff check .` — 통과
 - `uv run pyright` — 오류 없음
 
 ## Follow-up
 
-- 배포 환경에서 worker process 구성 및 실행
+- 배포 환경에 worker process를 추가하고 `REFINVEST_DATABASE_URL` 및 worker 환경 변수를 설정
 - Object storage provider adapter 구현 (filesystem adapter와 동일한 manifest contract 준수)
-- PostgreSQL 기반 end-to-end worker 실행 테스트 추가
+- CI에서 `REFINVEST_TEST_DATABASE_URL`을 설정해 PostgreSQL integration test 실행
 
 ## Determinism / Point-in-Time
 
-- Determinism impact: changed — 하나의 고정 snapshot을 기반으로 전체 Engine pipeline 결과를 조립합니다.
-- Point-in-Time impact: changed — signal, metric, execution scheduling이 모두 고정된 snapshot calendar와 market data만 사용합니다.
+- Determinism impact: none — worker는 기존의 pinned snapshot 및 engine version을 그대로 실행 경계에 연결합니다.
+- Point-in-Time impact: none — worker는 immutable snapshot loader 외의 market data source를 사용하지 않습니다.
