@@ -10,6 +10,7 @@ from refinvest.marketdata.domain import (
     CalendarProvenance,
     CalendarSession,
     DailyBar,
+    ReferenceClose,
 )
 
 
@@ -20,6 +21,7 @@ class SnapshotArtifactPublisher(Protocol):
         provenance: CalendarProvenance,
         sessions: Mapping[AssetSession, CalendarSession],
         daily_bars: Iterable[DailyBar],
+        reference_closes: Iterable[ReferenceClose] = (),
         *,
         corporate_actions_applied: bool,
         point_in_time_validation_passed: bool,
@@ -35,6 +37,7 @@ def publish_dataset_snapshot(
     provenance: CalendarProvenance,
     sessions: Mapping[AssetSession, CalendarSession],
     daily_bars: Iterable[DailyBar],
+    reference_closes: Iterable[ReferenceClose] = (),
     *,
     corporate_actions_applied: bool,
     point_in_time_validation_passed: bool,
@@ -47,6 +50,7 @@ def publish_dataset_snapshot(
         provenance,
         sessions,
         daily_bars,
+        reference_closes,
         corporate_actions_applied=corporate_actions_applied,
         point_in_time_validation_passed=point_in_time_validation_passed,
     )
