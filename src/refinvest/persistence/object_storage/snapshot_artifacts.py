@@ -9,6 +9,7 @@ from typing import cast
 
 from refinvest.application.backtest_executor import SnapshotExecutionData
 from refinvest.application.dataset_snapshots import DatasetSnapshot
+from refinvest.ingestion.snapshot.calendar import CalendarComponent, validate_composite_calendar
 from refinvest.marketdata.adapters.in_memory import (
     InMemorySnapshotCalendar,
     InMemorySnapshotDailyBars,
@@ -16,6 +17,7 @@ from refinvest.marketdata.adapters.in_memory import (
     SnapshotMarketData,
 )
 from refinvest.marketdata.domain import (
+    AssetCalendar,
     AssetSession,
     CalendarProvenance,
     CalendarSession,
@@ -85,15 +87,33 @@ def _calendar_from_json(snapshot: DatasetSnapshot, content: bytes) -> InMemorySn
         _string(provenance_payload, "version"),
         _string(provenance_payload, "contentHash"),
     )
-    sessions = {
-        _asset_session(record): _calendar_session(record) for record in _array(payload, "sessions")
-    }
-    if len(sessions) != len(_array(payload, "sessions")):
+    session_records = _array(payload, "sessions")
+    sessions = {_asset_session(record): _calendar_session(record) for record in session_records}
+    if len(sessions) != len(session_records):
         raise SnapshotArtifactError("Calendar artifact contains duplicate AssetSessions.")
     try:
+        if "components" in payload:
+            components = tuple(_calendar_component(item) for item in _array(payload, "components"))
+            validate_composite_calendar(provenance, components, sessions)
         return InMemorySnapshotCalendar(snapshot.snapshot_id, provenance, sessions)
     except ValueError as error:
         raise SnapshotArtifactError("Calendar artifact is invalid.") from error
+
+
+def _calendar_component(payload: dict[str, object]) -> CalendarComponent:
+    provenance_payload = _object(payload, "provenance")
+    try:
+        return CalendarComponent(
+            AssetCalendar(_string(payload, "calendar")),
+            tuple(_string_array(payload, "assets")),
+            CalendarProvenance(
+                _string(provenance_payload, "source"),
+                _string(provenance_payload, "version"),
+                _string(provenance_payload, "contentHash"),
+            ),
+        )
+    except ValueError as error:
+        raise SnapshotArtifactError("Calendar component is invalid.") from error
 
 
 def _daily_bars_from_ndjson(
@@ -200,6 +220,16 @@ def _array(payload: dict[str, object], field: str) -> list[dict[str, object]]:
     if any(not isinstance(item, dict) for item in values):
         raise SnapshotArtifactError(f"{field} must be an array of objects.")
     return [cast(dict[str, object], item) for item in values]
+
+
+def _string_array(payload: dict[str, object], field: str) -> list[str]:
+    value = payload.get(field)
+    if not isinstance(value, list):
+        raise SnapshotArtifactError(f"{field} must be an array of strings.")
+    values = cast(list[object], value)
+    if any(not isinstance(item, str) for item in values):
+        raise SnapshotArtifactError(f"{field} must be an array of strings.")
+    return [cast(str, item) for item in values]
 
 
 def _string(payload: dict[str, object], field: str) -> str:
