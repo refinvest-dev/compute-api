@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Refinvest immutable daily snapshot publication at 00:20 UTC
+
+[Timer]
+OnCalendar=*-*-* 00:20:00 UTC
+Persistent=true
+AccuracySec=1min
+Unit=refinvest-snapshot-ingestion.service
+
+[Install]
+WantedBy=timers.target
