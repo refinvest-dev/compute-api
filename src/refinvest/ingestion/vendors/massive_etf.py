@@ -142,7 +142,7 @@ def _daily_bar(asset: str, item: dict[str, object]) -> DailyBar:
             _decimal(item, "h"),
             _decimal(item, "l"),
             _decimal(item, "c"),
-            _integer(item, "v"),
+            Decimal(_integer(item, "v")),
         )
     except (InvalidOperation, OSError, OverflowError, ValueError) as error:
         raise MassiveEtfIngestionError("Massive ETF aggregate bar is invalid.") from error

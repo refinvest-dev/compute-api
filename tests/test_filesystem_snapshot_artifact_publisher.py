@@ -38,6 +38,8 @@ def test_publishes_deterministic_artifacts_that_the_loader_can_replay(tmp_path: 
     assert published.snapshot_id == snapshot.snapshot_id
     assert published.storage_path == snapshot.storage_path
     assert (Path(snapshot.storage_path) / "manifest.json").exists()
+    assert b'"formatVersion":2' in (Path(snapshot.storage_path) / "manifest.json").read_bytes()
+    assert b'"volume":"1000"' in (Path(snapshot.storage_path) / "daily-bars.ndjson").read_bytes()
     assert loaded.snapshot_id == snapshot.snapshot_id
     assert loaded.calendar.expected_sessions("QQQ") == (date(2025, 1, 2), date(2025, 1, 3))
     assert loaded.market_data.get_daily_bar("QQQ", date(2025, 1, 3)).bar == _bars()[0]

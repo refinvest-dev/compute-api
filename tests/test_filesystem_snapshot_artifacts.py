@@ -1,6 +1,7 @@
 import hashlib
 import json
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -45,7 +46,23 @@ def test_preserves_expected_session_gap_for_engine_fail_fast(tmp_path: Path) -> 
     assert lookup.availability is DailyBarAvailability.MISSING_EXPECTED_SESSION
 
 
-def _write_snapshot(tmp_path: Path, daily_bars: str | None = None) -> DatasetSnapshot:
+def test_loads_v2_decimal_daily_bar_volume_without_precision_loss(tmp_path: Path) -> None:
+    snapshot = _write_snapshot(tmp_path, format_version=2, volume='"0.125"')
+
+    data = FilesystemSnapshotExecutionDataLoader().load(snapshot)
+
+    lookup = data.market_data.get_daily_bar("QQQ", datetime(2025, 1, 2).date())
+    assert lookup.bar is not None
+    assert lookup.bar.volume == Decimal("0.125")
+
+
+def _write_snapshot(
+    tmp_path: Path,
+    daily_bars: str | None = None,
+    *,
+    format_version: int = 1,
+    volume: str = "1000",
+) -> DatasetSnapshot:
     calendar = {
         "provenance": {
             "source": "test-calendar",
@@ -67,13 +84,13 @@ def _write_snapshot(tmp_path: Path, daily_bars: str | None = None) -> DatasetSna
         if daily_bars is not None
         else (
             b'{"asset":"QQQ","sessionDate":"2025-01-02","open":"100",'
-            b'"high":"102","low":"99","close":"101","volume":1000}\n'
+            b'"high":"102","low":"99","close":"101","volume":' + volume.encode() + b"}\n"
         )
     )
     (tmp_path / "calendar.json").write_bytes(calendar_content)
     (tmp_path / "daily-bars.ndjson").write_bytes(bars_content)
     manifest = {
-        "formatVersion": 1,
+        "formatVersion": format_version,
         "snapshotId": "snapshot-1",
         "corporateActionsApplied": True,
         "pointInTimeValidationPassed": True,

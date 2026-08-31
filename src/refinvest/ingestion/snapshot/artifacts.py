@@ -155,7 +155,7 @@ def _daily_bars_content(bars: tuple[DailyBar, ...]) -> bytes:
             "high": str(bar.high),
             "low": str(bar.low),
             "close": str(bar.close),
-            "volume": bar.volume,
+            "volume": str(bar.volume),
         }
         for bar in sorted(bars, key=lambda item: (item.asset, item.session_date))
     )
@@ -185,7 +185,7 @@ def _manifest_content(
     point_in_time_validation_passed: bool,
 ) -> bytes:
     manifest: dict[str, object] = {
-        "formatVersion": 1,
+        "formatVersion": 2,
         "snapshotId": snapshot_id,
         "corporateActionsApplied": corporate_actions_applied,
         "pointInTimeValidationPassed": point_in_time_validation_passed,
