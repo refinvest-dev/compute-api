@@ -24,7 +24,8 @@ the following reproducibility-critical behavior implicit:
   never overwritten after the corresponding `DatasetSnapshot` metadata is published.
 - Each prefix contains `manifest.json`, one calendar JSON artifact, and one Daily Bar
   NDJSON artifact. A snapshot with a close-only reference asset additionally contains
-  a Reference Close NDJSON artifact. The manifest has `formatVersion: 1`, `snapshotId`,
+  a Reference Close NDJSON artifact. New artifacts use `formatVersion: 2`; the loader
+  remains compatible with v1. The manifest has `snapshotId`,
   `corporateActionsApplied`, `pointInTimeValidationPassed`, and `calendar` / `dailyBars`
   entries and, when present, a `referenceCloses` entry. Each artifact entry has a
   relative `path` and SHA-256 `sha256` hash.
@@ -35,8 +36,9 @@ the following reproducibility-critical behavior implicit:
   `EXPECTED`, an exact UTC `completedAt` timestamp. Calendar provenance must exactly match the
   `DatasetSnapshot` metadata, as required by ADR-019 and ADR-021.
 - Each Daily Bar NDJSON record preserves canonical `asset`, `sessionDate`, `open`, `high`, `low`,
-  `close`, and `volume`. Decimal price fields are encoded as decimal strings, never
-  JSON binary numbers.
+  `close`, and `volume`. In v2, all Decimal fields including `volume` are encoded as
+  decimal strings, never JSON binary numbers. v1 integer volume remains supported for
+  immutable historical snapshot replay under ADR-035.
 - Each Reference Close NDJSON record preserves only `asset`, `sessionDate`, and `close`.
   It is used for non-executable assets such as VIX; the loader must not infer an OHLCV
   Daily Bar from it.

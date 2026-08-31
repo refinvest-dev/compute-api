@@ -36,7 +36,9 @@ class FilesystemSnapshotExecutionDataLoader:
         root = Path(snapshot.storage_path)
         manifest = _json_object(_read_file(root / "manifest.json"), "manifest.json")
         _require_equal(_string(manifest, "snapshotId"), snapshot.snapshot_id, "manifest snapshotId")
-        _require_equal(_integer(manifest, "formatVersion"), 1, "manifest formatVersion")
+        format_version = _integer(manifest, "formatVersion")
+        if format_version not in {1, 2}:
+            raise SnapshotArtifactError("Unexpected manifest formatVersion.")
         calendar_bytes = _read_declared_artifact(root, _object(manifest, "calendar"))
         daily_bars_bytes = _read_declared_artifact(root, _object(manifest, "dailyBars"))
         reference_closes_bytes = (
@@ -45,7 +47,7 @@ class FilesystemSnapshotExecutionDataLoader:
             else None
         )
         calendar = _calendar_from_json(snapshot, calendar_bytes)
-        daily_bars = _daily_bars_from_ndjson(snapshot.snapshot_id, daily_bars_bytes)
+        daily_bars = _daily_bars_from_ndjson(snapshot.snapshot_id, daily_bars_bytes, format_version)
         reference_closes = _reference_closes_from_ndjson(
             snapshot.snapshot_id, reference_closes_bytes
         )
@@ -94,13 +96,17 @@ def _calendar_from_json(snapshot: DatasetSnapshot, content: bytes) -> InMemorySn
         raise SnapshotArtifactError("Calendar artifact is invalid.") from error
 
 
-def _daily_bars_from_ndjson(snapshot_id: str, content: bytes) -> InMemorySnapshotDailyBars:
+def _daily_bars_from_ndjson(
+    snapshot_id: str, content: bytes, format_version: int
+) -> InMemorySnapshotDailyBars:
     try:
         lines = content.decode("utf-8").splitlines()
     except UnicodeDecodeError as error:
         raise SnapshotArtifactError("Daily Bar artifact must be UTF-8.") from error
     bars = tuple(
-        _daily_bar(_json_object(line.encode(), "Daily Bar record")) for line in lines if line
+        _daily_bar(_json_object(line.encode(), "Daily Bar record"), format_version)
+        for line in lines
+        if line
     )
     try:
         return InMemorySnapshotDailyBars(snapshot_id, bars)
@@ -150,7 +156,7 @@ def _calendar_session(record: dict[str, object]) -> CalendarSession:
         raise SnapshotArtifactError("Calendar session record is invalid.") from error
 
 
-def _daily_bar(record: dict[str, object]) -> DailyBar:
+def _daily_bar(record: dict[str, object], format_version: int) -> DailyBar:
     return DailyBar(
         _string(record, "asset"),
         _date(record, "sessionDate"),
@@ -158,7 +164,7 @@ def _daily_bar(record: dict[str, object]) -> DailyBar:
         _decimal(record, "high"),
         _decimal(record, "low"),
         _decimal(record, "close"),
-        _integer(record, "volume"),
+        Decimal(_integer(record, "volume")) if format_version == 1 else _decimal(record, "volume"),
     )
 
 
