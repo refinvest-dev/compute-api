@@ -2,13 +2,18 @@
 
 import hashlib
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from shutil import move
 from tempfile import mkdtemp
 
 from refinvest.application.dataset_snapshots import DatasetSnapshot
+from refinvest.ingestion.snapshot.calendar import (
+    CalendarComponent,
+    calendar_session_records,
+    validate_composite_calendar,
+)
 from refinvest.marketdata.adapters.in_memory import (
     InMemorySnapshotCalendar,
     InMemorySnapshotDailyBars,
@@ -19,7 +24,6 @@ from refinvest.marketdata.domain import (
     AssetSession,
     CalendarProvenance,
     CalendarSession,
-    CalendarSessionState,
     DailyBar,
     ReferenceClose,
 )
@@ -49,19 +53,22 @@ class FilesystemSnapshotArtifactPublisher:
         daily_bars: Iterable[DailyBar],
         reference_closes: Iterable[ReferenceClose] = (),
         *,
+        calendar_components: Sequence[CalendarComponent] = (),
         corporate_actions_applied: bool,
         point_in_time_validation_passed: bool,
     ) -> PublishedSnapshotArtifacts:
         bars = tuple(daily_bars)
         closes = tuple(reference_closes)
-        _validate_snapshot_inputs(snapshot, provenance, sessions, bars, closes)
+        _validate_snapshot_inputs(
+            snapshot, provenance, sessions, bars, closes, calendar_components
+        )
         root = Path(snapshot.storage_path)
         if root.exists():
             raise SnapshotPublicationError("An immutable snapshot storage path already exists.")
         root.parent.mkdir(parents=True, exist_ok=True)
         temporary_root = Path(mkdtemp(prefix=f".{root.name}.", dir=root.parent))
         try:
-            calendar_content = _calendar_content(provenance, sessions)
+            calendar_content = _calendar_content(provenance, sessions, calendar_components)
             daily_bars_content = _daily_bars_content(bars)
             reference_closes_content = _reference_closes_content(closes)
             _write_file(temporary_root / "calendar.json", calendar_content)
@@ -95,6 +102,7 @@ def _validate_snapshot_inputs(
     sessions: Mapping[AssetSession, CalendarSession],
     bars: tuple[DailyBar, ...],
     closes: tuple[ReferenceClose, ...],
+    calendar_components: Sequence[CalendarComponent],
 ) -> None:
     if not snapshot.snapshot_id.strip():
         raise SnapshotPublicationError("DatasetSnapshot ID must not be empty.")
@@ -107,6 +115,8 @@ def _validate_snapshot_inputs(
     ) != (provenance.source, provenance.version, provenance.content_hash):
         raise SnapshotPublicationError("Calendar provenance must match DatasetSnapshot metadata.")
     try:
+        if calendar_components:
+            validate_composite_calendar(provenance, calendar_components, sessions)
         calendar = InMemorySnapshotCalendar(snapshot.snapshot_id, provenance, sessions)
         daily_bar_store = InMemorySnapshotDailyBars(snapshot.snapshot_id, bars)
         reference_close_store = InMemorySnapshotReferenceCloses(snapshot.snapshot_id, closes)
@@ -120,29 +130,36 @@ def _validate_snapshot_inputs(
 def _calendar_content(
     provenance: CalendarProvenance,
     sessions: Mapping[AssetSession, CalendarSession],
+    components: Sequence[CalendarComponent],
 ) -> bytes:
-    records: list[dict[str, object]] = []
-    for asset_session, session in sorted(
-        sessions.items(), key=lambda item: (item[0].asset, item[0].session_date)
-    ):
-        record: dict[str, object] = {
-            "asset": asset_session.asset,
-            "sessionDate": asset_session.session_date.isoformat(),
-            "state": session.state.value,
-        }
-        if session.state is CalendarSessionState.EXPECTED:
-            assert session.completed_at is not None
-            record["completedAt"] = session.completed_at.isoformat()
-        records.append(record)
-    return _json_bytes(
-        {
-            "provenance": {
-                "source": provenance.source,
-                "version": provenance.version,
-                "contentHash": provenance.content_hash,
-            },
-            "sessions": records,
-        }
+    payload: dict[str, object] = {
+        "provenance": {
+            "source": provenance.source,
+            "version": provenance.version,
+            "contentHash": provenance.content_hash,
+        },
+        "sessions": calendar_session_records(sessions),
+    }
+    if components:
+        payload["components"] = _component_records(components)
+    return _json_bytes(payload)
+
+
+def _component_records(components: Sequence[CalendarComponent]) -> list[dict[str, object]]:
+    return sorted(
+        [
+            {
+                "calendar": component.calendar.value,
+                "assets": sorted(component.assets),
+                "provenance": {
+                    "source": component.provenance.source,
+                    "version": component.provenance.version,
+                    "contentHash": component.provenance.content_hash,
+                },
+            }
+            for component in components
+        ],
+        key=lambda item: str(item["calendar"]),
     )
 
 
