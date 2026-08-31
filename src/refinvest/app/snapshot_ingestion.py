@@ -4,9 +4,10 @@ import argparse
 import json
 import re
 from collections.abc import Callable, Mapping, Sequence
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import cast
+from uuid import uuid4
 
 from refinvest.app.config import Settings, get_settings
 from refinvest.ingestion.calendars.crypto_utc import build_crypto_utc_calendar
@@ -50,33 +51,38 @@ def run_snapshot_ingestion(
     *,
     settings: Settings,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    snapshot_nonce: Callable[[], str] = lambda: uuid4().hex,
     coordinator_factory: Callable[[Settings], MvpSnapshotIngestionCoordinator] = (
         create_mvp_snapshot_ingestion_coordinator
     ),
 ) -> str:
     """Parse one explicit coverage request and publish only fully completed daily sessions."""
     parsed = _parser().parse_args(arguments)
-    start = _date_argument(parsed.start, "--start")
-    end = _date_argument(parsed.end, "--end")
     current = now()
     if current.tzinfo is not UTC:
         raise ValueError("Snapshot ingestion clock must be an exact UTC datetime.")
+    start = _date_argument(parsed.start, "--start") if parsed.start else _configured_start(settings)
+    end = _date_argument(parsed.end, "--end") if parsed.end else current.date() - timedelta(days=1)
     if start > end:
         raise ValueError("Snapshot coverage start must not exceed end.")
     if end >= current.date():
         raise ValueError("Snapshot coverage end must precede the current UTC date.")
-    if not _SNAPSHOT_ID.fullmatch(parsed.snapshot_id):
+    snapshot_id = parsed.snapshot_id or _automatic_snapshot_id(end, current, snapshot_nonce())
+    if not _SNAPSHOT_ID.fullmatch(snapshot_id):
         raise ValueError("--snapshot-id must be a safe immutable identifier.")
     if not settings.snapshot_storage_root:
         raise ValueError("REFINVEST_SNAPSHOT_STORAGE_ROOT is required for snapshot ingestion.")
-    overrides = _official_overrides(Path(parsed.us_equity_overrides))
+    override_path = parsed.us_equity_overrides or settings.us_equity_overrides_path
+    if not override_path:
+        raise ValueError("REFINVEST_US_EQUITY_OVERRIDES_PATH is required for snapshot ingestion.")
+    overrides = _official_overrides(Path(override_path))
     request = MvpSnapshotRequest(
-        parsed.snapshot_id,
+        snapshot_id,
         current.astimezone(UTC),
         MVP_SNAPSHOT_SOURCE,
         {"firstDate": start.isoformat(), "lastDate": end.isoformat()},
         MVP_ADJUSTMENT_POLICY,
-        str(Path(settings.snapshot_storage_root) / parsed.snapshot_id),
+        str(Path(settings.snapshot_storage_root) / snapshot_id),
         corporate_actions_applied=True,
         point_in_time_validation_passed=True,
     )
@@ -97,15 +103,27 @@ def snapshot_ingestion_main() -> None:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Publish one immutable MVP market-data snapshot.")
-    parser.add_argument("--snapshot-id", required=True)
-    parser.add_argument("--start", required=True, help="UTC coverage start date (YYYY-MM-DD)")
-    parser.add_argument("--end", required=True, help="UTC coverage end date (YYYY-MM-DD)")
+    parser.add_argument("--snapshot-id", help="Override the generated immutable snapshot ID")
+    parser.add_argument("--start", help="UTC coverage start date (YYYY-MM-DD)")
+    parser.add_argument("--end", help="UTC coverage end date (YYYY-MM-DD)")
     parser.add_argument(
         "--us-equity-overrides",
-        required=True,
+        required=False,
         help="UTF-8 JSON object: date -> null or exact UTC completion timestamp",
     )
     return parser
+
+
+def _configured_start(settings: Settings) -> date:
+    if not settings.snapshot_start_date:
+        raise ValueError("REFINVEST_SNAPSHOT_START_DATE is required for snapshot ingestion.")
+    return _date_argument(settings.snapshot_start_date, "REFINVEST_SNAPSHOT_START_DATE")
+
+
+def _automatic_snapshot_id(end: date, current: datetime, nonce: str) -> str:
+    if not nonce or not re.fullmatch(r"[A-Za-z0-9]+", nonce):
+        raise ValueError("Snapshot ID nonce must be alphanumeric.")
+    return f"mvp-{end:%Y%m%d}-{current:%Y%m%dT%H%M%SZ}-{nonce}"
 
 
 def _date_argument(value: str, name: str) -> date:

@@ -17,6 +17,8 @@ class Settings:
     worker_poll_seconds: int = 1
     massive_api_key: str | None = None
     snapshot_storage_root: str | None = None
+    snapshot_start_date: str | None = None
+    us_equity_overrides_path: str | None = None
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -34,6 +36,8 @@ class Settings:
             worker_poll_seconds=_positive_environment_integer("REFINVEST_WORKER_POLL_SECONDS", 1),
             massive_api_key=getenv("REFINVEST_MASSIVE_API_KEY") or None,
             snapshot_storage_root=getenv("REFINVEST_SNAPSHOT_STORAGE_ROOT") or None,
+            snapshot_start_date=getenv("REFINVEST_SNAPSHOT_START_DATE") or None,
+            us_equity_overrides_path=getenv("REFINVEST_US_EQUITY_OVERRIDES_PATH") or None,
         )
 
 
