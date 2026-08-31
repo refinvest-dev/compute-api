@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
+    "exchange-calendars>=4.10,<5",
     "fastapi[standard]>=0.141.1",
     "psycopg[binary]>=3.2",
 ]
