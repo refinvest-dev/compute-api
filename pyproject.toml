@@ -16,6 +16,7 @@ dependencies = [
 [project.scripts]
 refinvest = "refinvest:main"
 refinvest-backtest-worker = "refinvest.app.worker:worker_main"
+refinvest-publish-snapshot = "refinvest.app.snapshot_ingestion:snapshot_ingestion_main"
 
 [tool.pyright]
 include = ["src"]

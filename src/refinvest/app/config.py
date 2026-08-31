@@ -15,6 +15,8 @@ class Settings:
     worker_lease_seconds: int = 60
     worker_heartbeat_seconds: int = 15
     worker_poll_seconds: int = 1
+    massive_api_key: str | None = None
+    snapshot_storage_root: str | None = None
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -30,6 +32,8 @@ class Settings:
                 "REFINVEST_WORKER_HEARTBEAT_SECONDS", 15
             ),
             worker_poll_seconds=_positive_environment_integer("REFINVEST_WORKER_POLL_SECONDS", 1),
+            massive_api_key=getenv("REFINVEST_MASSIVE_API_KEY") or None,
+            snapshot_storage_root=getenv("REFINVEST_SNAPSHOT_STORAGE_ROOT") or None,
         )
 
 
