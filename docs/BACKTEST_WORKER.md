@@ -37,3 +37,6 @@ The snapshot timer and worker service have separate environment files and enable
 Increasing worker count is a capacity decision. Although PostgreSQL leases prevent two
 workers from claiming the same job, a multi-worker deployment requires its own throughput
 and database-capacity review.
+
+The Core-facing FastAPI process is a third, separate unit. Its internal authentication,
+private-network, and TLS deployment requirements are documented in `docs/COMPUTE_API.md`.

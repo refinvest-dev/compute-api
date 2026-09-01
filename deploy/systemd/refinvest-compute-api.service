@@ -1,0 +1,24 @@
+[Unit]
+Description=Refinvest internal Compute API
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=3h
+StartLimitBurst=3
+
+[Service]
+Type=exec
+User=refinvest
+Group=refinvest
+WorkingDirectory=/opt/refinvest/compute-api
+EnvironmentFile=/etc/refinvest/compute-api.env
+ExecStart=/opt/refinvest/compute-api/.venv/bin/uvicorn refinvest.app.main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=15s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target
