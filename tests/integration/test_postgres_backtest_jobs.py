@@ -1,6 +1,6 @@
 """PostgreSQL worker lifecycle integration checks.
 
-Set REFINVEST_TEST_DATABASE_URL to an isolated database with migrations 0001-0006 applied.
+Set REFINVEST_TEST_DATABASE_URL to an isolated database with migrations 0001-0007 applied.
 """
 
 import hashlib
@@ -153,6 +153,60 @@ def test_lease_owner_persists_completed_result() -> None:
             cursor.execute(
                 "DELETE FROM compute_dataset_snapshots WHERE snapshot_id = %s", (snapshot_id,)
             )
+
+
+def test_cleanup_removes_only_expired_terminal_jobs() -> None:
+    assert DATABASE_URL is not None
+    repository = PostgresBacktestJobRepository(DATABASE_URL)
+    expired_completed = str(uuid4())
+    expired_failed = str(uuid4())
+    fresh_completed = str(uuid4())
+    pending = str(uuid4())
+    run_ids = (expired_completed, expired_failed, fresh_completed, pending)
+    for run_id in run_ids:
+        repository.create(BacktestJob(run_id, None, None, BacktestJobStatus.PENDING, {}))
+    with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE compute_backtest_jobs
+            SET status = 'COMPLETED', terminal_at = CURRENT_TIMESTAMP - INTERVAL '25 hours',
+                completed_at = CURRENT_TIMESTAMP - INTERVAL '25 hours',
+                result_payload = '{}'::jsonb, actual_period_start = DATE '2025-01-01',
+                actual_period_end = DATE '2025-01-01', engine_version = 'test'
+            WHERE run_id = %s
+            """,
+            (expired_completed,),
+        )
+        cursor.execute(
+            """
+            UPDATE compute_backtest_jobs
+            SET status = 'FAILED', terminal_at = CURRENT_TIMESTAMP - INTERVAL '25 hours'
+            WHERE run_id = %s
+            """,
+            (expired_failed,),
+        )
+        cursor.execute(
+            """
+            UPDATE compute_backtest_jobs
+            SET status = 'COMPLETED', terminal_at = CURRENT_TIMESTAMP - INTERVAL '23 hours',
+                completed_at = CURRENT_TIMESTAMP - INTERVAL '23 hours',
+                result_payload = '{}'::jsonb, actual_period_start = DATE '2025-01-01',
+                actual_period_end = DATE '2025-01-01', engine_version = 'test'
+            WHERE run_id = %s
+            """,
+            (fresh_completed,),
+        )
+    try:
+        assert repository.delete_expired_terminal_jobs(timedelta(hours=24), batch_size=1) == 1
+        assert repository.delete_expired_terminal_jobs(timedelta(hours=24), batch_size=1) == 1
+        assert repository.delete_expired_terminal_jobs(timedelta(hours=24), batch_size=1) == 0
+        assert repository.get(expired_completed) is None
+        assert repository.get(expired_failed) is None
+        assert repository.get(fresh_completed) is not None
+        assert repository.get(pending) is not None
+    finally:
+        with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
+            cursor.execute("DELETE FROM compute_backtest_jobs WHERE run_id = ANY(%s)", (run_ids,))
 
 
 def test_worker_completes_a_manifest_backed_zero_trade_backtest(tmp_path: Path) -> None:

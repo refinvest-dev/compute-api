@@ -10,7 +10,8 @@ Accepted for the initial worker foundation.
 - Workers use `worker_id`, `lease_expires_at`, and `heartbeat_at`. A stale `RUNNING` job is reclaimed without returning it to `PENDING`.
 - Snapshot resolution occurs during claim. The explicit requested snapshot is verified; otherwise the latest snapshot is selected once. The selected ID is pinned before work begins.
 - Snapshot/data integrity failures are terminal `FAILED` and are never retried. Transient infrastructure failures retry the same pinned snapshot at most three times with 30-second, 2-minute, and 10-minute delays.
-- Terminal jobs are retained for 24 hours. `PENDING` and `RUNNING` jobs are excluded from cleanup.
+- Terminal job retention and cleanup are defined by ADR-041. `PENDING` and `RUNNING` jobs
+  are excluded from cleanup.
 
 ## Consequences
 

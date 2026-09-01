@@ -97,7 +97,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/BacktestStatusResponse'
         '404':
-          description: 존재하지 않는 runId.
+          description: |
+            존재하지 않는 runId 또는 24시간 Compute runtime retention이 만료되어 정리된 terminal job.
+            Core는 이 응답을 근거로 동일한 논리 요청을 다시 제출하지 않는다(ADR-041).
           content:
             application/json:
               schema:

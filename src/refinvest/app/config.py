@@ -15,6 +15,8 @@ class Settings:
     worker_lease_seconds: int = 60
     worker_heartbeat_seconds: int = 15
     worker_poll_seconds: int = 1
+    backtest_job_retention_seconds: int = 86_400
+    backtest_job_cleanup_batch_size: int = 1_000
     massive_api_key: str | None = None
     snapshot_storage_root: str | None = None
     snapshot_storage_backend: str = "filesystem"
@@ -38,6 +40,12 @@ class Settings:
                 "REFINVEST_WORKER_HEARTBEAT_SECONDS", 15
             ),
             worker_poll_seconds=_positive_environment_integer("REFINVEST_WORKER_POLL_SECONDS", 1),
+            backtest_job_retention_seconds=_positive_environment_integer(
+                "REFINVEST_BACKTEST_JOB_RETENTION_SECONDS", 86_400
+            ),
+            backtest_job_cleanup_batch_size=_positive_environment_integer(
+                "REFINVEST_BACKTEST_JOB_CLEANUP_BATCH_SIZE", 1_000
+            ),
             massive_api_key=getenv("REFINVEST_MASSIVE_API_KEY") or None,
             snapshot_storage_root=getenv("REFINVEST_SNAPSHOT_STORAGE_ROOT") or None,
             snapshot_storage_backend=getenv("REFINVEST_SNAPSHOT_STORAGE_BACKEND") or "filesystem",

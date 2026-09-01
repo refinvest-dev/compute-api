@@ -10,6 +10,8 @@ Accepted for the Daily Bar MVP.
 - A lease owner alone may transition `RUNNING` to `COMPLETED`; the transition stores canonical JSONB result payload, actual period, engine version, and completion time atomically.
 - Canonical runtime payloads preserve Decimal values as strings and timestamps as UTC ISO-8601 strings.
 - `signalExecutionDelay` remains absent until its semantics are defined.
+- Runtime results are retained and cleaned up under ADR-041; Core owns their long-term
+  persistence before the 24-hour Compute retention horizon expires.
 
 ## Consequences
 
