@@ -128,13 +128,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required: [assets]
-                properties:
-                  assets:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Asset'
+                $ref: '#/components/schemas/AssetListResponse'
 
   /assets/{symbol}/availability:
     get:
@@ -161,6 +155,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: 지원 Asset이지만 latest published DatasetSnapshot이 없거나 해당 asset data가 없음.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatasetUnavailableErrorResponse'
 
   /series:
     get:
@@ -612,18 +612,21 @@ components:
 
     Asset:
       type: object
-      required: [symbol, calendar, listingDate, dataAvailability]
+      required: [symbol, calendar, inceptionDate, executionEnabled]
       properties:
         symbol:
           $ref: '#/components/schemas/AssetSymbol'
         calendar:
           $ref: '#/components/schemas/Calendar'
           description: 시장 구분은 이 값으로 충분하다(US_EQUITY↔주식/ETF, CRYPTO_UTC↔크립토). 별도 market 필드 없음(`docs/DOMAIN.md` §2.1).
-        listingDate:
+        inceptionDate:
           type: string
           format: date
+        executionEnabled:
+          type: boolean
         dataAvailability:
           $ref: '#/components/schemas/DataAvailability'
+          nullable: true
         corporateActions:
           type: array
           items:
@@ -631,15 +634,46 @@ components:
 
     AssetAvailability:
       type: object
-      required: [symbol, listingDate, dataAvailability]
+      required: [symbol, inceptionDate, dataAvailability, datasetSnapshotId, snapshotCreatedAt]
       properties:
         symbol:
           $ref: '#/components/schemas/AssetSymbol'
-        listingDate:
+        inceptionDate:
           type: string
           format: date
         dataAvailability:
           $ref: '#/components/schemas/DataAvailability'
+        datasetSnapshotId:
+          type: string
+        snapshotCreatedAt:
+          type: string
+          format: date-time
+
+    AssetListResponse:
+      type: object
+      required: [assets]
+      properties:
+        assets:
+          type: array
+          items:
+            $ref: '#/components/schemas/Asset'
+        datasetSnapshotId:
+          type: string
+          nullable: true
+        snapshotCreatedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    DatasetUnavailableErrorResponse:
+      type: object
+      required: [message, errorCode]
+      properties:
+        message:
+          type: string
+        errorCode:
+          type: string
+          enum: [DATASET_UNAVAILABLE]
 
     SeriesMetric:
       type: string
