@@ -21,3 +21,4 @@ Accepted for the initial worker foundation.
   `Idempotency-Key`; Compute never infers deduplication from request content alone.
 - Backtest attempt deadlines and process isolation are defined by ADR-042.
 - Worker operational events and warning thresholds are defined by ADR-043.
+- Global active-job admission capacity is defined by ADR-044.

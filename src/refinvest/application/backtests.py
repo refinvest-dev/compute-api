@@ -53,18 +53,29 @@ class BacktestIdempotencyConflict(ValueError):
     """One idempotency key was reused for a different canonical request."""
 
 
+class BacktestCapacityExceeded(ValueError):
+    """No global Compute execution capacity is available for a new submission."""
+
+
 class BacktestJobRepository(Protocol):
     def create(self, job: BacktestJob) -> None: ...
 
     def create_idempotently(
-        self, job: BacktestJob, idempotency_key_hash: str, request_fingerprint: str
+        self,
+        job: BacktestJob,
+        idempotency_key_hash: str,
+        request_fingerprint: str,
+        active_job_limit: int,
     ) -> BacktestSubmission: ...
 
     def get(self, run_id: str) -> BacktestJobStatusView | None: ...
 
 
 def submit_backtest(
-    request: BacktestRequest, idempotency_key: str, repository: BacktestJobRepository
+    request: BacktestRequest,
+    idempotency_key: str,
+    repository: BacktestJobRepository,
+    active_job_limit: int,
 ) -> BacktestSubmission:
     """Validate and durably accept a request without starting execution."""
     validate_strategy_version(request.strategy_version)
@@ -77,7 +88,10 @@ def submit_backtest(
         request_payload=request_payload,
     )
     return repository.create_idempotently(
-        job, _idempotency_key_hash(idempotency_key), _request_fingerprint(request_payload)
+        job,
+        _idempotency_key_hash(idempotency_key),
+        _request_fingerprint(request_payload),
+        active_job_limit,
     )
 
 

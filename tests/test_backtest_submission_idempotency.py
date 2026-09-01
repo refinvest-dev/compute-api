@@ -4,6 +4,7 @@ from decimal import Decimal
 import pytest
 
 from refinvest.application.backtests import (
+    BacktestCapacityExceeded,
     BacktestIdempotencyConflict,
     BacktestJob,
     BacktestJobStatusView,
@@ -32,7 +33,11 @@ class FakeBacktestJobRepository:
         self.jobs.append(job)
 
     def create_idempotently(
-        self, job: BacktestJob, idempotency_key_hash: str, request_fingerprint: str
+        self,
+        job: BacktestJob,
+        idempotency_key_hash: str,
+        request_fingerprint: str,
+        active_job_limit: int,
     ) -> BacktestSubmission:
         existing = self.idempotency.get(idempotency_key_hash)
         if existing is not None:
@@ -40,6 +45,8 @@ class FakeBacktestJobRepository:
             if fingerprint != request_fingerprint:
                 raise BacktestIdempotencyConflict("different request")
             return submission
+        if len(self.jobs) >= active_job_limit:
+            raise BacktestCapacityExceeded("capacity exceeded")
         submission = BacktestSubmission(job.run_id, job.strategy_version_id)
         self.idempotency[idempotency_key_hash] = (request_fingerprint, submission)
         self.create(job)
@@ -54,8 +61,8 @@ def test_reuses_the_original_run_id_for_the_same_key_and_canonical_request() -> 
     repository = FakeBacktestJobRepository()
     key = "d9428888-122b-4f8a-8a95-2c5b31eb3380"
 
-    first = submit_backtest(_request("snapshot-1"), key, repository)
-    replay = submit_backtest(_request("snapshot-1"), key, repository)
+    first = submit_backtest(_request("snapshot-1"), key, repository, 20)
+    replay = submit_backtest(_request("snapshot-1"), key, repository, 20)
 
     assert replay == first
     assert len(repository.jobs) == 1
@@ -64,10 +71,25 @@ def test_reuses_the_original_run_id_for_the_same_key_and_canonical_request() -> 
 def test_rejects_the_same_key_when_the_canonical_request_changes() -> None:
     repository = FakeBacktestJobRepository()
     key = "d9428888-122b-4f8a-8a95-2c5b31eb3380"
-    submit_backtest(_request("snapshot-1"), key, repository)
+    submit_backtest(_request("snapshot-1"), key, repository, 20)
 
     with pytest.raises(BacktestIdempotencyConflict):
-        submit_backtest(_request("snapshot-2"), key, repository)
+        submit_backtest(_request("snapshot-2"), key, repository, 20)
+
+
+def test_capacity_rejection_creates_no_idempotency_record() -> None:
+    repository = FakeBacktestJobRepository()
+    submit_backtest(_request("snapshot-1"), "d9428888-122b-4f8a-8a95-2c5b31eb3380", repository, 1)
+
+    with pytest.raises(BacktestCapacityExceeded):
+        submit_backtest(
+            _request("snapshot-2"),
+            "72c6ac13-1f3b-4eec-8db3-7c7ba27df10e",
+            repository,
+            1,
+        )
+
+    assert len(repository.idempotency) == 1
 
 
 def _request(snapshot_id: str) -> BacktestRequest:

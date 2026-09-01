@@ -17,6 +17,7 @@ from psycopg import connect
 from refinvest.application.backtest_executor import DailyBarBacktestExecutor
 from refinvest.application.backtest_worker_host import BacktestWorkerHost
 from refinvest.application.backtests import (
+    BacktestCapacityExceeded,
     BacktestIdempotencyConflict,
     BacktestJob,
     BacktestJobStatus,
@@ -99,6 +100,7 @@ def test_idempotent_submission_is_exclusive_and_rejects_different_payload() -> N
             BacktestJob(run_id, "strategy-v1", None, BacktestJobStatus.PENDING, {"value": "1"}),
             key_hash,
             "fingerprint-1",
+            20,
         ).run_id
 
     try:
@@ -111,11 +113,55 @@ def test_idempotent_submission_is_exclusive_and_rejects_different_payload() -> N
                 BacktestJob(str(uuid4()), "strategy-v1", None, BacktestJobStatus.PENDING, {}),
                 key_hash,
                 "fingerprint-2",
+                20,
             )
     finally:
         with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
             cursor.execute(
                 "DELETE FROM compute_backtest_jobs WHERE idempotency_key_hash = %s", (key_hash,)
+            )
+
+
+def test_capacity_admission_is_exclusive_and_existing_replay_bypasses_the_limit() -> None:
+    assert DATABASE_URL is not None
+    repository = PostgresBacktestJobRepository(DATABASE_URL)
+    key_hashes = (
+        hashlib.sha256(str(uuid4()).encode()).hexdigest(),
+        hashlib.sha256(str(uuid4()).encode()).hexdigest(),
+    )
+    run_ids = (str(uuid4()), str(uuid4()))
+
+    def submit(run_id: str, key_hash: str) -> str:
+        try:
+            return repository.create_idempotently(
+                BacktestJob(run_id, "strategy-v1", None, BacktestJobStatus.PENDING, {}),
+                key_hash,
+                key_hash,
+                1,
+            ).run_id
+        except BacktestCapacityExceeded:
+            return "capacity-exceeded"
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            accepted = list(
+                executor.map(lambda item: submit(*item), zip(run_ids, key_hashes, strict=True))
+            )
+        run_id = next(value for value in accepted if value != "capacity-exceeded")
+        assert accepted.count("capacity-exceeded") == 1
+
+        replay = repository.create_idempotently(
+            BacktestJob(str(uuid4()), "strategy-v1", None, BacktestJobStatus.PENDING, {}),
+            key_hashes[accepted.index(run_id)],
+            key_hashes[accepted.index(run_id)],
+            1,
+        )
+        assert replay.run_id == run_id
+    finally:
+        with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM compute_backtest_jobs WHERE idempotency_key_hash = ANY(%s)",
+                (key_hashes,),
             )
 
 

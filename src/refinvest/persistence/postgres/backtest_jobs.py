@@ -8,6 +8,7 @@ from psycopg.types.json import Jsonb
 
 from refinvest.application.backtest_workers import ClaimedBacktestJob
 from refinvest.application.backtests import (
+    BacktestCapacityExceeded,
     BacktestIdempotencyConflict,
     BacktestJob,
     BacktestJobStatus,
@@ -39,17 +40,50 @@ class PostgresBacktestJobRepository:
             )
 
     def create_idempotently(
-        self, job: BacktestJob, idempotency_key_hash: str, request_fingerprint: str
+        self,
+        job: BacktestJob,
+        idempotency_key_hash: str,
+        request_fingerprint: str,
+        active_job_limit: int,
     ) -> BacktestSubmission:
+        if active_job_limit <= 0:
+            raise ValueError("active_job_limit must be positive.")
         with connect(self._database_url) as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_xact_lock(734201891031)")
+            cursor.execute(
+                """
+                SELECT run_id, strategy_version_id, request_fingerprint
+                FROM compute_backtest_jobs
+                WHERE idempotency_key_hash = %s
+                """,
+                (idempotency_key_hash,),
+            )
+            existing = cursor.fetchone()
+            if existing is not None:
+                run_id, strategy_version_id, existing_fingerprint = cast(
+                    tuple[str, str | None, str], existing
+                )
+                if existing_fingerprint != request_fingerprint:
+                    raise BacktestIdempotencyConflict(
+                        "Idempotency-Key was reused for a different request."
+                    )
+                return BacktestSubmission(str(run_id), strategy_version_id)
+            cursor.execute(
+                """
+                SELECT COUNT(*)
+                FROM compute_backtest_jobs
+                WHERE status IN ('PENDING', 'RUNNING')
+                """
+            )
+            active_job_count = cast(tuple[int], cursor.fetchone())[0]
+            if active_job_count >= active_job_limit:
+                raise BacktestCapacityExceeded("Compute active-job capacity is exhausted.")
             cursor.execute(
                 """
                 INSERT INTO compute_backtest_jobs
                     (run_id, strategy_version_id, dataset_snapshot_id, status, request_payload,
                      idempotency_key_hash, request_fingerprint)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (idempotency_key_hash) WHERE idempotency_key_hash IS NOT NULL
-                    DO NOTHING
                 RETURNING run_id, strategy_version_id
                 """,
                 (
@@ -63,25 +97,9 @@ class PostgresBacktestJobRepository:
                 ),
             )
             row = cursor.fetchone()
-            if row is not None:
-                run_id, strategy_version_id = cast(tuple[str, str | None], row)
-                return BacktestSubmission(str(run_id), strategy_version_id)
-            cursor.execute(
-                """
-                SELECT run_id, strategy_version_id, request_fingerprint
-                FROM compute_backtest_jobs
-                WHERE idempotency_key_hash = %s
-                """,
-                (idempotency_key_hash,),
-            )
-            existing = cursor.fetchone()
-        if existing is None:
+        if row is None:
             raise RuntimeError("Idempotent backtest submission was not persisted.")
-        run_id, strategy_version_id, existing_fingerprint = cast(
-            tuple[str, str | None, str], existing
-        )
-        if existing_fingerprint != request_fingerprint:
-            raise BacktestIdempotencyConflict("Idempotency-Key was reused for a different request.")
+        run_id, strategy_version_id = cast(tuple[str, str | None], row)
         return BacktestSubmission(str(run_id), strategy_version_id)
 
     def get(self, run_id: str) -> BacktestJobStatusView | None:

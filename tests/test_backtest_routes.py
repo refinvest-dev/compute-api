@@ -9,6 +9,7 @@ from refinvest.api.dependencies.backtests import get_backtest_job_repository
 from refinvest.app.config import Settings, get_settings
 from refinvest.app.main import app
 from refinvest.application.backtests import (
+    BacktestCapacityExceeded,
     BacktestIdempotencyConflict,
     BacktestJob,
     BacktestJobRepository,
@@ -29,7 +30,11 @@ class FakeBacktestJobRepository:
         self.jobs[job.run_id] = job
 
     def create_idempotently(
-        self, job: BacktestJob, idempotency_key_hash: str, request_fingerprint: str
+        self,
+        job: BacktestJob,
+        idempotency_key_hash: str,
+        request_fingerprint: str,
+        active_job_limit: int,
     ) -> BacktestSubmission:
         existing = self.idempotency.get(idempotency_key_hash)
         if existing is not None:
@@ -37,6 +42,12 @@ class FakeBacktestJobRepository:
             if fingerprint != request_fingerprint:
                 raise BacktestIdempotencyConflict("different request")
             return submission
+        active_jobs = sum(
+            job.status in (BacktestJobStatus.PENDING, BacktestJobStatus.RUNNING)
+            for job in self.jobs.values()
+        )
+        if active_jobs >= active_job_limit:
+            raise BacktestCapacityExceeded("capacity exceeded")
         submission = BacktestSubmission(job.run_id, job.strategy_version_id)
         self.idempotency[idempotency_key_hash] = (request_fingerprint, submission)
         self.create(job)
@@ -167,6 +178,32 @@ def test_submission_rejects_idempotency_key_reused_for_another_request() -> None
     assert conflict.status_code == 409
     assert conflict.json() == {"message": "Idempotency-Key was reused for a different request."}
     assert len(repository.jobs) == 1
+
+
+def test_submission_rejects_new_work_at_capacity_but_replays_existing_work() -> None:
+    repository = FakeBacktestJobRepository()
+    with configured_client(repository) as client:
+        accepted = client.post("/backtests", headers=headers(), json=valid_request())
+        for index in range(19):
+            repository.jobs[f"occupied-{index}"] = BacktestJob(
+                f"occupied-{index}", None, None, BacktestJobStatus.PENDING, {}
+            )
+        exhausted = client.post(
+            "/backtests",
+            headers=headers("72c6ac13-1f3b-4eec-8db3-7c7ba27df10e"),
+            json=valid_request(),
+        )
+        replay = client.post("/backtests", headers=headers(), json=valid_request())
+
+    assert accepted.status_code == replay.status_code == 202
+    assert replay.json() == accepted.json()
+    assert exhausted.status_code == 503
+    assert exhausted.headers["Retry-After"] == "30"
+    assert exhausted.json() == {
+        "message": "Compute active-job capacity is temporarily exhausted.",
+        "errorCode": "BACKTEST_CAPACITY_EXCEEDED",
+    }
+    assert len(repository.jobs) == 20
 
 
 def test_submission_requires_uuid_v4_idempotency_key() -> None:
