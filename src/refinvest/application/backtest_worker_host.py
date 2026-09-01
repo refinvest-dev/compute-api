@@ -19,6 +19,7 @@ FatalErrorCode = Literal[
     "DATASET_CORRUPTION",
     "CALENDAR_RESOLUTION_FAILED",
     "PRICE_DATA_MISSING",
+    "EXECUTION_TIMEOUT",
 ]
 
 

@@ -19,3 +19,4 @@ Accepted for the initial worker foundation.
 - Worker claim recovery requires lease and retry metadata in the Compute-owned job table.
 - `POST /backtests` idempotency is defined by ADR-040. Core retries preserve its
   `Idempotency-Key`; Compute never infers deduplication from request content alone.
+- Backtest attempt deadlines and process isolation are defined by ADR-042.

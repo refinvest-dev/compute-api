@@ -416,10 +416,11 @@ components:
         - DATASET_CORRUPTION
         - CALENDAR_RESOLUTION_FAILED
         - PRICE_DATA_MISSING
+        - EXECUTION_TIMEOUT
         - DSL_INVALID
       description: |
-        `docs/DECISIONS.md` ADR-005 Fatal Error 5종을 그대로 코드화. 이 목록이 바뀌면 ADR-005를
-        먼저 갱신한다(`AI_AGENT.md` §1).
+        데이터/계산 fatal error와 terminal execution timeout의 Compute error code. 시간 제한은
+        ADR-042에 정의되며, 이 목록 변경은 관련 ADR과 함께 계약으로 검토한다.
 
     BacktestResultMetrics:
       type: object

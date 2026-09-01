@@ -118,6 +118,28 @@ def test_terminal_failure_is_recorded_without_retry() -> None:
     assert jobs.retries == []
 
 
+def test_execution_timeout_is_recorded_without_retry() -> None:
+    jobs = FakeJobs([claim()])
+    worker = host(
+        jobs,
+        FakeExecutor(
+            TerminalBacktestFailure(
+                "Backtest execution exceeded the configured time limit.", "EXECUTION_TIMEOUT"
+            )
+        ),
+    )
+    assert worker.process_once()
+    assert jobs.failed == [
+        (
+            "run-1",
+            "worker-1",
+            "Backtest execution exceeded the configured time limit.",
+            "EXECUTION_TIMEOUT",
+        )
+    ]
+    assert jobs.retries == []
+
+
 def test_successful_execution_is_persisted_by_lease_owner() -> None:
     jobs = FakeJobs([claim()])
     outcome = CompletedBacktestExecution(

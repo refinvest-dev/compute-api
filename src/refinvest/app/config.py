@@ -15,6 +15,7 @@ class Settings:
     worker_lease_seconds: int = 60
     worker_heartbeat_seconds: int = 15
     worker_poll_seconds: int = 1
+    backtest_execution_timeout_seconds: int = 600
     backtest_job_retention_seconds: int = 86_400
     backtest_job_cleanup_batch_size: int = 1_000
     massive_api_key: str | None = None
@@ -40,6 +41,9 @@ class Settings:
                 "REFINVEST_WORKER_HEARTBEAT_SECONDS", 15
             ),
             worker_poll_seconds=_positive_environment_integer("REFINVEST_WORKER_POLL_SECONDS", 1),
+            backtest_execution_timeout_seconds=_positive_environment_integer(
+                "REFINVEST_BACKTEST_EXECUTION_TIMEOUT_SECONDS", 600
+            ),
             backtest_job_retention_seconds=_positive_environment_integer(
                 "REFINVEST_BACKTEST_JOB_RETENTION_SECONDS", 86_400
             ),

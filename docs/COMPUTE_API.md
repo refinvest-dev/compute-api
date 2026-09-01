@@ -20,6 +20,13 @@ within that period. Afterwards `GET /backtests/{runId}` returns `404`, which mea
 an unknown run or an expired Compute runtime record; it does not authorize re-submission of
 the same logical request. See ADR-041.
 
+## Backtest execution deadline
+
+One snapshot-pinned execution attempt has a 10-minute wall-clock limit. A limit breach is
+terminal `FAILED` with `errorCode: EXECUTION_TIMEOUT`; Compute does not retry it
+automatically. Core may surface the failure and create a distinct, new user submission when
+appropriate. See ADR-042.
+
 ## EC2 systemd deployment
 
 Install `deploy/systemd/refinvest-compute-api.service` on the existing always-on Compute
