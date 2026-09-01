@@ -68,3 +68,6 @@ Enable the timer on exactly one Compute EC2 instance. A standby instance may ret
 files but must leave the timer disabled. Configure the platform monitoring route to alert
 when the service fails or when no successful daily execution is observed; the unit's
 15-minute retry is not an alert substitute.
+
+The durable backtest worker is a separate long-running service. Its systemd deployment
+and stop/recovery procedure are documented in `docs/BACKTEST_WORKER.md`.
