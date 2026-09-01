@@ -1,5 +1,7 @@
 """Durable Backtest submission use case, independent of HTTP and PostgreSQL."""
 
+import hashlib
+import json
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import StrEnum
@@ -39,31 +41,43 @@ class BacktestJobStatusView:
     result_payload: dict[str, object] | None = None
 
 
+@dataclass(frozen=True)
+class BacktestSubmission:
+    """The stable original acceptance returned for an idempotent submission."""
+
+    run_id: str
+    strategy_version_id: str | None
+
+
+class BacktestIdempotencyConflict(ValueError):
+    """One idempotency key was reused for a different canonical request."""
+
+
 class BacktestJobRepository(Protocol):
     def create(self, job: BacktestJob) -> None: ...
+
+    def create_idempotently(
+        self, job: BacktestJob, idempotency_key_hash: str, request_fingerprint: str
+    ) -> BacktestSubmission: ...
 
     def get(self, run_id: str) -> BacktestJobStatusView | None: ...
 
 
 def submit_backtest(
-    request: BacktestRequest, repository: BacktestJobRepository
-) -> BacktestJobStatusView:
+    request: BacktestRequest, idempotency_key: str, repository: BacktestJobRepository
+) -> BacktestSubmission:
     """Validate and durably accept a request without starting execution."""
     validate_strategy_version(request.strategy_version)
+    request_payload = _request_payload(request)
     job = BacktestJob(
         run_id=str(uuid4()),
         strategy_version_id=request.strategy_version_id,
         dataset_snapshot_id=request.dataset_snapshot_id,
         status=BacktestJobStatus.PENDING,
-        request_payload=_request_payload(request),
+        request_payload=request_payload,
     )
-    repository.create(job)
-    return _status_view(job)
-
-
-def _status_view(job: BacktestJob) -> BacktestJobStatusView:
-    return BacktestJobStatusView(
-        job.run_id, job.strategy_version_id, job.dataset_snapshot_id, job.status
+    return repository.create_idempotently(
+        job, _idempotency_key_hash(idempotency_key), _request_fingerprint(request_payload)
     )
 
 
@@ -125,3 +139,12 @@ def _json_value(value: date | datetime | StrEnum | None) -> str | None:
     if isinstance(value, (date, datetime)):
         return value.isoformat()
     return value.value
+
+
+def _idempotency_key_hash(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _request_fingerprint(payload: dict[str, object]) -> str:
+    canonical = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()

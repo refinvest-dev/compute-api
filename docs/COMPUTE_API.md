@@ -4,6 +4,14 @@ The Compute API accepts Core-only backtest submissions and status polling. Backt
 routes require `X-Internal-Api-Key`; `/health` is intentionally unauthenticated for a
 private deployment probe.
 
+## Backtest submission idempotency
+
+Core includes a new UUID v4 `Idempotency-Key` on every logical `POST /backtests`
+submission and retains the same value for a retry within 24 hours. A new user submission
+uses a new key. Compute returns the original `202` acceptance and `runId` for the same
+key and canonical request, while a reused key with another request returns `409`.
+Core always polls the returned `runId` for current status. See ADR-040.
+
 ## EC2 systemd deployment
 
 Install `deploy/systemd/refinvest-compute-api.service` on the existing always-on Compute
@@ -34,7 +42,8 @@ enforce all of the following before allowing Core traffic:
 - TLS terminates at an internal load balancer or reverse proxy. Its certificate and
   listener configuration are infrastructure-managed and are not stored in this repo.
 - Core sends the configured `X-Internal-Api-Key` on every `/backtests` request and poll.
-  Network isolation and TLS complement, rather than replace, this application check.
+  It also supplies the required `Idempotency-Key` on every submission. Network isolation
+  and TLS complement, rather than replace, these application checks.
 - Health probing stays within the private network because `/health` does not require the
   internal API key.
 

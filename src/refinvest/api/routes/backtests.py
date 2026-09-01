@@ -2,8 +2,9 @@
 
 from decimal import ROUND_HALF_EVEN, Context, Decimal, localcontext
 from typing import Annotated, cast
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Header, status
 from fastapi.responses import JSONResponse
 
 from refinvest.api.dependencies.backtests import get_backtest_job_repository
@@ -16,7 +17,11 @@ from refinvest.api.schemas.backtests import (
 )
 from refinvest.api.schemas.errors import map_strategy_validation_error
 from refinvest.app.security import require_internal_api_key
-from refinvest.application.backtests import BacktestJobRepository, submit_backtest
+from refinvest.application.backtests import (
+    BacktestIdempotencyConflict,
+    BacktestJobRepository,
+    submit_backtest,
+)
 from refinvest.engine.validation import StrategyValidationError
 
 router = APIRouter(
@@ -33,23 +38,50 @@ _RESULT_NUMBER_FIELDS = frozenset({
 _RESULT_NUMBER_CONTEXT = Context(prec=28, rounding=ROUND_HALF_EVEN)
 
 
-@router.post("", response_model=BacktestAcceptedTransport, status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "",
+    response_model=BacktestAcceptedTransport,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={409: {"description": "Idempotency-Key was reused for another request."}},
+)
 def create_backtest(
     request: CreateBacktestRequestTransport,
     repository: Annotated[BacktestJobRepository, Depends(get_backtest_job_repository)],
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> BacktestAcceptedTransport | JSONResponse:
+    normalized_key = _idempotency_key(idempotency_key)
+    if normalized_key is None:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"message": "Idempotency-Key must be a UUID v4."},
+        )
     try:
-        accepted = submit_backtest(request.to_domain(), repository)
+        accepted = submit_backtest(request.to_domain(), normalized_key, repository)
     except StrategyValidationError as error:
         response = map_strategy_validation_error(error)
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST, content=response.model_dump(by_alias=True)
+        )
+    except BacktestIdempotencyConflict:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"message": "Idempotency-Key was reused for a different request."},
         )
     return BacktestAcceptedTransport(
         runId=accepted.run_id,
         strategyVersionId=accepted.strategy_version_id,
         status="PENDING",
     )
+
+
+def _idempotency_key(value: str | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        key = UUID(value)
+    except ValueError:
+        return None
+    return str(key) if key.version == 4 else None
 
 
 @router.get(

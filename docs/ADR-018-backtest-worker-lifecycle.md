@@ -16,4 +16,5 @@ Accepted for the initial worker foundation.
 
 - Engine inputs remain immutable across retries and worker recovery.
 - Worker claim recovery requires lease and retry metadata in the Compute-owned job table.
-- `POST /backtests` currently has no idempotency key. Until the OpenAPI contract adds a Core-generated `requestId` or `Idempotency-Key`, retried POST requests create independent jobs; no implicit deduplication is allowed.
+- `POST /backtests` idempotency is defined by ADR-040. Core retries preserve its
+  `Idempotency-Key`; Compute never infers deduplication from request content alone.
