@@ -1,8 +1,11 @@
 """Runtime host for leased Backtest jobs, without any Backtest engine dependency."""
 
+import json
+import logging
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from threading import Event, Thread
+from time import monotonic
 from typing import Literal, Protocol
 
 from refinvest.application.backtest_workers import (
@@ -10,6 +13,7 @@ from refinvest.application.backtest_workers import (
     ExecutableBacktestJob,
     claim_executable_backtest,
     record_transient_failure,
+    retry_delay_for_attempt,
 )
 from refinvest.application.dataset_snapshots import DatasetSnapshotRepository
 from refinvest.engine.validation.models import Period
@@ -21,6 +25,10 @@ FatalErrorCode = Literal[
     "PRICE_DATA_MISSING",
     "EXECUTION_TIMEOUT",
 ]
+
+_LOGGER = logging.getLogger(__name__)
+_QUEUE_WAIT_WARNING = timedelta(minutes=10)
+_EXECUTION_WARNING = timedelta(minutes=5)
 
 
 @dataclass(frozen=True)
@@ -93,17 +101,23 @@ class BacktestWorkerHost:
         jobs: BacktestWorkerRepository,
         snapshots: DatasetSnapshotRepository,
         executor: BacktestJobExecutor,
+        queue_wait_warning: timedelta = _QUEUE_WAIT_WARNING,
+        execution_warning: timedelta = _EXECUTION_WARNING,
     ) -> None:
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive.")
         if heartbeat_interval <= timedelta(0) or heartbeat_interval >= lease_duration:
             raise ValueError("heartbeat_interval must be positive and shorter than lease_duration.")
+        if queue_wait_warning <= timedelta(0) or execution_warning <= timedelta(0):
+            raise ValueError("Worker observability warning thresholds must be positive.")
         self._worker_id = worker_id
         self._lease_duration = lease_duration
         self._heartbeat_interval = heartbeat_interval
         self._jobs = jobs
         self._snapshots = snapshots
         self._executor = executor
+        self._queue_wait_warning = queue_wait_warning
+        self._execution_warning = execution_warning
 
     def process_once(self) -> bool:
         """Process one claimed job; False means no eligible work was available."""
@@ -113,6 +127,38 @@ class BacktestWorkerHost:
         if job is None:
             return False
 
+        queue_wait_seconds = _queue_wait_seconds(job)
+        _event(
+            "backtest_job_claimed",
+            run_id=job.claim.run_id,
+            worker_id=self._worker_id,
+            snapshot_id=job.claim.dataset_snapshot_id,
+            attempt=job.claim.attempt_count,
+            queue_wait_seconds=queue_wait_seconds,
+        )
+        if job.claim.reclaimed_stale_lease:
+            _event(
+                "backtest_stale_lease_reclaimed",
+                level=logging.WARNING,
+                run_id=job.claim.run_id,
+                worker_id=self._worker_id,
+                snapshot_id=job.claim.dataset_snapshot_id,
+                attempt=job.claim.attempt_count,
+            )
+        if (
+            queue_wait_seconds is not None
+            and queue_wait_seconds >= self._queue_wait_warning.total_seconds()
+        ):
+            _event(
+                "backtest_queue_wait_threshold_exceeded",
+                level=logging.WARNING,
+                run_id=job.claim.run_id,
+                worker_id=self._worker_id,
+                snapshot_id=job.claim.dataset_snapshot_id,
+                attempt=job.claim.attempt_count,
+                queue_wait_seconds=queue_wait_seconds,
+            )
+
         heartbeat = _LeaseHeartbeat(
             self._jobs,
             job.claim.run_id,
@@ -121,34 +167,85 @@ class BacktestWorkerHost:
             self._heartbeat_interval,
         )
         heartbeat.start()
+        started = monotonic()
         try:
             outcome = self._executor.execute(job)
         except Exception:
-            record_transient_failure(
-                job.claim, "Backtest execution failed unexpectedly.", self._jobs
+            duration_seconds = monotonic() - started
+            self._record_retryable_failure(
+                job, "Backtest execution failed unexpectedly.", duration_seconds
             )
             return True
         finally:
             heartbeat.stop()
 
+        duration_seconds = monotonic() - started
+        if duration_seconds >= self._execution_warning.total_seconds():
+            _event(
+                "backtest_execution_duration_threshold_exceeded",
+                level=logging.WARNING,
+                run_id=job.claim.run_id,
+                worker_id=self._worker_id,
+                snapshot_id=job.claim.dataset_snapshot_id,
+                attempt=job.claim.attempt_count,
+                execution_duration_seconds=duration_seconds,
+            )
+
         if isinstance(outcome, CompletedBacktestExecution):
-            self._jobs.mark_completed(
+            persisted = self._jobs.mark_completed(
                 job.claim.run_id,
                 self._worker_id,
                 outcome.result_payload,
                 outcome.actual_period,
                 outcome.engine_version,
             )
+            _event(
+                "backtest_execution_completed",
+                run_id=job.claim.run_id,
+                worker_id=self._worker_id,
+                snapshot_id=job.claim.dataset_snapshot_id,
+                attempt=job.claim.attempt_count,
+                execution_duration_seconds=duration_seconds,
+                persisted=persisted,
+            )
         elif isinstance(outcome, TerminalBacktestFailure):
-            self._jobs.mark_failed(
+            persisted = self._jobs.mark_failed(
                 job.claim.run_id,
                 self._worker_id,
                 outcome.failure_reason,
                 outcome.error_code,
             )
+            _event(
+                "backtest_execution_failed",
+                level=logging.WARNING,
+                run_id=job.claim.run_id,
+                worker_id=self._worker_id,
+                snapshot_id=job.claim.dataset_snapshot_id,
+                attempt=job.claim.attempt_count,
+                execution_duration_seconds=duration_seconds,
+                error_code=outcome.error_code,
+                persisted=persisted,
+            )
         else:
-            record_transient_failure(job.claim, outcome.failure_reason, self._jobs)
+            self._record_retryable_failure(job, outcome.failure_reason, duration_seconds)
         return True
+
+    def _record_retryable_failure(
+        self, job: ExecutableBacktestJob, failure_reason: str, duration_seconds: float
+    ) -> None:
+        retry_delay = retry_delay_for_attempt(job.claim.attempt_count)
+        persisted = record_transient_failure(job.claim, failure_reason, self._jobs)
+        _event(
+            "backtest_retry_scheduled" if retry_delay is not None else "backtest_retry_exhausted",
+            level=logging.WARNING,
+            run_id=job.claim.run_id,
+            worker_id=self._worker_id,
+            snapshot_id=job.claim.dataset_snapshot_id,
+            attempt=job.claim.attempt_count,
+            execution_duration_seconds=duration_seconds,
+            retry_delay_seconds=retry_delay.total_seconds() if retry_delay is not None else None,
+            persisted=persisted,
+        )
 
     def run_forever(self, stop_requested: Event, poll_interval: timedelta) -> None:
         """Stop claiming on shutdown; any in-flight lease is recoverable after expiry."""
@@ -157,3 +254,13 @@ class BacktestWorkerHost:
         while not stop_requested.is_set():
             if not self.process_once():
                 stop_requested.wait(poll_interval.total_seconds())
+
+
+def _queue_wait_seconds(job: ExecutableBacktestJob) -> float | None:
+    if job.claim.created_at is None:
+        return None
+    return max(0, (datetime.now(UTC) - job.claim.created_at).total_seconds())
+
+
+def _event(name: str, *, level: int = logging.INFO, **fields: object) -> None:
+    _LOGGER.log(level, json.dumps({"event": name, **fields}, sort_keys=True, default=str))

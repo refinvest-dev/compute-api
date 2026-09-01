@@ -27,6 +27,13 @@ terminal `FAILED` with `errorCode: EXECUTION_TIMEOUT`; Compute does not retry it
 automatically. Core may surface the failure and create a distinct, new user submission when
 appropriate. See ADR-042.
 
+## Worker operational signals
+
+Worker queue and execution timing are emitted as JSON systemd journal events under ADR-043.
+They are deployment observability signals only: they do not change polling responses,
+calculation semantics, or job scheduling. Infrastructure forwards them to its approved log
+sink and alerts on warning events.
+
 ## EC2 systemd deployment
 
 Install `deploy/systemd/refinvest-compute-api.service` on the existing always-on Compute

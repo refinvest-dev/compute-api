@@ -33,6 +33,25 @@ records `FAILED` with `EXECUTION_TIMEOUT`; it does not retry that job automatica
 `REFINVEST_BACKTEST_EXECUTION_TIMEOUT_SECONDS` only to a positive value approved by the
 operational policy in ADR-042.
 
+## Operational observability
+
+Worker and cleanup services emit JSON events to their systemd journals under ADR-043. Forward
+those existing journals to CloudWatch Logs (or the deployment-owned equivalent); do not add
+AWS credentials or a metrics SDK to this service. Configure alerts for the following events
+or service conditions:
+
+| Signal | Warning threshold | Required response |
+|---|---:|---|
+| `backtest_queue_wait_threshold_exceeded` | 10 minutes | Check worker availability and queue growth. |
+| `backtest_execution_duration_threshold_exceeded` | 5 minutes | Inspect engine/snapshot cost before timeout. |
+| `backtest_execution_failed` with `EXECUTION_TIMEOUT` | Immediate | Inspect run, snapshot, and engine version. |
+| `backtest_retry_exhausted` | Immediate | Investigate infrastructure or execution failure. |
+| `backtest_stale_lease_reclaimed` | Immediate | Inspect prior worker termination or heartbeat loss. |
+| cleanup unit failure / overdue terminal backlog | Immediate | Restore cleanup and verify ADR-041 retention. |
+
+`backtest_cleanup_completed` includes `deleted_count` for normal hourly audit. Log forwarding,
+alert destinations, and log retention are infrastructure-owned configuration.
+
 The snapshot timer and worker service have separate environment files and enablement:
 
 | Unit | Role | Enablement |
