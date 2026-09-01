@@ -77,6 +77,32 @@ def test_uses_lifecycle_defaults_and_generates_a_new_snapshot_id(tmp_path: Path)
     assert coordinator.end == date(2025, 1, 2)
 
 
+def test_uses_configured_s3_prefix_for_snapshot_identity(tmp_path: Path) -> None:
+    overrides = tmp_path / "overrides.json"
+    overrides.write_text("{}", encoding="utf-8")
+    coordinator = FakeCoordinator()
+
+    run_snapshot_ingestion(
+        [],
+        settings=Settings(
+            None,
+            snapshot_storage_backend="s3",
+            snapshot_storage_s3_bucket="refinvest-snapshots",
+            snapshot_storage_s3_prefix="daily",
+            snapshot_start_date="2020-01-01",
+            us_equity_overrides_path=str(overrides),
+        ),
+        now=lambda: datetime(2025, 1, 3, 0, 15, tzinfo=UTC),
+        snapshot_nonce=lambda: "abc123",
+        coordinator_factory=lambda _: coordinator,  # type: ignore[return-value]
+    )
+
+    assert coordinator.request is not None
+    assert coordinator.request.storage_path == (
+        "s3://refinvest-snapshots/daily/mvp-20250102-20250103T001500Z-abc123"
+    )
+
+
 @pytest.mark.parametrize(
     "arguments, message",
     [

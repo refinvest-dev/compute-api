@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
@@ -36,36 +37,43 @@ class FilesystemSnapshotExecutionDataLoader:
 
     def load(self, snapshot: DatasetSnapshot) -> SnapshotExecutionData:
         root = Path(snapshot.storage_path)
-        manifest = _json_object(_read_file(root / "manifest.json"), "manifest.json")
-        _require_equal(_string(manifest, "snapshotId"), snapshot.snapshot_id, "manifest snapshotId")
-        format_version = _integer(manifest, "formatVersion")
-        if format_version not in {1, 2}:
-            raise SnapshotArtifactError("Unexpected manifest formatVersion.")
-        calendar_bytes = _read_declared_artifact(root, _object(manifest, "calendar"))
-        daily_bars_bytes = _read_declared_artifact(root, _object(manifest, "dailyBars"))
-        reference_closes_bytes = (
-            _read_declared_artifact(root, _object(manifest, "referenceCloses"))
-            if "referenceCloses" in manifest
-            else None
-        )
-        calendar = _calendar_from_json(snapshot, calendar_bytes)
-        daily_bars = _daily_bars_from_ndjson(snapshot.snapshot_id, daily_bars_bytes, format_version)
-        reference_closes = _reference_closes_from_ndjson(
-            snapshot.snapshot_id, reference_closes_bytes
-        )
-        market_data = SnapshotMarketData(snapshot, calendar, daily_bars, reference_closes)
-        return SnapshotExecutionData(
-            snapshot.snapshot_id,
-            calendar,
-            market_data,
-            _boolean(manifest, "corporateActionsApplied"),
-            _boolean(manifest, "pointInTimeValidationPassed"),
-        )
+        return load_snapshot_execution_data(snapshot, lambda name: _read_file(root / name))
 
 
-def _read_declared_artifact(root: Path, entry: dict[str, object]) -> bytes:
+def load_snapshot_execution_data(
+    snapshot: DatasetSnapshot, read_artifact: Callable[[Path], bytes]
+) -> SnapshotExecutionData:
+    """Reconstruct one pinned snapshot from a manifest-safe artifact reader."""
+    manifest = _json_object(read_artifact(Path("manifest.json")), "manifest.json")
+    _require_equal(_string(manifest, "snapshotId"), snapshot.snapshot_id, "manifest snapshotId")
+    format_version = _integer(manifest, "formatVersion")
+    if format_version not in {1, 2}:
+        raise SnapshotArtifactError("Unexpected manifest formatVersion.")
+    calendar_bytes = _read_declared_artifact(read_artifact, _object(manifest, "calendar"))
+    daily_bars_bytes = _read_declared_artifact(read_artifact, _object(manifest, "dailyBars"))
+    reference_closes_bytes = (
+        _read_declared_artifact(read_artifact, _object(manifest, "referenceCloses"))
+        if "referenceCloses" in manifest
+        else None
+    )
+    calendar = _calendar_from_json(snapshot, calendar_bytes)
+    daily_bars = _daily_bars_from_ndjson(snapshot.snapshot_id, daily_bars_bytes, format_version)
+    reference_closes = _reference_closes_from_ndjson(snapshot.snapshot_id, reference_closes_bytes)
+    market_data = SnapshotMarketData(snapshot, calendar, daily_bars, reference_closes)
+    return SnapshotExecutionData(
+        snapshot.snapshot_id,
+        calendar,
+        market_data,
+        _boolean(manifest, "corporateActionsApplied"),
+        _boolean(manifest, "pointInTimeValidationPassed"),
+    )
+
+
+def _read_declared_artifact(
+    read_artifact: Callable[[Path], bytes], entry: dict[str, object]
+) -> bytes:
     relative_path = _safe_relative_path(_string(entry, "path"))
-    artifact = _read_file(root / relative_path)
+    artifact = read_artifact(relative_path)
     expected_hash = _string(entry, "sha256")
     actual_hash = hashlib.sha256(artifact).hexdigest()
     _require_equal(actual_hash, expected_hash, f"artifact SHA-256 for {relative_path}")

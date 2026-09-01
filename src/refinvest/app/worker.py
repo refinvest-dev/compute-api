@@ -7,11 +7,9 @@ from socket import gethostname
 from threading import Event
 
 from refinvest.app.config import Settings, get_settings
+from refinvest.app.snapshot_storage import create_snapshot_execution_data_loader
 from refinvest.application.backtest_executor import DailyBarBacktestExecutor
 from refinvest.application.backtest_worker_host import BacktestWorkerHost
-from refinvest.persistence.object_storage.snapshot_artifacts import (
-    FilesystemSnapshotExecutionDataLoader,
-)
 from refinvest.persistence.postgres.backtest_jobs import PostgresBacktestJobRepository
 from refinvest.persistence.postgres.dataset_snapshots import PostgresDatasetSnapshotRepository
 
@@ -31,7 +29,7 @@ def create_backtest_worker(settings: Settings) -> BacktestWorkerHost:
     jobs = PostgresBacktestJobRepository(settings.database_url)
     snapshots = PostgresDatasetSnapshotRepository(settings.database_url)
     executor = DailyBarBacktestExecutor(
-        FilesystemSnapshotExecutionDataLoader(), settings.engine_version
+        create_snapshot_execution_data_loader(settings), settings.engine_version
     )
     return BacktestWorkerHost(
         settings.worker_id or _default_worker_id(),

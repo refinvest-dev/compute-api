@@ -10,9 +10,9 @@ from typing import cast
 from uuid import uuid4
 
 from refinvest.app.config import Settings, get_settings
+from refinvest.app.snapshot_storage import create_snapshot_artifact_publisher, snapshot_storage_path
 from refinvest.ingestion.calendars.crypto_utc import build_crypto_utc_calendar
 from refinvest.ingestion.calendars.us_equity import generate_us_equity_calendar
-from refinvest.ingestion.snapshot.artifacts import FilesystemSnapshotArtifactPublisher
 from refinvest.ingestion.snapshot.mvp import (
     MvpSnapshotIngestionCoordinator,
     MvpSnapshotRequest,
@@ -41,7 +41,7 @@ def create_mvp_snapshot_ingestion_coordinator(
         MassiveEtfDailyBarsClient(settings.massive_api_key),
         CboeVixHistoricalClient(),
         BinanceBtcusdtDailyBarsClient(),
-        FilesystemSnapshotArtifactPublisher(),
+        create_snapshot_artifact_publisher(settings),
         PostgresDatasetSnapshotRepository(settings.database_url),
     )
 
@@ -70,8 +70,6 @@ def run_snapshot_ingestion(
     snapshot_id = parsed.snapshot_id or _automatic_snapshot_id(end, current, snapshot_nonce())
     if not _SNAPSHOT_ID.fullmatch(snapshot_id):
         raise ValueError("--snapshot-id must be a safe immutable identifier.")
-    if not settings.snapshot_storage_root:
-        raise ValueError("REFINVEST_SNAPSHOT_STORAGE_ROOT is required for snapshot ingestion.")
     override_path = parsed.us_equity_overrides or settings.us_equity_overrides_path
     if not override_path:
         raise ValueError("REFINVEST_US_EQUITY_OVERRIDES_PATH is required for snapshot ingestion.")
@@ -82,7 +80,7 @@ def run_snapshot_ingestion(
         MVP_SNAPSHOT_SOURCE,
         {"firstDate": start.isoformat(), "lastDate": end.isoformat()},
         MVP_ADJUSTMENT_POLICY,
-        str(Path(settings.snapshot_storage_root) / snapshot_id),
+        snapshot_storage_path(settings, snapshot_id),
         corporate_actions_applied=True,
         point_in_time_validation_passed=True,
     )

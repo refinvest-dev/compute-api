@@ -42,6 +42,25 @@ class PublishedSnapshotArtifacts:
     reference_closes_sha256: str | None = None
 
 
+@dataclass(frozen=True)
+class SnapshotArtifactContents:
+    """Validated, deterministic bytes ready for an immutable storage adapter."""
+
+    calendar: bytes
+    daily_bars: bytes
+    manifest: bytes
+    reference_closes: bytes | None = None
+
+    def objects_before_manifest(self) -> tuple[tuple[str, bytes], ...]:
+        objects: list[tuple[str, bytes]] = [
+            ("calendar.json", self.calendar),
+            ("daily-bars.ndjson", self.daily_bars),
+        ]
+        if self.reference_closes is not None:
+            objects.append(("reference-closes.ndjson", self.reference_closes))
+        return tuple(objects)
+
+
 class FilesystemSnapshotArtifactPublisher:
     """Write a manifest-last, immutable filesystem artifact directory."""
 
@@ -57,10 +76,15 @@ class FilesystemSnapshotArtifactPublisher:
         corporate_actions_applied: bool,
         point_in_time_validation_passed: bool,
     ) -> PublishedSnapshotArtifacts:
-        bars = tuple(daily_bars)
-        closes = tuple(reference_closes)
-        _validate_snapshot_inputs(
-            snapshot, provenance, sessions, bars, closes, calendar_components
+        contents = build_snapshot_artifact_contents(
+            snapshot,
+            provenance,
+            sessions,
+            daily_bars,
+            reference_closes,
+            calendar_components=calendar_components,
+            corporate_actions_applied=corporate_actions_applied,
+            point_in_time_validation_passed=point_in_time_validation_passed,
         )
         root = Path(snapshot.storage_path)
         if root.exists():
@@ -68,32 +92,58 @@ class FilesystemSnapshotArtifactPublisher:
         root.parent.mkdir(parents=True, exist_ok=True)
         temporary_root = Path(mkdtemp(prefix=f".{root.name}.", dir=root.parent))
         try:
-            calendar_content = _calendar_content(provenance, sessions, calendar_components)
-            daily_bars_content = _daily_bars_content(bars)
-            reference_closes_content = _reference_closes_content(closes)
-            _write_file(temporary_root / "calendar.json", calendar_content)
-            _write_file(temporary_root / "daily-bars.ndjson", daily_bars_content)
-            if reference_closes_content is not None:
-                _write_file(temporary_root / "reference-closes.ndjson", reference_closes_content)
-            manifest_content = _manifest_content(
-                snapshot.snapshot_id,
-                calendar_content,
-                daily_bars_content,
-                reference_closes_content,
-                corporate_actions_applied,
-                point_in_time_validation_passed,
-            )
-            _write_file(temporary_root / "manifest.json", manifest_content)
+            for name, content in contents.objects_before_manifest():
+                _write_file(temporary_root / name, content)
+            _write_file(temporary_root / "manifest.json", contents.manifest)
             _publish_manifest_last(temporary_root, root)
         except OSError as error:
             raise SnapshotPublicationError("Snapshot artifact publication failed.") from error
-        return PublishedSnapshotArtifacts(
+        return published_snapshot_artifacts(snapshot, contents)
+
+
+def build_snapshot_artifact_contents(
+    snapshot: DatasetSnapshot,
+    provenance: CalendarProvenance,
+    sessions: Mapping[AssetSession, CalendarSession],
+    daily_bars: Iterable[DailyBar],
+    reference_closes: Iterable[ReferenceClose] = (),
+    *,
+    calendar_components: Sequence[CalendarComponent] = (),
+    corporate_actions_applied: bool,
+    point_in_time_validation_passed: bool,
+) -> SnapshotArtifactContents:
+    """Validate canonical input and create the shared immutable artifact contract."""
+    bars = tuple(daily_bars)
+    closes = tuple(reference_closes)
+    _validate_snapshot_inputs(snapshot, provenance, sessions, bars, closes, calendar_components)
+    calendar = _calendar_content(provenance, sessions, calendar_components)
+    bars_content = _daily_bars_content(bars)
+    closes_content = _reference_closes_content(closes)
+    return SnapshotArtifactContents(
+        calendar,
+        bars_content,
+        _manifest_content(
             snapshot.snapshot_id,
-            str(root),
-            _sha256(calendar_content),
-            _sha256(daily_bars_content),
-            _sha256(reference_closes_content) if reference_closes_content is not None else None,
-        )
+            calendar,
+            bars_content,
+            closes_content,
+            corporate_actions_applied,
+            point_in_time_validation_passed,
+        ),
+        closes_content,
+    )
+
+
+def published_snapshot_artifacts(
+    snapshot: DatasetSnapshot, contents: SnapshotArtifactContents
+) -> PublishedSnapshotArtifacts:
+    return PublishedSnapshotArtifacts(
+        snapshot.snapshot_id,
+        snapshot.storage_path,
+        _sha256(contents.calendar),
+        _sha256(contents.daily_bars),
+        _sha256(contents.reference_closes) if contents.reference_closes is not None else None,
+    )
 
 
 def _validate_snapshot_inputs(
