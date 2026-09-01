@@ -47,6 +47,8 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/CreateBacktestRequest'
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '202':
           description: 요청 접수됨. 계산은 아직 시작 전이거나 큐에 있음.
@@ -56,7 +58,7 @@ paths:
                 $ref: '#/components/schemas/BacktestAccepted'
         '400':
           description: |
-            StrategyVersion payload가 DSL Validation을 통과하지 못함
+            `Idempotency-Key`가 없거나 UUID v4가 아니거나, StrategyVersion payload가 DSL Validation을 통과하지 못함
             (Asset 존재 여부, Data Availability, Calendar Compatibility, Condition/Window/Lag
             Validity, Execution Asset Availability, Exit Validity — `docs/DOMAIN.md` §1.2 불변식
             및 `docs/USECASES.md`의 `ExecuteBacktest` 설명). 이 경우 Job을 큐에 넣지 않고 즉시
@@ -64,8 +66,14 @@ paths:
             입력 자체가 무효면 실행 전에 걸러낸다.
           content:
             application/json:
+            schema:
+              $ref: '#/components/schemas/ValidationErrorResponse'
+        '409':
+          description: 동일한 Idempotency-Key가 다른 request payload와 함께 재사용됨.
+          content:
+            application/json:
               schema:
-                $ref: '#/components/schemas/ValidationErrorResponse'
+                $ref: '#/components/schemas/ErrorResponse'
 
   /backtests/{runId}:
     get:
@@ -197,6 +205,17 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
 
 components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Core가 논리적 백테스트 요청마다 생성하는 UUID v4. 네트워크 재시도에는 동일 값을 사용한다.
+        동일 key와 동일 request는 최초 202 acceptance를 재반환하고, payload가 다르면 409이다.
+      schema:
+        type: string
+        format: uuid
   securitySchemes:
     InternalApiKey:
       type: apiKey

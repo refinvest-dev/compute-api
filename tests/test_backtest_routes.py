@@ -1,6 +1,7 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date
+from uuid import UUID
 
 from starlette.testclient import TestClient
 
@@ -8,10 +9,12 @@ from refinvest.api.dependencies.backtests import get_backtest_job_repository
 from refinvest.app.config import Settings, get_settings
 from refinvest.app.main import app
 from refinvest.application.backtests import (
+    BacktestIdempotencyConflict,
     BacktestJob,
     BacktestJobRepository,
     BacktestJobStatus,
     BacktestJobStatusView,
+    BacktestSubmission,
 )
 from refinvest.engine.validation.models import Period
 
@@ -20,9 +23,24 @@ class FakeBacktestJobRepository:
     def __init__(self) -> None:
         self.jobs: dict[str, BacktestJob] = {}
         self.status_views: dict[str, BacktestJobStatusView] = {}
+        self.idempotency: dict[str, tuple[str, BacktestSubmission]] = {}
 
     def create(self, job: BacktestJob) -> None:
         self.jobs[job.run_id] = job
+
+    def create_idempotently(
+        self, job: BacktestJob, idempotency_key_hash: str, request_fingerprint: str
+    ) -> BacktestSubmission:
+        existing = self.idempotency.get(idempotency_key_hash)
+        if existing is not None:
+            fingerprint, submission = existing
+            if fingerprint != request_fingerprint:
+                raise BacktestIdempotencyConflict("different request")
+            return submission
+        submission = BacktestSubmission(job.run_id, job.strategy_version_id)
+        self.idempotency[idempotency_key_hash] = (request_fingerprint, submission)
+        self.create(job)
+        return submission
 
     def get(self, run_id: str) -> BacktestJobStatusView | None:
         if run_id in self.status_views:
@@ -60,6 +78,10 @@ def valid_request() -> dict[str, object]:
     }
 
 
+def headers(idempotency_key: str = "d9428888-122b-4f8a-8a95-2c5b31eb3380") -> dict[str, str]:
+    return {"X-Internal-Api-Key": "test-key", "Idempotency-Key": idempotency_key}
+
+
 @contextmanager
 def configured_client(repository: BacktestJobRepository) -> Iterator[TestClient]:
     app.dependency_overrides[get_settings] = lambda: Settings("test-key")
@@ -78,7 +100,7 @@ def test_backtest_submission_is_authenticated_and_durable() -> None:
 
         response = client.post(
             "/backtests",
-            headers={"X-Internal-Api-Key": "test-key"},
+            headers=headers(),
             json=valid_request(),
         )
         assert response.status_code == 202
@@ -116,11 +138,49 @@ def test_backtest_submission_is_authenticated_and_durable() -> None:
             ],
         }
         response = client.post(
-            "/backtests", headers={"X-Internal-Api-Key": "test-key"}, json=payload
+            "/backtests", headers=headers(), json=payload
         )
         assert response.status_code == 400
         assert response.json()["errorCode"] == "DSL_INVALID"
         assert len(repository.jobs) == 1
+
+
+def test_submission_replay_returns_the_original_acceptance_without_creating_a_job() -> None:
+    repository = FakeBacktestJobRepository()
+    with configured_client(repository) as client:
+        first = client.post("/backtests", headers=headers(), json=valid_request())
+        replay = client.post("/backtests", headers=headers(), json=valid_request())
+
+    assert first.status_code == replay.status_code == 202
+    assert replay.json() == first.json()
+    assert len(repository.jobs) == 1
+
+
+def test_submission_rejects_idempotency_key_reused_for_another_request() -> None:
+    repository = FakeBacktestJobRepository()
+    modified = valid_request()
+    modified["datasetSnapshotId"] = "snapshot-2"
+    with configured_client(repository) as client:
+        assert client.post("/backtests", headers=headers(), json=valid_request()).status_code == 202
+        conflict = client.post("/backtests", headers=headers(), json=modified)
+
+    assert conflict.status_code == 409
+    assert conflict.json() == {"message": "Idempotency-Key was reused for a different request."}
+    assert len(repository.jobs) == 1
+
+
+def test_submission_requires_uuid_v4_idempotency_key() -> None:
+    repository = FakeBacktestJobRepository()
+    with configured_client(repository) as client:
+        missing = client.post(
+            "/backtests", headers={"X-Internal-Api-Key": "test-key"}, json=valid_request()
+        )
+        non_v4 = client.post(
+            "/backtests", headers=headers(str(UUID(int=0))), json=valid_request()
+        )
+
+    assert missing.status_code == non_v4.status_code == 400
+    assert missing.json() == non_v4.json() == {"message": "Idempotency-Key must be a UUID v4."}
 
 
 def test_failed_backtest_status_includes_documented_failure_fields() -> None:

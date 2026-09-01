@@ -7,7 +7,13 @@ from psycopg import connect
 from psycopg.types.json import Jsonb
 
 from refinvest.application.backtest_workers import ClaimedBacktestJob
-from refinvest.application.backtests import BacktestJob, BacktestJobStatus, BacktestJobStatusView
+from refinvest.application.backtests import (
+    BacktestIdempotencyConflict,
+    BacktestJob,
+    BacktestJobStatus,
+    BacktestJobStatusView,
+    BacktestSubmission,
+)
 from refinvest.engine.validation.models import Period
 
 
@@ -31,6 +37,52 @@ class PostgresBacktestJobRepository:
                     Jsonb(job.request_payload),
                 ),
             )
+
+    def create_idempotently(
+        self, job: BacktestJob, idempotency_key_hash: str, request_fingerprint: str
+    ) -> BacktestSubmission:
+        with connect(self._database_url) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO compute_backtest_jobs
+                    (run_id, strategy_version_id, dataset_snapshot_id, status, request_payload,
+                     idempotency_key_hash, request_fingerprint)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (idempotency_key_hash) WHERE idempotency_key_hash IS NOT NULL
+                    DO NOTHING
+                RETURNING run_id, strategy_version_id
+                """,
+                (
+                    job.run_id,
+                    job.strategy_version_id,
+                    job.dataset_snapshot_id,
+                    job.status.value,
+                    Jsonb(job.request_payload),
+                    idempotency_key_hash,
+                    request_fingerprint,
+                ),
+            )
+            row = cursor.fetchone()
+            if row is not None:
+                run_id, strategy_version_id = cast(tuple[str, str | None], row)
+                return BacktestSubmission(str(run_id), strategy_version_id)
+            cursor.execute(
+                """
+                SELECT run_id, strategy_version_id, request_fingerprint
+                FROM compute_backtest_jobs
+                WHERE idempotency_key_hash = %s
+                """,
+                (idempotency_key_hash,),
+            )
+            existing = cursor.fetchone()
+        if existing is None:
+            raise RuntimeError("Idempotent backtest submission was not persisted.")
+        run_id, strategy_version_id, existing_fingerprint = cast(
+            tuple[str, str | None, str], existing
+        )
+        if existing_fingerprint != request_fingerprint:
+            raise BacktestIdempotencyConflict("Idempotency-Key was reused for a different request.")
+        return BacktestSubmission(str(run_id), strategy_version_id)
 
     def get(self, run_id: str) -> BacktestJobStatusView | None:
         with connect(self._database_url) as connection, connection.cursor() as cursor:

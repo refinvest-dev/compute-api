@@ -1,6 +1,6 @@
 """PostgreSQL worker lifecycle integration checks.
 
-Set REFINVEST_TEST_DATABASE_URL to an isolated database with migrations 0001-0005 applied.
+Set REFINVEST_TEST_DATABASE_URL to an isolated database with migrations 0001-0006 applied.
 """
 
 import hashlib
@@ -16,7 +16,11 @@ from psycopg import connect
 
 from refinvest.application.backtest_executor import DailyBarBacktestExecutor
 from refinvest.application.backtest_worker_host import BacktestWorkerHost
-from refinvest.application.backtests import BacktestJob, BacktestJobStatus
+from refinvest.application.backtests import (
+    BacktestIdempotencyConflict,
+    BacktestJob,
+    BacktestJobStatus,
+)
 from refinvest.application.dataset_snapshots import DatasetSnapshot
 from refinvest.engine.validation.models import Period
 from refinvest.persistence.object_storage.snapshot_artifacts import (
@@ -81,6 +85,37 @@ def test_claim_is_exclusive_and_stale_lease_is_reclaimed() -> None:
             cursor.execute("DELETE FROM compute_backtest_jobs WHERE run_id = %s", (run_id,))
             cursor.execute(
                 "DELETE FROM compute_dataset_snapshots WHERE snapshot_id = %s", (snapshot_id,)
+            )
+
+
+def test_idempotent_submission_is_exclusive_and_rejects_different_payload() -> None:
+    assert DATABASE_URL is not None
+    repository = PostgresBacktestJobRepository(DATABASE_URL)
+    key_hash = hashlib.sha256(str(uuid4()).encode()).hexdigest()
+    run_ids = (str(uuid4()), str(uuid4()))
+
+    def submit(run_id: str) -> str:
+        return repository.create_idempotently(
+            BacktestJob(run_id, "strategy-v1", None, BacktestJobStatus.PENDING, {"value": "1"}),
+            key_hash,
+            "fingerprint-1",
+        ).run_id
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            accepted = list(executor.map(submit, run_ids))
+        assert accepted == [accepted[0], accepted[0]]
+
+        with pytest.raises(BacktestIdempotencyConflict):
+            repository.create_idempotently(
+                BacktestJob(str(uuid4()), "strategy-v1", None, BacktestJobStatus.PENDING, {}),
+                key_hash,
+                "fingerprint-2",
+            )
+    finally:
+        with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM compute_backtest_jobs WHERE idempotency_key_hash = %s", (key_hash,)
             )
 
 
