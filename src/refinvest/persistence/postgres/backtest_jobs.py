@@ -148,7 +148,8 @@ class PostgresBacktestJobRepository:
                 UPDATE compute_backtest_jobs
                 SET status = 'COMPLETED', result_payload = %s,
                     actual_period_start = %s, actual_period_end = %s, engine_version = %s,
-                    completed_at = CURRENT_TIMESTAMP, failure_reason = NULL, error_code = NULL,
+                    completed_at = CURRENT_TIMESTAMP, terminal_at = CURRENT_TIMESTAMP,
+                    failure_reason = NULL, error_code = NULL,
                     worker_id = NULL, lease_expires_at = NULL, heartbeat_at = NULL,
                     next_attempt_at = NULL
                 WHERE run_id = %s AND status = 'RUNNING' AND worker_id = %s
@@ -240,6 +241,10 @@ class PostgresBacktestJobRepository:
                         ELSE jobs.attempt_count + 1
                     END,
                     next_attempt_at = NULL,
+                    terminal_at = CASE
+                        WHEN candidate.selected_snapshot_id IS NULL THEN CURRENT_TIMESTAMP
+                        ELSE NULL
+                    END,
                     failure_reason = CASE
                         WHEN candidate.selected_snapshot_id IS NULL
                             THEN 'No matching DatasetSnapshot is available.'
@@ -296,7 +301,8 @@ class PostgresBacktestJobRepository:
             cursor.execute(
                 """
                 UPDATE compute_backtest_jobs
-                SET status = 'FAILED', failure_reason = %s, error_code = %s,
+                SET status = 'FAILED', terminal_at = CURRENT_TIMESTAMP,
+                    failure_reason = %s, error_code = %s,
                     worker_id = NULL, lease_expires_at = NULL, heartbeat_at = NULL,
                     next_attempt_at = NULL
                 WHERE run_id = %s AND status = 'RUNNING' AND worker_id = %s
@@ -304,6 +310,32 @@ class PostgresBacktestJobRepository:
                 (failure_reason, error_code, run_id, worker_id),
             )
             return cursor.rowcount == 1
+
+    def delete_expired_terminal_jobs(self, retention: timedelta, batch_size: int) -> int:
+        """Delete one bounded batch using the database clock, never active jobs."""
+        if retention <= timedelta(0):
+            raise ValueError("retention must be positive.")
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive.")
+        with connect(self._database_url) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                WITH expired AS (
+                    SELECT run_id
+                    FROM compute_backtest_jobs
+                    WHERE status IN ('COMPLETED', 'FAILED')
+                      AND terminal_at <= CURRENT_TIMESTAMP - (%s * INTERVAL '1 second')
+                    ORDER BY terminal_at, run_id
+                    LIMIT %s
+                    FOR UPDATE SKIP LOCKED
+                )
+                DELETE FROM compute_backtest_jobs AS jobs
+                USING expired
+                WHERE jobs.run_id = expired.run_id
+                """,
+                (retention.total_seconds(), batch_size),
+            )
+            return cursor.rowcount
 
     def schedule_retry(
         self, run_id: str, worker_id: str, retry_delay: timedelta, failure_reason: str

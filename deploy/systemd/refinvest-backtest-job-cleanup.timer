@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Refinvest expired backtest job cleanup hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+AccuracySec=1min
+Unit=refinvest-backtest-job-cleanup.service
+
+[Install]
+WantedBy=timers.target

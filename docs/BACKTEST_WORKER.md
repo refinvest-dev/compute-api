@@ -33,6 +33,7 @@ The snapshot timer and worker service have separate environment files and enable
 |---|---|---|
 | `refinvest-snapshot-ingestion.timer` | Publishes one immutable daily snapshot | One designated Compute EC2 |
 | `refinvest-backtest-worker.service` | Claims and executes durable backtest jobs | One worker initially |
+| `refinvest-backtest-job-cleanup.timer` | Removes expired terminal runtime jobs | One designated Compute EC2 |
 
 Increasing worker count is a capacity decision. Although PostgreSQL leases prevent two
 workers from claiming the same job, a multi-worker deployment requires its own throughput
@@ -40,3 +41,21 @@ and database-capacity review.
 
 The Core-facing FastAPI process is a third, separate unit. Its internal authentication,
 private-network, and TLS deployment requirements are documented in `docs/COMPUTE_API.md`.
+
+## Terminal job cleanup
+
+`refinvest-backtest-job-cleanup.timer` runs once per hour on the same designated Compute
+EC2. It invokes a bounded PostgreSQL cleanup batch for terminal jobs at least 24 hours old;
+it never deletes queued, running, or retrying work. Install the paired service and copy
+`deploy/systemd/backtest-job-cleanup.env.example` to
+`/etc/refinvest/backtest-job-cleanup.env` with mode `0600`, then run:
+
+```text
+systemctl daemon-reload
+systemctl enable --now refinvest-backtest-job-cleanup.timer
+systemctl list-timers refinvest-backtest-job-cleanup.timer
+```
+
+Monitor the service journal for `deleted_backtest_jobs=<count>`. Core must persist any
+terminal result before the 24-hour retention horizon; a later `404` is not permission to
+submit the same logical request again.

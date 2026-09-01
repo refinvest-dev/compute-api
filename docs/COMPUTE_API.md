@@ -12,6 +12,14 @@ uses a new key. Compute returns the original `202` acceptance and `runId` for th
 key and canonical request, while a reused key with another request returns `409`.
 Core always polls the returned `runId` for current status. See ADR-040.
 
+## Backtest runtime retention
+
+Compute retains terminal job status, result/failure payload, and idempotency data for 24
+hours after terminal transition. Core must copy terminal results into its long-term store
+within that period. Afterwards `GET /backtests/{runId}` returns `404`, which means either
+an unknown run or an expired Compute runtime record; it does not authorize re-submission of
+the same logical request. See ADR-041.
+
 ## EC2 systemd deployment
 
 Install `deploy/systemd/refinvest-compute-api.service` on the existing always-on Compute
