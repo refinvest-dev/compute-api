@@ -20,3 +20,4 @@ Accepted for the initial worker foundation.
 - `POST /backtests` idempotency is defined by ADR-040. Core retries preserve its
   `Idempotency-Key`; Compute never infers deduplication from request content alone.
 - Backtest attempt deadlines and process isolation are defined by ADR-042.
+- Worker operational events and warning thresholds are defined by ADR-043.

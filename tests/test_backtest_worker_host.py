@@ -1,3 +1,5 @@
+import json
+import logging
 from datetime import UTC, date, datetime, timedelta
 from threading import Event
 from time import sleep
@@ -95,11 +97,28 @@ class CrashingExecutor(FakeExecutor):
         raise RuntimeError("unexpected")
 
 
-def claim(attempt_count: int = 1) -> ClaimedBacktestJob:
-    return ClaimedBacktestJob("run-1", "worker-1", "snapshot-1", attempt_count, {})
+def claim(
+    attempt_count: int = 1,
+    created_at: datetime | None = None,
+    reclaimed_stale_lease: bool = False,
+) -> ClaimedBacktestJob:
+    return ClaimedBacktestJob(
+        "run-1",
+        "worker-1",
+        "snapshot-1",
+        attempt_count,
+        {},
+        created_at,
+        reclaimed_stale_lease,
+    )
 
 
-def host(jobs: FakeJobs, executor: FakeExecutor) -> BacktestWorkerHost:
+def host(
+    jobs: FakeJobs,
+    executor: FakeExecutor,
+    queue_wait_warning: timedelta = timedelta(minutes=10),
+    execution_warning: timedelta = timedelta(minutes=5),
+) -> BacktestWorkerHost:
     return BacktestWorkerHost(
         "worker-1",
         timedelta(seconds=1),
@@ -107,6 +126,8 @@ def host(jobs: FakeJobs, executor: FakeExecutor) -> BacktestWorkerHost:
         jobs,
         FakeSnapshots(),
         executor,
+        queue_wait_warning,
+        execution_warning,
     )
 
 
@@ -175,6 +196,37 @@ def test_execution_heartbeat_renews_the_lease() -> None:
     )
     assert worker.process_once()
     assert jobs.heartbeats >= 1
+
+
+def test_worker_emits_contextual_warning_events_for_slow_reclaimed_work(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+    jobs = FakeJobs(
+        [claim(created_at=datetime.now(UTC) - timedelta(minutes=11), reclaimed_stale_lease=True)]
+    )
+    worker = host(
+        jobs,
+        WaitingExecutor(TerminalBacktestFailure("data corrupt", "DATASET_CORRUPTION")),
+        execution_warning=timedelta(milliseconds=1),
+    )
+
+    assert worker.process_once()
+
+    events = [json.loads(record.message) for record in caplog.records]
+    event_names = {event["event"] for event in events}
+    assert {
+        "backtest_job_claimed",
+        "backtest_stale_lease_reclaimed",
+        "backtest_queue_wait_threshold_exceeded",
+        "backtest_execution_duration_threshold_exceeded",
+        "backtest_execution_failed",
+    } <= event_names
+    claimed = next(event for event in events if event["event"] == "backtest_job_claimed")
+    assert claimed["run_id"] == "run-1"
+    assert claimed["worker_id"] == "worker-1"
+    assert claimed["snapshot_id"] == "snapshot-1"
+    assert claimed["attempt"] == 1
 
 
 def test_no_job_does_not_invoke_executor() -> None:

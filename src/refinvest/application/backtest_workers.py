@@ -1,7 +1,7 @@
 """Worker job lifecycle coordination, independent of FastAPI and PostgreSQL."""
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Protocol
 
 from refinvest.application.dataset_snapshots import (
@@ -23,6 +23,8 @@ class ClaimedBacktestJob:
     dataset_snapshot_id: str
     attempt_count: int
     request_payload: dict[str, object]
+    created_at: datetime | None = None
+    reclaimed_stale_lease: bool = False
 
 
 @dataclass(frozen=True)

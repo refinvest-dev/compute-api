@@ -1,6 +1,6 @@
 """PostgreSQL implementation of durable Backtest job runtime state."""
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import cast
 
 from psycopg import connect
@@ -181,7 +181,9 @@ class PostgresBacktestJobRepository:
             cursor.execute(
                 """
                 WITH candidate AS (
-                    SELECT jobs.run_id,
+                    SELECT jobs.run_id, jobs.created_at,
+                        (jobs.status = 'RUNNING' AND jobs.lease_expires_at <= CURRENT_TIMESTAMP)
+                            AS reclaimed_stale_lease,
                         CASE
                             WHEN jobs.resolved_dataset_snapshot_id IS NOT NULL
                                 THEN jobs.resolved_dataset_snapshot_id
@@ -257,7 +259,8 @@ class PostgresBacktestJobRepository:
                 FROM candidate
                 WHERE jobs.run_id = candidate.run_id
                 RETURNING jobs.status, jobs.run_id, jobs.resolved_dataset_snapshot_id,
-                    jobs.attempt_count, jobs.request_payload
+                    jobs.attempt_count, jobs.request_payload, candidate.created_at,
+                    candidate.reclaimed_stale_lease
                 """,
                 (worker_id, lease_duration.total_seconds()),
             )
@@ -270,7 +273,9 @@ class PostgresBacktestJobRepository:
             dataset_snapshot_id,
             attempt_count,
             request_payload,
-        ) = cast(tuple[str, str, str | None, int, dict[str, object]], row)
+            created_at,
+            reclaimed_stale_lease,
+        ) = cast(tuple[str, str, str | None, int, dict[str, object], datetime, bool], row)
         if status != BacktestJobStatus.RUNNING.value or dataset_snapshot_id is None:
             return None
         return ClaimedBacktestJob(
@@ -279,6 +284,8 @@ class PostgresBacktestJobRepository:
             dataset_snapshot_id=dataset_snapshot_id,
             attempt_count=attempt_count,
             request_payload=request_payload,
+            created_at=created_at,
+            reclaimed_stale_lease=reclaimed_stale_lease,
         )
 
     def heartbeat(self, run_id: str, worker_id: str, lease_duration: timedelta) -> bool:

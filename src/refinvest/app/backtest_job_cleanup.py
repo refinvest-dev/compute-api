@@ -1,10 +1,14 @@
 """Bounded cleanup of expired Compute backtest runtime jobs."""
 
+import json
+import logging
 from datetime import timedelta
 from typing import Protocol
 
 from refinvest.app.config import Settings, get_settings
 from refinvest.persistence.postgres.backtest_jobs import PostgresBacktestJobRepository
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class TerminalJobCleanupRepository(Protocol):
@@ -27,4 +31,4 @@ def cleanup_expired_backtest_jobs(
 def backtest_job_cleanup_main() -> None:
     """Console entrypoint used by the hourly systemd timer."""
     deleted = cleanup_expired_backtest_jobs(get_settings())
-    print(f"deleted_backtest_jobs={deleted}")
+    _LOGGER.info(json.dumps({"event": "backtest_cleanup_completed", "deleted_count": deleted}))

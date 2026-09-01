@@ -1,8 +1,14 @@
+import json
+import logging
 from datetime import timedelta
+from importlib import import_module
 
 import pytest
 
-from refinvest.app.backtest_job_cleanup import cleanup_expired_backtest_jobs
+from refinvest.app.backtest_job_cleanup import (
+    backtest_job_cleanup_main,
+    cleanup_expired_backtest_jobs,
+)
 from refinvest.app.config import Settings
 
 
@@ -35,3 +41,20 @@ def test_cleanup_uses_configured_retention_and_bounded_batch() -> None:
 def test_cleanup_requires_database_configuration() -> None:
     with pytest.raises(ValueError, match="REFINVEST_DATABASE_URL"):
         cleanup_expired_backtest_jobs(Settings(None), FakeJobs())
+
+
+def test_cleanup_entrypoint_emits_structured_completion_event(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cleanup_module = import_module("refinvest.app.backtest_job_cleanup")
+
+    caplog.set_level(logging.INFO)
+    monkeypatch.setattr(cleanup_module, "get_settings", lambda: Settings(None, "postgresql://example"))
+    monkeypatch.setattr(cleanup_module, "cleanup_expired_backtest_jobs", lambda _: 3)
+
+    backtest_job_cleanup_main()
+
+    assert json.loads(caplog.records[-1].message) == {
+        "event": "backtest_cleanup_completed",
+        "deleted_count": 3,
+    }
