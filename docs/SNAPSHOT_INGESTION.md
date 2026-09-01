@@ -9,10 +9,18 @@ Required environment variables:
 ```text
 REFINVEST_DATABASE_URL
 REFINVEST_MASSIVE_API_KEY
-REFINVEST_SNAPSHOT_STORAGE_ROOT
+REFINVEST_SNAPSHOT_STORAGE_BACKEND=s3
+REFINVEST_SNAPSHOT_STORAGE_S3_BUCKET=refinvest-snapshots
+REFINVEST_SNAPSHOT_STORAGE_S3_PREFIX=daily
+REFINVEST_SNAPSHOT_STORAGE_S3_REGION=ap-northeast-2
 REFINVEST_SNAPSHOT_START_DATE=2010-01-01
 REFINVEST_US_EQUITY_OVERRIDES_PATH=/run/refinvest/us-equity-overrides.json
 ```
+
+S3 production access uses the Compute EC2 instance role; never place AWS access keys in
+the environment file. `REFINVEST_SNAPSHOT_STORAGE_ROOT` is only required when the
+explicit local-development backend `REFINVEST_SNAPSHOT_STORAGE_BACKEND=filesystem` is
+selected. ADR-039 defines the S3 object and immutability contract.
 
 The override file is an immutable JSON object. `null` means a closure; a timestamp
 means an early close and must be exact UTC.
@@ -42,8 +50,8 @@ Install `refinvest-snapshot-ingestion.service` and
 repository and virtual-environment paths in the service template only if the deployment
 path differs from `/opt/refinvest/compute-api`.
 
-1. Create the `refinvest` service account and make `/var/lib/refinvest/snapshots` writable
-   only by that account.
+1. Create the `refinvest` service account and attach an EC2 instance role that has
+   least-privilege access to the configured S3 bucket/prefix.
 2. Copy `deploy/systemd/snapshot-ingestion.env.example` to
    `/etc/refinvest/snapshot-ingestion.env`, replace its placeholders from the approved
    secret store, and set its owner to `root:root` and mode to `0600`.

@@ -22,9 +22,9 @@ Accepted for the Daily Bar MVP.
   Unit files, repository files, and journals must not contain database credentials,
   vendor API keys, or internal API keys. The immutable US-equity override file is
   separately mounted read-only.
-- The production storage root is `/var/lib/refinvest/snapshots`; the service is allowed
-  to write only there. The snapshot CLI continues to create a new immutable snapshot
-  directory for every attempt and never replaces a prior artifact.
+- Production publication uses the S3 storage backend defined by ADR-039. The snapshot
+  CLI continues to create a new immutable object prefix for every attempt and never
+  replaces a prior artifact.
 
 ## Consequences
 
