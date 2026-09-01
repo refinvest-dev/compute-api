@@ -27,6 +27,12 @@ lease under ADR-018. `Restart=on-failure` restores the worker process after host
 unexpected process failures. This does not alter the application-level retry schedule for
 an individual backtest.
 
+Each claimed attempt runs in an isolated child process with a 10-minute execution deadline.
+The parent continues the PostgreSQL lease heartbeat, terminates a timed-out child, and
+records `FAILED` with `EXECUTION_TIMEOUT`; it does not retry that job automatically. Set
+`REFINVEST_BACKTEST_EXECUTION_TIMEOUT_SECONDS` only to a positive value approved by the
+operational policy in ADR-042.
+
 The snapshot timer and worker service have separate environment files and enablement:
 
 | Unit | Role | Enablement |
