@@ -34,6 +34,14 @@ They are deployment observability signals only: they do not change polling respo
 calculation semantics, or job scheduling. Infrastructure forwards them to its approved log
 sink and alerts on warning events.
 
+## Backtest admission capacity
+
+Compute accepts at most 20 `PENDING` or `RUNNING` jobs globally. A new request when full
+returns `503` with `errorCode: BACKTEST_CAPACITY_EXCEEDED` and `Retry-After: 30`; it creates
+no job or idempotency record. Core retries the same logical request with the same
+`Idempotency-Key` only after that delay. Existing idempotent replays always return the
+original acceptance even while capacity is full. See ADR-044.
+
 ## EC2 systemd deployment
 
 Install `deploy/systemd/refinvest-compute-api.service` on the existing always-on Compute

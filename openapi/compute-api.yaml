@@ -14,10 +14,8 @@ info:
       (`docs/DOMAIN.md` §3).
     - 필드명은 `docs/GLOSSARY.md`의 코드 네이밍을 그대로 따른다. 임의로 축약하거나 동의어로 바꾸지 않는다.
 
-    ## 미확정 사항 (TODO — 구현 전 팀 확인 필요)
-    - `POST /backtests`의 폴링 간격(Web은 2~3초, `docs/ARCHITECTURE.md` §5)과 Compute 내부 Job
-      처리 SLA(타임아웃 등)는 아직 계약에 없다.
-    - Rate Limit/동시 요청 처리 정책은 정의되지 않았다.
+    - Core는 사용자별 quota/rate limit을 소유한다. Compute는 ADR-044의 전역 active-job
+      admission capacity만 적용한다.
 
 servers:
   - url: http://compute.internal:8000
@@ -66,14 +64,28 @@ paths:
             입력 자체가 무효면 실행 전에 걸러낸다.
           content:
             application/json:
-            schema:
-              $ref: '#/components/schemas/ValidationErrorResponse'
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
         '409':
           description: 동일한 Idempotency-Key가 다른 request payload와 함께 재사용됨.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: |
+            Compute의 전역 `PENDING` + `RUNNING` job capacity가 가득 참. 새 job과
+            idempotency record는 생성되지 않으며, Core는 `Retry-After` 이후 동일 key로 재시도한다.
+          headers:
+            Retry-After:
+              description: Core가 재시도 전에 기다릴 초 단위 시간.
+              schema:
+                type: integer
+                example: 30
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BacktestCapacityErrorResponse'
 
   /backtests/{runId}:
     get:
@@ -674,3 +686,13 @@ components:
           items:
             type: string
           description: 실패한 개별 Validation 항목(`docs/DOMAIN.md` §1.2 불변식).
+
+    BacktestCapacityErrorResponse:
+      type: object
+      required: [message, errorCode]
+      properties:
+        message:
+          type: string
+        errorCode:
+          type: string
+          enum: [BACKTEST_CAPACITY_EXCEEDED]

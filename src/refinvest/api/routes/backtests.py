@@ -16,8 +16,10 @@ from refinvest.api.schemas.backtests import (
     PeriodTransport,
 )
 from refinvest.api.schemas.errors import map_strategy_validation_error
+from refinvest.app.config import Settings, get_settings
 from refinvest.app.security import require_internal_api_key
 from refinvest.application.backtests import (
+    BacktestCapacityExceeded,
     BacktestIdempotencyConflict,
     BacktestJobRepository,
     submit_backtest,
@@ -42,11 +44,15 @@ _RESULT_NUMBER_CONTEXT = Context(prec=28, rounding=ROUND_HALF_EVEN)
     "",
     response_model=BacktestAcceptedTransport,
     status_code=status.HTTP_202_ACCEPTED,
-    responses={409: {"description": "Idempotency-Key was reused for another request."}},
+    responses={
+        409: {"description": "Idempotency-Key was reused for another request."},
+        503: {"description": "Compute active-job capacity is temporarily exhausted."},
+    },
 )
 def create_backtest(
     request: CreateBacktestRequestTransport,
     repository: Annotated[BacktestJobRepository, Depends(get_backtest_job_repository)],
+    settings: Annotated[Settings, Depends(get_settings)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> BacktestAcceptedTransport | JSONResponse:
     normalized_key = _idempotency_key(idempotency_key)
@@ -56,7 +62,9 @@ def create_backtest(
             content={"message": "Idempotency-Key must be a UUID v4."},
         )
     try:
-        accepted = submit_backtest(request.to_domain(), normalized_key, repository)
+        accepted = submit_backtest(
+            request.to_domain(), normalized_key, repository, settings.backtest_active_job_limit
+        )
     except StrategyValidationError as error:
         response = map_strategy_validation_error(error)
         return JSONResponse(
@@ -66,6 +74,15 @@ def create_backtest(
         return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
             content={"message": "Idempotency-Key was reused for a different request."},
+        )
+    except BacktestCapacityExceeded:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "message": "Compute active-job capacity is temporarily exhausted.",
+                "errorCode": "BACKTEST_CAPACITY_EXCEEDED",
+            },
+            headers={"Retry-After": "30"},
         )
     return BacktestAcceptedTransport(
         runId=accepted.run_id,
