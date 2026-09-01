@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from refinvest.api.routes.assets import router as assets_router
 from refinvest.api.routes.backtests import router as backtests_router
 from refinvest.api.routes.health import router as health_router
 from refinvest.api.schemas.errors import map_transport_validation_error
@@ -30,6 +31,7 @@ def create_app() -> FastAPI:
     # contract routes must apply app.security.require_internal_api_key.
     application.include_router(health_router)
     application.include_router(backtests_router)
+    application.include_router(assets_router)
     application.add_exception_handler(RequestValidationError, request_validation_error_handler)
     return application
 

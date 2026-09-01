@@ -12,6 +12,14 @@ uses a new key. Compute returns the original `202` acceptance and `runId` for th
 key and canonical request, while a reused key with another request returns `409`.
 Core always polls the returned `runId` for current status. See ADR-040.
 
+## Asset reference data
+
+`GET /assets` and `GET /assets/{symbol}/availability` are Core-only reference endpoints.
+Compute owns the six-item static registry and returns `inceptionDate`, calendar, and execution
+eligibility. Availability comes from one latest published immutable DatasetSnapshot and includes
+that snapshot ID and creation time. A supported asset without current snapshot data returns
+`503 DATASET_UNAVAILABLE`; Core must not infer availability from an external vendor. See ADR-045.
+
 ## Backtest runtime retention
 
 Compute retains terminal job status, result/failure payload, and idempotency data for 24
