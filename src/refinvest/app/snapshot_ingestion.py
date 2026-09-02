@@ -2,10 +2,12 @@
 
 import argparse
 import json
+import logging
 import re
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from time import monotonic
 from typing import cast
 from uuid import uuid4
 
@@ -25,6 +27,7 @@ from refinvest.persistence.postgres.dataset_snapshots import PostgresDatasetSnap
 MVP_SNAPSHOT_SOURCE = "massive-eod-us-stocks+cboe-vix-history+binance-spot"
 MVP_ADJUSTMENT_POLICY = "split-adjusted-ohlcv-cash-dividends-unadjusted"
 _SNAPSHOT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+_LOGGER = logging.getLogger(__name__)
 
 
 def create_mvp_snapshot_ingestion_coordinator(
@@ -84,7 +87,36 @@ def run_snapshot_ingestion(
         corporate_actions_applied=True,
         point_in_time_validation_passed=True,
     )
-    published = coordinator_factory(settings).publish(request, start, end, overrides)
+    started = monotonic()
+    _event(
+        "snapshot_publication_started",
+        snapshot_id=request.snapshot_id,
+        coverage_start=start,
+        coverage_end=end,
+        storage_path=request.storage_path,
+    )
+    try:
+        published = coordinator_factory(settings).publish(request, start, end, overrides)
+    except Exception as error:
+        _event(
+            "snapshot_publication_failed",
+            level=logging.WARNING,
+            snapshot_id=request.snapshot_id,
+            coverage_start=start,
+            coverage_end=end,
+            storage_path=request.storage_path,
+            publication_duration_seconds=monotonic() - started,
+            error_type=type(error).__name__,
+        )
+        raise
+    _event(
+        "snapshot_publication_completed",
+        snapshot_id=published.snapshot_id,
+        coverage_start=start,
+        coverage_end=end,
+        storage_path=published.storage_path,
+        publication_duration_seconds=monotonic() - started,
+    )
     return json.dumps(
         {"snapshotId": published.snapshot_id, "storagePath": published.storage_path},
         separators=(",", ":"),
@@ -96,7 +128,11 @@ def snapshot_ingestion_main() -> None:
     """Console-script entrypoint; configuration secrets remain in the environment."""
     import sys
 
-    print(run_snapshot_ingestion(sys.argv[1:], settings=get_settings()))
+    try:
+        result = run_snapshot_ingestion(sys.argv[1:], settings=get_settings())
+    except Exception:
+        raise SystemExit(1) from None
+    print(result)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -157,3 +193,7 @@ def _official_overrides(path: Path) -> Mapping[date, datetime | None]:
             raise ValueError("US-equity override completion must be an exact UTC timestamp.")
         overrides[session_date] = completed_at.astimezone(UTC)
     return overrides
+
+
+def _event(name: str, *, level: int = logging.INFO, **fields: object) -> None:
+    _LOGGER.log(level, json.dumps({"event": name, **fields}, sort_keys=True, default=str))

@@ -1,4 +1,7 @@
+import json
+import logging
 from datetime import UTC, date, datetime
+from importlib import import_module
 from pathlib import Path
 
 import pytest
@@ -7,6 +10,8 @@ from refinvest.app.config import Settings
 from refinvest.app.snapshot_ingestion import run_snapshot_ingestion
 from refinvest.ingestion.snapshot.artifacts import PublishedSnapshotArtifacts
 from refinvest.ingestion.snapshot.mvp import MvpSnapshotRequest
+
+snapshot_ingestion = import_module("refinvest.app.snapshot_ingestion")
 
 
 def test_builds_explicit_completed_snapshot_request_and_printable_result(tmp_path: Path) -> None:
@@ -103,6 +108,80 @@ def test_uses_configured_s3_prefix_for_snapshot_identity(tmp_path: Path) -> None
     )
 
 
+def test_records_structured_publication_lifecycle_events(tmp_path: Path, caplog) -> None:
+    overrides = tmp_path / "overrides.json"
+    overrides.write_text("{}", encoding="utf-8")
+
+    with caplog.at_level(logging.INFO, logger="refinvest.app.snapshot_ingestion"):
+        run_snapshot_ingestion(
+            [],
+            settings=Settings(
+                None,
+                snapshot_storage_root=str(tmp_path / "snapshots"),
+                snapshot_start_date="2020-01-01",
+                us_equity_overrides_path=str(overrides),
+            ),
+            now=lambda: datetime(2025, 1, 3, 0, 15, tzinfo=UTC),
+            snapshot_nonce=lambda: "abc123",
+            coordinator_factory=lambda _: FakeCoordinator(),  # type: ignore[return-value]
+        )
+
+    events = [json.loads(record.message) for record in caplog.records]
+    assert [event["event"] for event in events] == [
+        "snapshot_publication_started",
+        "snapshot_publication_completed",
+    ]
+    assert events[0]["snapshot_id"] == "mvp-20250102-20250103T001500Z-abc123"
+    assert events[1]["coverage_start"] == "2020-01-01"
+    assert events[1]["coverage_end"] == "2025-01-02"
+
+
+def test_records_structured_publication_failure_without_error_details(
+    tmp_path: Path, caplog
+) -> None:
+    overrides = tmp_path / "overrides.json"
+    overrides.write_text("{}", encoding="utf-8")
+
+    with caplog.at_level(logging.INFO, logger="refinvest.app.snapshot_ingestion"):
+        with pytest.raises(RuntimeError, match="vendor failed"):
+            run_snapshot_ingestion(
+                [],
+                settings=Settings(
+                    None,
+                    snapshot_storage_root=str(tmp_path / "snapshots"),
+                    snapshot_start_date="2020-01-01",
+                    us_equity_overrides_path=str(overrides),
+                ),
+                now=lambda: datetime(2025, 1, 3, 0, 15, tzinfo=UTC),
+                snapshot_nonce=lambda: "abc123",
+                coordinator_factory=lambda _: FailingCoordinator(),  # type: ignore[return-value]
+            )
+
+    events = [json.loads(record.message) for record in caplog.records]
+    assert [event["event"] for event in events] == [
+        "snapshot_publication_started",
+        "snapshot_publication_failed",
+    ]
+    assert events[1]["error_type"] == "RuntimeError"
+    assert "vendor failed" not in caplog.text
+
+
+def test_console_entrypoint_suppresses_failure_traceback(monkeypatch, capsys) -> None:
+    def fail(arguments: list[str], *, settings: Settings) -> str:
+        raise RuntimeError("vendor failed: credential secret")
+
+    monkeypatch.setattr(snapshot_ingestion, "run_snapshot_ingestion", fail)
+    monkeypatch.setattr(snapshot_ingestion, "get_settings", lambda: Settings(None))
+    monkeypatch.setattr("sys.argv", ["refinvest-publish-snapshot"])
+
+    with pytest.raises(SystemExit, match="1"):
+        snapshot_ingestion.snapshot_ingestion_main()
+
+    captured = capsys.readouterr()
+    assert "credential secret" not in captured.out
+    assert "credential secret" not in captured.err
+
+
 @pytest.mark.parametrize(
     "arguments, message",
     [
@@ -157,3 +236,14 @@ class FakeCoordinator:
         return PublishedSnapshotArtifacts(
             request.snapshot_id, f"published/{request.snapshot_id}", "x", "y"
         )
+
+
+class FailingCoordinator:
+    def publish(
+        self,
+        request: MvpSnapshotRequest,
+        start: date,
+        end: date,
+        overrides: dict[date, datetime | None],
+    ) -> PublishedSnapshotArtifacts:
+        raise RuntimeError("vendor failed: credential secret")
