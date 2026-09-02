@@ -66,8 +66,11 @@ path differs from `/opt/refinvest/compute-api`.
 
 Enable the timer on exactly one Compute EC2 instance. A standby instance may retain the
 files but must leave the timer disabled. Configure the platform monitoring route to alert
-when the service fails or when no successful daily execution is observed; the unit's
-15-minute retry is not an alert substitute.
+when it receives `snapshot_publication_failed` or no `snapshot_publication_completed` event for
+the scheduled daily run; the unit's 15-minute retry is not an alert substitute. Events are JSON
+journal records and include the snapshot ID, coverage, storage path, and terminal duration. A
+failure event includes only the exception type, never an exception message or credential. See
+ADR-047.
 
 The durable backtest worker is a separate long-running service. Its systemd deployment
 and stop/recovery procedure are documented in `docs/BACKTEST_WORKER.md`.
