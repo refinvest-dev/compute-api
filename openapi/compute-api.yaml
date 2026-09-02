@@ -170,6 +170,7 @@ paths:
       description: |
         `docs/USECASES.md`의 `GetSeries`(Data Explorer 데이터 소스). 여러 Asset을 동시에 조회할 수 있다.
         Correlation/Lead-Lag 등 통계 분석은 포함하지 않는다 — 순수 시계열 조회만 지원한다(Phase 1 범위).
+        조회 시작 시 하나의 immutable DatasetSnapshot을 선택하며, 이후 최신 데이터는 섞지 않는다(ADR-046).
       parameters:
         - name: symbols
           in: query
@@ -195,28 +196,39 @@ paths:
           schema:
             type: string
             format: date
+        - name: datasetSnapshotId
+          in: query
+          required: false
+          description: 과거 재현용 Snapshot ID. 생략하면 요청 시작 시 최신 published Snapshot 하나를 선택한다.
+          schema:
+            type: string
       responses:
         '200':
           description: |
-            요청한 각 Asset의 `dataAvailability` 범위를 벗어나는 구간은 응답에서 제외한다(값을
-            만들어내지 않는다 — ADR-005와 동일한 원칙을 차트 데이터에도 적용. 단, 이는 계산 결과가
-            아닌 참조 데이터 조회이므로 ADR-005의 "백테스트 중단" 대상은 아니다).
+            Asset별 실제 trading session만 반환하며 공통 날짜를 만들거나 비거래일 값을 채우지 않는다.
+            Expected session의 close 결측은 보정하지 않고 503으로 fail-fast한다.
           content:
             application/json:
               schema:
-                type: object
-                required: [series]
-                properties:
-                  series:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/AssetSeries'
+                $ref: '#/components/schemas/SeriesResponse'
         '400':
-          description: 존재하지 않는 symbol이 포함되었거나 start > end.
+          description: 존재하지 않는 symbol, 중복 symbol, 1~6개 범위 초과, start > end, 최대 10년/20,000 point 제한 초과.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 명시한 datasetSnapshotId가 존재하지 않음.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Snapshot이 없거나 immutable artifact/expected close가 손상·결측됨.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SeriesDataErrorResponse'
 
 components:
   parameters:
@@ -675,11 +687,22 @@ components:
           type: string
           enum: [DATASET_UNAVAILABLE]
 
+    SeriesDataErrorResponse:
+      type: object
+      required: [message, errorCode]
+      properties:
+        message:
+          type: string
+        errorCode:
+          type: string
+          enum: [DATASET_UNAVAILABLE, DATASET_CORRUPTION]
+
     SeriesMetric:
       type: string
       enum: [PRICE, RETURN, NORMALIZED]
       description: |
-        NORMALIZED는 조회 기간 시작점을 100으로 맞춘 값(`docs/USECASES.md`의 `GetSeries`).
+        PRICE는 close, RETURN은 직전 available session close 대비 일간 수익률, NORMALIZED는
+        요청 범위 안 첫 close를 100으로 맞춘 값(ADR-046).
 
     SeriesPoint:
       type: object
@@ -698,6 +721,22 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/SeriesPoint'
+
+    SeriesResponse:
+      type: object
+      required: [datasetSnapshotId, snapshotCreatedAt, adjustmentPolicy, series]
+      properties:
+        datasetSnapshotId:
+          type: string
+        snapshotCreatedAt:
+          type: string
+          format: date-time
+        adjustmentPolicy:
+          type: string
+        series:
+          type: array
+          items:
+            $ref: '#/components/schemas/AssetSeries'
 
     # ---- 공통 에러 ----
     ErrorResponse:

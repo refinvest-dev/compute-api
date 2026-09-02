@@ -20,6 +20,17 @@ eligibility. Availability comes from one latest published immutable DatasetSnaps
 that snapshot ID and creation time. A supported asset without current snapshot data returns
 `503 DATASET_UNAVAILABLE`; Core must not infer availability from an external vendor. See ADR-045.
 
+## Snapshot series data
+
+`GET /series` is a Core-only Data Explorer endpoint. It resolves one immutable snapshot at
+request start (or the requested `datasetSnapshotId`) and returns its ID, creation time, and
+adjustment policy with the points. `PRICE` is close, `RETURN` is the prior available session's
+daily return, and `NORMALIZED` sets the first available close in the requested range to 100.
+Assets retain their own trading sessions: no common-date alignment, non-trading fill, or missing
+expected-session fallback is allowed. A missing expected close or malformed artifact fails with
+`503 DATASET_CORRUPTION`; no available snapshot is `503 DATASET_UNAVAILABLE`. Requests allow 1–6
+unique symbols, up to ten years and 20,000 returned points. See ADR-046.
+
 ## Backtest runtime retention
 
 Compute retains terminal job status, result/failure payload, and idempotency data for 24
