@@ -35,7 +35,7 @@ router = APIRouter(
 _RESULT_NUMBER_FIELDS = frozenset({
     "totalReturn", "cagr", "mdd", "sharpe", "winRate", "avgTradeReturn",
     "avgHoldingPeriod", "profitFactor", "value", "entryPrice", "exitPrice", "returnPct",
-    "median", "max",
+    "median", "max", "distribution",
 })
 _RESULT_NUMBER_CONTEXT = Context(prec=28, rounding=ROUND_HALF_EVEN)
 

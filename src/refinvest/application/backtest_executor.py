@@ -325,6 +325,7 @@ def _result_payload(
     execution_asset: AssetSymbol,
 ) -> dict[str, object]:
     metrics = assembled.performance.metrics
+    trades = tuple(assembled.trades)
     return {
         "backtestRunId": run_id,
         "metrics": {
@@ -344,9 +345,12 @@ def _result_payload(
         ],
         "trades": [
             _trade_payload(trade, calendar, primary_signal_asset, execution_asset)
-            for trade in assembled.trades
+            for trade in trades
         ],
         "benchmark": _benchmark_payload(assembled.benchmark),
+        "signalExecutionDelay": _signal_execution_delay_payload(
+            trades, calendar, primary_signal_asset, execution_asset
+        ),
         "sampleSizeWarning": assembled.sample_size_warning.value,
         "dataIntegrityStatus": {
             "datasetSnapshotId": assembled.data_integrity_status.dataset_snapshot_id,
@@ -356,6 +360,52 @@ def _result_payload(
             ),
         },
     }
+
+
+def _signal_execution_delay_payload(
+    trades: tuple[Trade, ...],
+    calendar: SessionCalendarPort,
+    primary_signal_asset: AssetSymbol,
+    execution_asset: AssetSymbol,
+) -> dict[str, object]:
+    """Return deterministic, calendar-based signal-to-entry delays in hours."""
+    distribution = tuple(
+        _signal_execution_delay_hours(trade, calendar, primary_signal_asset, execution_asset)
+        for trade in trades
+    )
+    if not distribution:
+        return {"median": "0", "max": "0", "distribution": []}
+
+    ordered = sorted(distribution)
+    middle = len(ordered) // 2
+    median = (
+        ordered[middle]
+        if len(ordered) % 2
+        else _normalize_delay_hours((ordered[middle - 1] + ordered[middle]) / Decimal(2))
+    )
+    return {
+        "median": str(median),
+        "max": str(max(distribution)),
+        "distribution": [str(delay) for delay in distribution],
+    }
+
+
+def _signal_execution_delay_hours(
+    trade: Trade,
+    calendar: SessionCalendarPort,
+    primary_signal_asset: AssetSymbol,
+    execution_asset: AssetSymbol,
+) -> Decimal:
+    signal_time = _completion_at(calendar, primary_signal_asset, trade.signal_session)
+    entry_time = _completion_at(calendar, execution_asset, trade.entry_session)
+    seconds = Decimal(str((entry_time - signal_time).total_seconds()))
+    if seconds < 0:
+        raise TemporalResolutionError("Entry execution must not precede its signal completion.")
+    return _normalize_delay_hours(seconds / Decimal(3600))
+
+
+def _normalize_delay_hours(value: Decimal) -> Decimal:
+    return value.quantize(Decimal("0.000000000001")).normalize()
 
 
 def _trade_payload(
