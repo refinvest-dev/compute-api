@@ -65,7 +65,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ValidationErrorResponse'
+                anyOf:
+                  - $ref: '#/components/schemas/ErrorResponse'
+                  - $ref: '#/components/schemas/ValidationErrorResponse'
         '409':
           description: 동일한 Idempotency-Key가 다른 request payload와 함께 재사용됨.
           content:
@@ -112,6 +114,8 @@ paths:
           description: |
             존재하지 않는 runId 또는 24시간 Compute runtime retention이 만료되어 정리된 terminal job.
             Core는 이 응답을 근거로 동일한 논리 요청을 다시 제출하지 않는다(ADR-041).
+            Core가 acceptance를 기록한 runId라면 `COMPUTE_RUNTIME_STATUS_UNAVAILABLE`로 자신의
+            BacktestRun을 종료하고 동시 실행 capacity만 해제한다.
           content:
             application/json:
               schema:
@@ -431,7 +435,11 @@ components:
     BacktestStatus:
       type: string
       enum: [PENDING, RUNNING, COMPLETED, FAILED]
-      description: 상태 전이는 PENDING → RUNNING → (COMPLETED | FAILED)만 허용, 역방향 없음(`docs/DOMAIN.md` §1.3).
+      description: |
+        Compute job의 상태 전이는 PENDING → RUNNING → (COMPLETED | FAILED)만 허용하며 역방향 전이는 없다.
+        이는 Core의 `BacktestRun` 상태 전이와 구분된다. Compute가 job을 접수하기 전에 영구적으로
+        거절된 경우 Core는 ADR-047에 따라 자신의 `BacktestRun`을 PENDING → FAILED로 전이할 수 있지만,
+        해당 Compute job은 존재하지 않으므로 이 API에서 관측되지 않는다.
 
     FatalErrorCode:
       type: string
@@ -493,12 +501,17 @@ components:
 
     SignalExecutionDelay:
       type: object
+      required: [median, max, distribution]
+      description: |
+        각 거래의 `entryTime - signalTime`을 시간(hours) 단위로 기록한다(ADR-048).
+        `distribution`은 거래 입력 순서를 보존하며, `median`은 중앙값(짝수 개면 두 중앙값의 산술 평균),
+        `max`는 최댓값이다. 무거래 결과는 빈 배열과 `median = max = 0`을 반환한다.
       properties:
-        median: { type: number }
-        max: { type: number }
+        median: { type: number, minimum: 0 }
+        max: { type: number, minimum: 0 }
         distribution:
           type: array
-          items: { type: number }
+          items: { type: number, minimum: 0 }
 
     SampleSizeWarning:
       type: string
@@ -524,6 +537,7 @@ components:
         - equityCurve
         - trades
         - benchmark
+        - signalExecutionDelay
         - sampleSizeWarning
         - dataIntegrityStatus
       properties:

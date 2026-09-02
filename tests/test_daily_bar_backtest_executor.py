@@ -94,6 +94,11 @@ def test_executes_btc_weekend_signal_at_next_tqqq_session_deterministically() ->
     assert first.actual_period.start == date(2025, 1, 3)
     assert first.actual_period.end == date(2025, 1, 7)
     assert first.result_payload["sampleSizeWarning"] == "LOW"
+    assert first.result_payload["signalExecutionDelay"] == {
+        "median": "69.016666666667",
+        "max": "69.016666666667",
+        "distribution": ["69.016666666667"],
+    }
     assert first.result_payload["trades"] == [
         {
             "signalTime": "2025-01-03T23:59:00+00:00",
