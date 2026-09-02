@@ -43,6 +43,21 @@ new snapshot ID and storage path. For a controlled backfill, provide explicit
 `--start`, `--end`, `--snapshot-id`, and optionally `--us-equity-overrides`; an end on
 the current/future UTC date is rejected.
 
+## Published reference-data smoke check
+
+After a production publication, run this command on the Compute host with the same database and
+S3 instance-role configuration as the API and worker:
+
+```text
+refinvest-verify-reference-data
+```
+
+It resolves the latest published DatasetSnapshot once (or a supplied
+`--dataset-snapshot-id`), manifest-verifies its artifact, confirms calendar availability for all
+six MVP assets, and reads a recent QQQ/BTCUSDT cross-calendar PRICE series. It prints selected
+snapshot provenance as JSON on success and exits non-zero without a traceback on any failure. It
+does not publish, modify, or fall back to another snapshot.
+
 ## EC2 systemd deployment
 
 Install `refinvest-snapshot-ingestion.service` and
