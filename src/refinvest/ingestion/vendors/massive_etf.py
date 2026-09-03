@@ -142,7 +142,7 @@ def _daily_bar(asset: str, item: dict[str, object]) -> DailyBar:
             _decimal(item, "h"),
             _decimal(item, "l"),
             _decimal(item, "c"),
-            Decimal(_integer(item, "v")),
+            _decimal(item, "v"),
         )
     except (InvalidOperation, OSError, OverflowError, ValueError) as error:
         raise MassiveEtfIngestionError("Massive ETF aggregate bar is invalid.") from error
@@ -166,10 +166,14 @@ def _ordered_unique_bars(bars: list[DailyBar]) -> tuple[DailyBar, ...]:
 def _decimal(payload: dict[str, object], field: str) -> Decimal:
     value = payload.get(field)
     if isinstance(value, Decimal):
-        return value
-    if isinstance(value, int) and not isinstance(value, bool):
-        return Decimal(value)
-    raise MassiveEtfIngestionError(f"Massive ETF aggregate {field} must be a JSON number.")
+        decimal = value
+    elif isinstance(value, int) and not isinstance(value, bool):
+        decimal = Decimal(value)
+    else:
+        raise MassiveEtfIngestionError(f"Massive ETF aggregate {field} must be a JSON number.")
+    if not decimal.is_finite():
+        raise MassiveEtfIngestionError(f"Massive ETF aggregate {field} must be finite.")
+    return decimal
 
 
 def _integer(payload: dict[str, object], field: str) -> int:
