@@ -47,6 +47,19 @@ def test_fetches_split_adjusted_daily_bars_from_fixed_massive_endpoint() -> None
     )
 
 
+def test_preserves_fractional_or_scientific_notation_volume_as_decimal() -> None:
+    response = (
+        b'{"adjusted":true,"status":"OK","ticker":"QQQ","results":['
+        b'{"t":1735866000000,"o":500.1,"h":502.5,"l":499.5,"c":501.2,"v":4.4965071786935e+07}]}'
+    )
+
+    bars = MassiveEtfDailyBarsClient("test-key", lambda _: response).fetch_daily_bars(
+        "QQQ", date(2025, 1, 2), date(2025, 1, 2)
+    )
+
+    assert bars[0].volume == Decimal("44965071.786935")
+
+
 def test_requires_expected_session_bars_for_every_mvp_etf() -> None:
     sessions = {
         AssetSession(asset, date(2025, 1, 2)): CalendarSession(
