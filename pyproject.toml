@@ -18,6 +18,7 @@ dependencies = [
 refinvest = "refinvest:main"
 refinvest-backtest-worker = "refinvest.app.worker:worker_main"
 refinvest-publish-snapshot = "refinvest.app.snapshot_ingestion:snapshot_ingestion_main"
+refinvest-publish-integration-fixture = "refinvest.app.integration_fixture:integration_fixture_main"
 refinvest-verify-reference-data = "refinvest.app.reference_data_smoke:reference_data_smoke_main"
 refinvest-cleanup-backtest-jobs = "refinvest.app.backtest_job_cleanup:backtest_job_cleanup_main"
 
