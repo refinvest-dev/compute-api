@@ -228,3 +228,15 @@ Data Correctness
 - full test suite
 
 Temporal/Execution 변경은 반드시 결정론 및 cross-calendar regression test로 검증한다.
+
+## 13. Cross-repository integration
+
+- `../../integration`은 Compute의 runtime dependency나 Git submodule이 아닌, sibling checkout을
+  조립해 검증하는 local E2E harness다. Compute source tree나 Python import path에 포함하지 않는다.
+- Core↔Compute 호출 또는 OpenAPI snapshot에 영향을 주는 변경은 context 정본을 먼저
+  확인하고, 구현 전후 `../../integration/scripts/verify-contract-sync.ps1`을 실행한다.
+- Compute 동작 변경은 integration의 분리된 DB와 non-production fixture로 Core dispatch부터
+  terminal result까지 smoke를 검증한다. 로컬 credential, fixture 산출물, compatibility evidence는
+  Compute 저장소에 커밋하지 않는다.
+- integration harness의 기동 절차·환경 변수·실행 증적은 `../../integration/README.md`와
+  `../../integration/AGENTS.md`를 정본으로 하며, 이 파일에는 중복해서 관리하지 않는다.
