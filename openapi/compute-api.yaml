@@ -457,18 +457,19 @@ components:
     BacktestResultMetrics:
       type: object
       description: |
-        `sampleSizeWarning`이 `ZERO`인 경우 이 값들을 그대로(0 등으로) 노출하지 않고 Empty State로
-        대체 표시하는 것은 Web/Core 책임이다(ADR-006). Compute는 계산된 raw 값을 그대로 반환한다.
+        `sampleSizeWarning`이 `ZERO`이면 `tradeCount`를 제외한 전략 성과 지표는 계산 불가능하므로
+        `null`이다. Web/Core는 이를 `0`으로 대체하지 않고 Empty State로 표시한다(ADR-006).
+        Compute는 계산된 raw 값을 그대로 반환한다.
       properties:
-        totalReturn: { type: number }
-        cagr: { type: number }
-        mdd: { type: number }
-        sharpe: { type: number }
-        winRate: { type: number }
+        totalReturn: { type: number, nullable: true }
+        cagr: { type: number, nullable: true }
+        mdd: { type: number, nullable: true }
+        sharpe: { type: number, nullable: true }
+        winRate: { type: number, nullable: true }
         tradeCount: { type: integer }
-        avgTradeReturn: { type: number }
-        avgHoldingPeriod: { type: number }
-        profitFactor: { type: number }
+        avgTradeReturn: { type: number, nullable: true }
+        avgHoldingPeriod: { type: number, nullable: true }
+        profitFactor: { type: number, nullable: true }
 
     EquityCurvePoint:
       type: object
