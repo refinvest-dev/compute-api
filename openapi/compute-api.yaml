@@ -28,7 +28,7 @@ tags:
   - name: backtests
     description: 비동기 백테스트 실행 (`docs/USECASES.md`의 `ExecuteBacktest`)
   - name: assets
-    description: Asset/Calendar 참조 데이터 및 시계열 (`docs/USECASES.md`의 `ListAssets`, `GetAssetAvailability`, `GetSeries`)
+    description: Asset/Calendar 참조 데이터 및 보류된 시계열 capability (`docs/USECASES.md`, ADR-049)
 
 paths:
   /backtests:
@@ -170,11 +170,13 @@ paths:
     get:
       operationId: getSeries
       tags: [assets]
-      summary: Data Explorer용 다중 자산 시계열 조회 (`GetSeries`)
+      summary: 보류된 다중 자산 시계열 capability (`GetSeries`)
       description: |
-        `docs/USECASES.md`의 `GetSeries`(Data Explorer 데이터 소스). 여러 Asset을 동시에 조회할 수 있다.
-        Correlation/Lead-Lag 등 통계 분석은 포함하지 않는다 — 순수 시계열 조회만 지원한다(Phase 1 범위).
+        `docs/USECASES.md`의 `GetSeries`(향후 Data Explorer 데이터 소스). 여러 Asset을 동시에 조회할 수 있다.
+        ADR-049에 따라 MVP Web은 이 operation을 호출하거나 사용자에게 노출하지 않는다.
+        Correlation/Lead-Lag 등 통계 분석은 포함하지 않는다 — 순수 시계열 조회만 지원한다.
         조회 시작 시 하나의 immutable DatasetSnapshot을 선택하며, 이후 최신 데이터는 섞지 않는다(ADR-046).
+      x-refinvest-mvp-status: deferred
       parameters:
         - name: symbols
           in: query
