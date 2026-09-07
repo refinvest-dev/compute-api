@@ -18,6 +18,7 @@ from refinvest.ingestion.snapshot.workflow import (
     SnapshotArtifactPublisher,
     publish_dataset_snapshot,
 )
+from refinvest.ingestion.vendors.binance_btcusdt import BtcusdtArchiveBatch
 from refinvest.marketdata.domain import (
     AssetCalendar,
     AssetSession,
@@ -48,7 +49,7 @@ class BtcusdtDailyBarIngestor(Protocol):
         sessions: Mapping[AssetSession, CalendarSession],
         start: date,
         end: date,
-    ) -> tuple[DailyBar, ...]: ...
+    ) -> BtcusdtArchiveBatch: ...
 
 
 @dataclass(frozen=True)
@@ -109,6 +110,7 @@ class MvpSnapshotIngestionCoordinator:
             ),
         )
         provenance = composite_calendar_provenance(components, sessions)
+        btcusdt = self._btcusdt_bars.fetch_for_calendar(sessions, start, end)
         snapshot = DatasetSnapshot(
             request.snapshot_id,
             request.created_at,
@@ -119,10 +121,11 @@ class MvpSnapshotIngestionCoordinator:
             provenance.source,
             provenance.version,
             provenance.content_hash,
+            btcusdt.source_artifacts,
         )
         daily_bars = (
             *self._etf_bars.fetch_for_calendar(sessions, start, end),
-            *self._btcusdt_bars.fetch_for_calendar(sessions, start, end),
+            *btcusdt.daily_bars,
         )
         reference_closes = self._vix_closes.fetch_for_calendar(sessions)
         return publish_dataset_snapshot(

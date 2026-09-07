@@ -123,7 +123,7 @@ def build_snapshot_artifact_contents(
         calendar,
         bars_content,
         _manifest_content(
-            snapshot.snapshot_id,
+            snapshot,
             calendar,
             bars_content,
             closes_content,
@@ -244,7 +244,7 @@ def _reference_closes_content(closes: tuple[ReferenceClose, ...]) -> bytes | Non
 
 
 def _manifest_content(
-    snapshot_id: str,
+    snapshot: DatasetSnapshot,
     calendar_content: bytes,
     daily_bars_content: bytes,
     reference_closes_content: bytes | None,
@@ -252,12 +252,22 @@ def _manifest_content(
     point_in_time_validation_passed: bool,
 ) -> bytes:
     manifest: dict[str, object] = {
-        "formatVersion": 2,
-        "snapshotId": snapshot_id,
+        "formatVersion": 3,
+        "snapshotId": snapshot.snapshot_id,
         "corporateActionsApplied": corporate_actions_applied,
         "pointInTimeValidationPassed": point_in_time_validation_passed,
         "calendar": {"path": "calendar.json", "sha256": _sha256(calendar_content)},
         "dailyBars": {"path": "daily-bars.ndjson", "sha256": _sha256(daily_bars_content)},
+        "sourceArtifacts": [
+            {
+                "uri": artifact.uri,
+                "sha256": artifact.sha256,
+                "retrievedAt": artifact.retrieved_at.isoformat().replace("+00:00", "Z"),
+            }
+            for artifact in sorted(
+                snapshot.source_artifacts, key=lambda item: (item.uri, item.sha256)
+            )
+        ],
     }
     if reference_closes_content is not None:
         manifest["referenceCloses"] = {

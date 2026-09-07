@@ -1,12 +1,12 @@
 """PostgreSQL adapter for immutable DatasetSnapshot metadata."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import cast
 
 from psycopg import connect
 from psycopg.types.json import Jsonb
 
-from refinvest.application.dataset_snapshots import DatasetSnapshot
+from refinvest.application.dataset_snapshots import DatasetSnapshot, SourceArtifact
 
 
 class PostgresDatasetSnapshotRepository:
@@ -18,7 +18,7 @@ class PostgresDatasetSnapshotRepository:
             cursor.execute(
                 """
                 SELECT snapshot_id, created_at, source, coverage, adjustment_policy, storage_path,
-                    calendar_source, calendar_version, calendar_hash
+                    calendar_source, calendar_version, calendar_hash, source_artifacts
                 FROM compute_dataset_snapshots
                 WHERE snapshot_id = %s
                 """,
@@ -31,7 +31,7 @@ class PostgresDatasetSnapshotRepository:
             cursor.execute(
                 """
                 SELECT snapshot_id, created_at, source, coverage, adjustment_policy, storage_path,
-                    calendar_source, calendar_version, calendar_hash
+                    calendar_source, calendar_version, calendar_hash, source_artifacts
                 FROM compute_dataset_snapshots
                 ORDER BY created_at DESC, snapshot_id DESC
                 LIMIT 1
@@ -57,8 +57,20 @@ def _snapshot_from_row(row: tuple[object, ...] | None) -> DatasetSnapshot | None
         calendar_source,
         calendar_version,
         calendar_hash,
+        source_artifacts,
     ) = cast(
-        tuple[str, datetime, str, dict[str, object], str, str, str | None, str | None, str | None],
+        tuple[
+            str,
+            datetime,
+            str,
+            dict[str, object],
+            str,
+            str,
+            str | None,
+            str | None,
+            str | None,
+            list[dict[str, object]],
+        ],
         row,
     )
     return DatasetSnapshot(
@@ -71,6 +83,7 @@ def _snapshot_from_row(row: tuple[object, ...] | None) -> DatasetSnapshot | None
         calendar_source,
         calendar_version,
         calendar_hash,
+        _source_artifacts(source_artifacts),
     )
 
 
@@ -85,8 +98,8 @@ def _insert_snapshot(database_url: str, snapshot: DatasetSnapshot) -> None:
             """
             INSERT INTO compute_dataset_snapshots
                     (snapshot_id, created_at, source, coverage, adjustment_policy, storage_path,
-                    calendar_source, calendar_version, calendar_hash)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    calendar_source, calendar_version, calendar_hash, source_artifacts)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 snapshot.snapshot_id,
@@ -98,5 +111,29 @@ def _insert_snapshot(database_url: str, snapshot: DatasetSnapshot) -> None:
                 snapshot.calendar_source,
                 snapshot.calendar_version,
                 snapshot.calendar_hash,
+                Jsonb(
+                    [
+                        {
+                            "uri": artifact.uri,
+                            "sha256": artifact.sha256,
+                            "retrievedAt": artifact.retrieved_at.isoformat(),
+                        }
+                        for artifact in snapshot.source_artifacts
+                    ]
+                ),
             ),
         )
+
+
+def _source_artifacts(value: list[dict[str, object]]) -> tuple[SourceArtifact, ...]:
+    try:
+        return tuple(
+            SourceArtifact(
+                str(item["uri"]),
+                str(item["sha256"]),
+                datetime.fromisoformat(str(item["retrievedAt"])).astimezone(UTC),
+            )
+            for item in value
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("DatasetSnapshot source_artifacts are invalid.") from error

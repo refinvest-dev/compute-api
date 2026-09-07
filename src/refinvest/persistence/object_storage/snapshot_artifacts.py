@@ -47,7 +47,7 @@ def load_snapshot_execution_data(
     manifest = _json_object(read_artifact(Path("manifest.json")), "manifest.json")
     _require_equal(_string(manifest, "snapshotId"), snapshot.snapshot_id, "manifest snapshotId")
     format_version = _integer(manifest, "formatVersion")
-    if format_version not in {1, 2}:
+    if format_version not in {1, 2, 3}:
         raise SnapshotArtifactError("Unexpected manifest formatVersion.")
     calendar_bytes = _read_declared_artifact(read_artifact, _object(manifest, "calendar"))
     daily_bars_bytes = _read_declared_artifact(read_artifact, _object(manifest, "dailyBars"))

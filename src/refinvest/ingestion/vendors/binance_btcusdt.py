@@ -1,14 +1,19 @@
-"""Binance Spot BTCUSDT UTC daily-bar adapter for snapshot ingestion."""
+"""Verified Binance Public Data BTCUSDT Spot daily archive ingestion."""
 
-import json
+import csv
+import hashlib
+import re
+import zipfile
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from typing import cast
+from io import BytesIO, TextIOWrapper
+from typing import Protocol
 from urllib.error import URLError
-from urllib.parse import urlencode
 from urllib.request import urlopen
 
+from refinvest.application.dataset_snapshots import SourceArtifact
 from refinvest.marketdata.domain import (
     AssetSession,
     CalendarSession,
@@ -16,59 +21,147 @@ from refinvest.marketdata.domain import (
     DailyBar,
 )
 
-BINANCE_SPOT_BASE_URL = "https://api.binance.com"
-BINANCE_BTCUSDT_KLINES_URL = f"{BINANCE_SPOT_BASE_URL}/api/v3/klines"
+BINANCE_PUBLIC_DATA_BASE_URL = "https://data.binance.vision"
 BTCUSDT = "BTCUSDT"
-_DAY_MILLISECONDS = 86_400_000
-_MAX_KLINES_PER_REQUEST = 1_000
+_CHECKSUM = re.compile(r"^([0-9a-fA-F]{64})\s+\*?([^\s]+)\s*$")
+_REQUIRED_COLUMNS = frozenset({"open_time", "open", "high", "low", "close", "volume"})
 
 
 class BinanceBtcusdtIngestionError(ValueError):
-    """Binance BTCUSDT data cannot be fetched or converted without ambiguity."""
+    """A Binance archive cannot be verified and normalized without ambiguity."""
+
+
+@dataclass(frozen=True)
+class BtcusdtArchiveBatch:
+    """Canonical bars plus immutable evidence for the archives that produced them."""
+
+    daily_bars: tuple[DailyBar, ...]
+    source_artifacts: tuple[SourceArtifact, ...]
+
+
+class BinanceArchiveRevisionStore(Protocol):
+    """Durable normalized archive revisions, keyed by immutable URI and SHA-256."""
+
+    def get(self, uri: str, sha256: str) -> BtcusdtArchiveBatch | None: ...
+
+    def put_if_absent(self, batch: BtcusdtArchiveBatch) -> BtcusdtArchiveBatch: ...
 
 
 class BinanceBtcusdtDailyBarsClient:
-    """Fetch Binance Spot BTCUSDT UTC daily Klines without vendor types escaping ingestion."""
+    """Fetch only completed Binance Spot BTCUSDT 1d Public Data archives."""
 
-    def __init__(self, download: Callable[[str], bytes] | None = None) -> None:
+    def __init__(
+        self,
+        download: Callable[[str], bytes] | None = None,
+        *,
+        base_url: str = BINANCE_PUBLIC_DATA_BASE_URL,
+        now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        revisions: BinanceArchiveRevisionStore | None = None,
+    ) -> None:
         self._download = download or _download
+        self._base_url = base_url.rstrip("/")
+        self._now = now
+        self._verified_archives: dict[tuple[str, str], BtcusdtArchiveBatch] = {}
+        self._revisions = revisions or _InMemoryArchiveRevisionStore()
 
-    def fetch_daily_bars(self, start: date, end: date) -> tuple[DailyBar, ...]:
+    def fetch_daily_bars(self, start: date, end: date) -> BtcusdtArchiveBatch:
+        """Use monthly archives for completed months and daily archives for the current UTC month."""  # noqa: E501
         if start > end:
             raise BinanceBtcusdtIngestionError("BTCUSDT range start must not exceed end.")
-        end_milliseconds = _midnight_milliseconds(end + timedelta(days=1)) - 1
-        cursor = _midnight_milliseconds(start)
-        bars: list[DailyBar] = []
-        while cursor <= end_milliseconds:
-            try:
-                content = self._download(_klines_url(cursor, end_milliseconds))
-            except (OSError, URLError) as error:
-                raise BinanceBtcusdtIngestionError(
-                    "Binance BTCUSDT Kline download failed."
-                ) from error
-            page = _parse_klines(content)
-            if not page:
-                break
-            bars.extend(page)
-            cursor = _midnight_milliseconds(page[-1].session_date + timedelta(days=1))
-            if len(page) < _MAX_KLINES_PER_REQUEST:
-                break
-        return _ordered_unique_bars(bars)
+        current = self._now()
+        if current.tzinfo is not UTC:
+            raise BinanceBtcusdtIngestionError(
+                "Binance archive clock must be an exact UTC datetime."
+            )
+        if end >= current.date():
+            raise BinanceBtcusdtIngestionError(
+                "Current or future UTC daily archives must not be ingested."
+            )
+        uris = self._archive_uris(start, end, current.date())
+        batches = tuple(self._fetch_archive(uri) for uri in uris)
+        return BtcusdtArchiveBatch(
+            tuple(
+                bar
+                for bar in _ordered_unique_bars(
+                    [bar for batch in batches for bar in batch.daily_bars]
+                )
+                if start <= bar.session_date <= end
+            ),
+            tuple(artifact for batch in batches for artifact in batch.source_artifacts),
+        )
 
     def fetch_for_calendar(
         self,
         sessions: Mapping[AssetSession, CalendarSession],
         start: date,
         end: date,
-    ) -> tuple[DailyBar, ...]:
-        """Fetch and require BTCUSDT data for every expected snapshot session."""
-        return select_btcusdt_daily_bars(self.fetch_daily_bars(start, end), sessions)
+    ) -> BtcusdtArchiveBatch:
+        batch = self.fetch_daily_bars(start, end)
+        return BtcusdtArchiveBatch(
+            select_btcusdt_daily_bars(batch.daily_bars, sessions), batch.source_artifacts
+        )
+
+    def _archive_uris(self, start: date, end: date, today: date) -> tuple[str, ...]:
+        current_month = today.replace(day=1)
+        uris: list[str] = []
+        cursor = start
+        while cursor <= end:
+            month_end = _month_end(cursor)
+            segment_end = min(month_end, end)
+            if cursor.replace(day=1) < current_month:
+                uris.append(
+                    f"{self._base_url}/data/spot/monthly/klines/{BTCUSDT}/1d/"
+                    f"{BTCUSDT}-1d-{cursor:%Y-%m}.zip"
+                )
+            else:
+                uris.extend(
+                    f"{self._base_url}/data/spot/daily/klines/{BTCUSDT}/1d/"
+                    f"{BTCUSDT}-1d-{day:%Y-%m-%d}.zip"
+                    for day in _dates(cursor, segment_end)
+                )
+            cursor = segment_end + timedelta(days=1)
+        return tuple(uris)
+
+    def _fetch_archive(self, uri: str) -> BtcusdtArchiveBatch:
+        try:
+            archive = self._download(uri)
+            checksum = self._download(f"{uri}.CHECKSUM")
+        except (OSError, URLError) as error:
+            raise BinanceBtcusdtIngestionError(
+                "Binance Public Data archive download failed."
+            ) from error
+        expected_hash = _checksum_sha256(checksum, uri)
+        actual_hash = hashlib.sha256(archive).hexdigest()
+        if actual_hash != expected_hash:
+            raise BinanceBtcusdtIngestionError("Binance Public Data archive SHA-256 mismatch.")
+        cache_key = (uri, actual_hash)
+        cached = self._verified_archives.get(cache_key)
+        if cached is not None:
+            return cached
+        persisted = self._revisions.get(*cache_key)
+        if persisted is not None:
+            self._verified_archives[cache_key] = persisted
+            return persisted
+        batch = BtcusdtArchiveBatch(
+            _parse_archive_csv(archive),
+            (SourceArtifact(uri, actual_hash, self._retrieved_at()),),
+        )
+        persisted = self._revisions.put_if_absent(batch)
+        self._verified_archives[cache_key] = persisted
+        return persisted
+
+    def _retrieved_at(self) -> datetime:
+        current = self._now()
+        if current.tzinfo is not UTC:
+            raise BinanceBtcusdtIngestionError(
+                "Binance archive clock must be an exact UTC datetime."
+            )
+        return current
 
 
 def select_btcusdt_daily_bars(
     bars: tuple[DailyBar, ...], sessions: Mapping[AssetSession, CalendarSession]
 ) -> tuple[DailyBar, ...]:
-    """Select snapshot coverage and reject every BTCUSDT expected-session gap."""
     expected = {
         asset_session
         for asset_session, session in sessions.items()
@@ -87,64 +180,83 @@ def select_btcusdt_daily_bars(
     return tuple(by_session[item] for item in sorted(expected, key=lambda item: item.session_date))
 
 
-def _klines_url(start_milliseconds: int, end_milliseconds: int) -> str:
-    query = urlencode(
-        {
-            "symbol": BTCUSDT,
-            "interval": "1d",
-            "timeZone": "0",
-            "startTime": start_milliseconds,
-            "endTime": end_milliseconds,
-            "limit": _MAX_KLINES_PER_REQUEST,
-        }
-    )
-    return f"{BINANCE_BTCUSDT_KLINES_URL}?{query}"
-
-
-def _parse_klines(content: bytes) -> tuple[DailyBar, ...]:
+def _checksum_sha256(content: bytes, archive_uri: str) -> str:
     try:
-        payload_object = json.loads(content)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise BinanceBtcusdtIngestionError(
-            "Binance BTCUSDT Kline response must be valid JSON."
-        ) from error
-    if not isinstance(payload_object, list):
-        raise BinanceBtcusdtIngestionError("Binance BTCUSDT Kline response must be an array.")
-    return tuple(_daily_bar(item) for item in cast(list[object], payload_object))
+        lines = content.decode("utf-8").splitlines()
+    except UnicodeDecodeError as error:
+        raise BinanceBtcusdtIngestionError("Binance archive CHECKSUM must be UTF-8.") from error
+    if len(lines) != 1 or (match := _CHECKSUM.fullmatch(lines[0])) is None:
+        raise BinanceBtcusdtIngestionError("Binance archive CHECKSUM format is invalid.")
+    if match.group(2) != archive_uri.rsplit("/", maxsplit=1)[-1]:
+        raise BinanceBtcusdtIngestionError("Binance archive CHECKSUM names a different file.")
+    return match.group(1).lower()
 
 
-def _daily_bar(item: object) -> DailyBar:
-    if not isinstance(item, list):
-        raise BinanceBtcusdtIngestionError("Binance BTCUSDT Kline row must contain 12 fields.")
-    row = cast(list[object], item)
-    if len(row) != 12:
-        raise BinanceBtcusdtIngestionError("Binance BTCUSDT Kline row must contain 12 fields.")
+def _parse_archive_csv(content: bytes) -> tuple[DailyBar, ...]:
     try:
-        open_time = _integer(row[0])
-        close_time = _integer(row[6])
-        if open_time % _DAY_MILLISECONDS != 0 or close_time != open_time + _DAY_MILLISECONDS - 1:
-            raise BinanceBtcusdtIngestionError(
-                "Binance BTCUSDT Kline is not a complete UTC daily bar."
-            )
-        session_date = datetime.fromtimestamp(open_time / 1000, UTC).date()
+        with zipfile.ZipFile(BytesIO(content)) as archive:
+            members = [name for name in archive.namelist() if not name.endswith("/")]
+            if len(members) != 1 or not members[0].lower().endswith(".csv"):
+                raise BinanceBtcusdtIngestionError(
+                    "Binance archive must contain exactly one CSV file."
+                )
+            with archive.open(members[0]) as raw:
+                rows = csv.DictReader(TextIOWrapper(raw, encoding="utf-8-sig", newline=""))
+                if rows.fieldnames is None or not _REQUIRED_COLUMNS <= set(rows.fieldnames):
+                    raise BinanceBtcusdtIngestionError("Binance Kline CSV lacks required columns.")
+                return _ordered_unique_bars([_daily_bar(row) for row in rows])
+    except BinanceBtcusdtIngestionError:
+        raise
+    except (OSError, UnicodeError, csv.Error, zipfile.BadZipFile) as error:
+        raise BinanceBtcusdtIngestionError("Binance archive ZIP or CSV is invalid.") from error
+
+
+def _daily_bar(row: Mapping[str, str | None]) -> DailyBar:
+    try:
+        session_date = _utc_session_date(_timestamp(_field(row, "open_time")))
         bar = DailyBar(
             BTCUSDT,
             session_date,
-            _decimal_string(row[1]),
-            _decimal_string(row[2]),
-            _decimal_string(row[3]),
-            _decimal_string(row[4]),
-            _decimal_string(row[5]),
+            Decimal(_field(row, "open")),
+            Decimal(_field(row, "high")),
+            Decimal(_field(row, "low")),
+            Decimal(_field(row, "close")),
+            Decimal(_field(row, "volume")),
         )
-    except (InvalidOperation, OSError, OverflowError, ValueError) as error:
+    except (InvalidOperation, ValueError, OverflowError, OSError) as error:
         if isinstance(error, BinanceBtcusdtIngestionError):
             raise
-        raise BinanceBtcusdtIngestionError("Binance BTCUSDT Kline row is invalid.") from error
+        raise BinanceBtcusdtIngestionError("Binance Kline CSV row is invalid.") from error
     if bar.open <= 0 or bar.high <= 0 or bar.low <= 0 or bar.close <= 0 or bar.volume < 0:
         raise BinanceBtcusdtIngestionError("Binance BTCUSDT Kline has invalid OHLCV.")
     if bar.low > min(bar.open, bar.close) or bar.high < max(bar.open, bar.close):
         raise BinanceBtcusdtIngestionError("Binance BTCUSDT Kline violates OHLC bounds.")
     return bar
+
+
+def _field(row: Mapping[str, str | None], name: str) -> str:
+    value = row.get(name)
+    if value is None or not value.strip():
+        raise BinanceBtcusdtIngestionError(f"Binance Kline CSV {name} is missing.")
+    return value
+
+
+def _timestamp(value: str) -> int:
+    try:
+        timestamp = int(value)
+    except ValueError as error:
+        raise BinanceBtcusdtIngestionError("Binance Kline open_time must be an integer.") from error
+    if timestamp < 0:
+        raise BinanceBtcusdtIngestionError("Binance Kline open_time must be non-negative.")
+    return timestamp
+
+
+def _utc_session_date(timestamp: int) -> date:
+    divisor = 1_000_000 if timestamp >= 100_000_000_000_000 else 1_000
+    instant = datetime.fromtimestamp(timestamp / divisor, UTC)
+    if (instant.hour, instant.minute, instant.second, instant.microsecond) != (0, 0, 0, 0):
+        raise BinanceBtcusdtIngestionError("Binance Kline is not a UTC daily bar.")
+    return instant.date()
 
 
 def _ordered_unique_bars(bars: list[DailyBar]) -> tuple[DailyBar, ...]:
@@ -157,22 +269,32 @@ def _ordered_unique_bars(bars: list[DailyBar]) -> tuple[DailyBar, ...]:
     return ordered
 
 
-def _midnight_milliseconds(session_date: date) -> int:
-    return int(datetime.combine(session_date, datetime.min.time(), UTC).timestamp() * 1000)
+def _month_end(value: date) -> date:
+    return (value.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
 
 
-def _integer(value: object) -> int:
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise BinanceBtcusdtIngestionError("Binance BTCUSDT Kline timestamp must be an integer.")
-    return value
-
-
-def _decimal_string(value: object) -> Decimal:
-    if not isinstance(value, str):
-        raise BinanceBtcusdtIngestionError("Binance BTCUSDT Kline numeric field must be a string.")
-    return Decimal(value)
+def _dates(start: date, end: date) -> tuple[date, ...]:
+    return tuple(start + timedelta(days=offset) for offset in range((end - start).days + 1))
 
 
 def _download(url: str) -> bytes:
-    with urlopen(url, timeout=30) as response:  # noqa: S310 - fixed official Binance host and path
+    with urlopen(url, timeout=30) as response:  # noqa: S310 - injected only in tests
         return response.read()
+
+
+class _InMemoryArchiveRevisionStore:
+    """Default test/local implementation; production injects a durable repository."""
+
+    def __init__(self) -> None:
+        self._batches: dict[tuple[str, str], BtcusdtArchiveBatch] = {}
+
+    def get(self, uri: str, sha256: str) -> BtcusdtArchiveBatch | None:
+        return self._batches.get((uri, sha256))
+
+    def put_if_absent(self, batch: BtcusdtArchiveBatch) -> BtcusdtArchiveBatch:
+        if len(batch.source_artifacts) != 1:
+            raise BinanceBtcusdtIngestionError(
+                "One archive revision must have one source artifact."
+            )
+        artifact = batch.source_artifacts[0]
+        return self._batches.setdefault((artifact.uri, artifact.sha256), batch)

@@ -46,7 +46,7 @@ def test_builds_explicit_completed_snapshot_request_and_printable_result(tmp_pat
     assert coordinator.request == MvpSnapshotRequest(
         "snapshot-20250102",
         datetime(2025, 1, 3, tzinfo=UTC),
-        "massive-eod-us-stocks+cboe-vix-history+binance-spot",
+        "BINANCE_PUBLIC_DATA",
         {"firstDate": "2025-01-02", "lastDate": "2025-01-02"},
         "split-adjusted-ohlcv-cash-dividends-unadjusted",
         str(tmp_path / "snapshots" / "snapshot-20250102"),

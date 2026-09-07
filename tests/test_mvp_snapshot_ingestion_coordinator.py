@@ -13,6 +13,7 @@ from refinvest.ingestion.snapshot.mvp import (
     MvpSnapshotIngestionCoordinator,
     MvpSnapshotRequest,
 )
+from refinvest.ingestion.vendors.binance_btcusdt import BtcusdtArchiveBatch
 from refinvest.marketdata.domain import (
     AssetSession,
     CalendarProvenance,
@@ -144,9 +145,9 @@ class FakeBtcusdtBars:
         sessions: Mapping[AssetSession, CalendarSession],
         start: date,
         end: date,
-    ) -> tuple[DailyBar, ...]:
+    ) -> BtcusdtArchiveBatch:
         del sessions, start, end
-        return (_bar("BTCUSDT"),)
+        return BtcusdtArchiveBatch((_bar("BTCUSDT"),), ())
 
 
 def us_calendar(

@@ -6,6 +6,15 @@ from typing import Protocol
 
 
 @dataclass(frozen=True)
+class SourceArtifact:
+    """One verified immutable vendor input used to build a DatasetSnapshot."""
+
+    uri: str
+    sha256: str
+    retrieved_at: datetime
+
+
+@dataclass(frozen=True)
 class DatasetSnapshot:
     snapshot_id: str
     created_at: datetime
@@ -16,6 +25,7 @@ class DatasetSnapshot:
     calendar_source: str | None = None
     calendar_version: str | None = None
     calendar_hash: str | None = None
+    source_artifacts: tuple[SourceArtifact, ...] = ()
 
 
 class DatasetSnapshotRepository(Protocol):
