@@ -33,9 +33,7 @@ def calendar() -> StaticCompletionCalendar:
                 completion("QQQ", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),
                 completion("QQQ", date(2025, 1, 6), datetime(2025, 1, 6, 21, tzinfo=UTC)),
             ),
-            "VIX": (
-                completion("VIX", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),
-            ),
+            "SPY": (completion("SPY", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),),
         }
     )
 
@@ -43,34 +41,30 @@ def calendar() -> StaticCompletionCalendar:
 def test_btc_weekend_signal_anchors_qqq_to_the_last_completed_session(
     calendar: StaticCompletionCalendar,
 ) -> None:
-    assert resolve_metric_anchor_session(
-        calendar, "BTCUSDT", date(2025, 1, 4), "QQQ"
-    ) == date(2025, 1, 3)
+    assert resolve_metric_anchor_session(calendar, "BTCUSDT", date(2025, 1, 4), "QQQ") == date(
+        2025, 1, 3
+    )
 
 
 def test_equal_completion_time_is_available_to_the_metric(
     calendar: StaticCompletionCalendar,
 ) -> None:
-    assert resolve_metric_anchor_session(calendar, "QQQ", date(2025, 1, 3), "VIX") == date(
+    assert resolve_metric_anchor_session(calendar, "QQQ", date(2025, 1, 3), "SPY") == date(
         2025, 1, 3
     )
 
 
 def test_future_reference_session_is_not_selected(calendar: StaticCompletionCalendar) -> None:
-    assert resolve_metric_anchor_session(
-        calendar, "BTCUSDT", date(2025, 1, 3), "QQQ"
-    ) == date(2025, 1, 3)
+    assert resolve_metric_anchor_session(calendar, "BTCUSDT", date(2025, 1, 3), "QQQ") == date(
+        2025, 1, 3
+    )
 
 
 def test_missing_completed_reference_session_fails_fast() -> None:
     calendar = StaticCompletionCalendar(
         {
-            "BTCUSDT": (
-                completion("BTCUSDT", date(2025, 1, 3), datetime(2025, 1, 4, tzinfo=UTC)),
-            ),
-            "QQQ": (
-                completion("QQQ", date(2025, 1, 6), datetime(2025, 1, 6, 21, tzinfo=UTC)),
-            ),
+            "BTCUSDT": (completion("BTCUSDT", date(2025, 1, 3), datetime(2025, 1, 4, tzinfo=UTC)),),
+            "QQQ": (completion("QQQ", date(2025, 1, 6), datetime(2025, 1, 6, 21, tzinfo=UTC)),),
         }
     )
     with pytest.raises(TemporalResolutionError) as error:
@@ -87,9 +81,7 @@ def test_missing_primary_signal_completion_fails_fast(calendar: StaticCompletion
 def test_unordered_reference_completion_times_fail_fast() -> None:
     calendar = StaticCompletionCalendar(
         {
-            "BTCUSDT": (
-                completion("BTCUSDT", date(2025, 1, 3), datetime(2025, 1, 4, tzinfo=UTC)),
-            ),
+            "BTCUSDT": (completion("BTCUSDT", date(2025, 1, 3), datetime(2025, 1, 4, tzinfo=UTC)),),
             "QQQ": (
                 completion("QQQ", date(2025, 1, 2), datetime(2025, 1, 3, tzinfo=UTC)),
                 completion("QQQ", date(2025, 1, 3), datetime(2025, 1, 2, tzinfo=UTC)),

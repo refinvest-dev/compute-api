@@ -16,7 +16,6 @@ class AssetSymbolTransport(StrEnum):
     TQQQ = "TQQQ"
     SOXL = "SOXL"
     BTCUSDT = "BTCUSDT"
-    VIX = "VIX"
 
 
 class ExecutionAssetSymbolTransport(StrEnum):

@@ -16,7 +16,7 @@ from refinvest.marketdata.domain import (
     CalendarSessionState,
 )
 
-US_EQUITY_ASSETS = ("QQQ", "SPY", "TQQQ", "SOXL", "VIX")
+US_EQUITY_ASSETS = ("QQQ", "SPY", "TQQQ", "SOXL")
 US_EQUITY_CALENDAR_SOURCE = "exchange_calendars:XNYS+official-overrides"
 
 

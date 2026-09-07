@@ -111,30 +111,6 @@ def test_does_not_expose_metadata_when_artifact_publication_fails() -> None:
     assert metadata.latest() == previous
 
 
-def test_publishes_vix_reference_closes_before_inserting_snapshot_metadata() -> None:
-    events: list[str] = []
-    artifacts = FakeArtifacts(events)
-    metadata = FakeMetadata(events)
-
-    publish_dataset_snapshot(
-        _snapshot(),
-        _provenance(),
-        {
-            AssetSession("VIX", date(2025, 1, 2)): CalendarSession(
-                CalendarSessionState.EXPECTED, datetime(2025, 1, 2, 21, tzinfo=UTC)
-            )
-        },
-        (),
-        (ReferenceClose("VIX", date(2025, 1, 2), Decimal("18.5")),),
-        corporate_actions_applied=False,
-        point_in_time_validation_passed=True,
-        artifacts=artifacts,
-        metadata=metadata,
-    )
-
-    assert events == ["publish", "metadata"]
-
-
 def _snapshot() -> DatasetSnapshot:
     return DatasetSnapshot(
         "snapshot-1",

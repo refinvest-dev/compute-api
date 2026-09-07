@@ -34,7 +34,7 @@ def get_series(
     requested = tuple(symbols.split(","))
     if (
         not symbols
-        or len(requested) > 6
+        or len(requested) > 5
         or len(set(requested)) != len(requested)
         or start > end
         or _exceeds_maximum_period(start, end)

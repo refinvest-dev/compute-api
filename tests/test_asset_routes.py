@@ -45,10 +45,9 @@ def test_list_assets_returns_static_catalog_without_a_snapshot() -> None:
         "TQQQ",
         "SOXL",
         "BTCUSDT",
-        "VIX",
     ]
     assert result.dataset_snapshot_id is None
-    assert result.assets[-1].execution_enabled is False
+    assert all(asset.execution_enabled for asset in result.assets)
     assert result.assets[0].data_availability is None
 
 
@@ -72,3 +71,10 @@ def test_supported_asset_without_snapshot_returns_dataset_unavailable() -> None:
         "message": "DatasetSnapshot is unavailable.",
         "errorCode": "DATASET_UNAVAILABLE",
     }
+
+
+def test_vix_is_not_an_mvp_asset() -> None:
+    response = assets_route.get_asset_availability("VIX", FakeSnapshots(None), Settings(None))
+
+    assert response.status_code == 404
+    assert loads(response.body) == {"message": "Asset not found."}

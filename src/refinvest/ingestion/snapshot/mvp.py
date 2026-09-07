@@ -24,7 +24,6 @@ from refinvest.marketdata.domain import (
     AssetSession,
     CalendarSession,
     DailyBar,
-    ReferenceClose,
 )
 
 
@@ -35,12 +34,6 @@ class EtfDailyBarIngestor(Protocol):
         start: date,
         end: date,
     ) -> tuple[DailyBar, ...]: ...
-
-
-class VixReferenceCloseIngestor(Protocol):
-    def fetch_for_calendar(
-        self, sessions: Mapping[AssetSession, CalendarSession]
-    ) -> tuple[ReferenceClose, ...]: ...
 
 
 class BtcusdtDailyBarIngestor(Protocol):
@@ -76,7 +69,6 @@ class MvpSnapshotIngestionCoordinator:
         ],
         crypto_utc_calendar: Callable[[date, date], CryptoUtcCalendarArtifact],
         etf_bars: EtfDailyBarIngestor,
-        vix_closes: VixReferenceCloseIngestor,
         btcusdt_bars: BtcusdtDailyBarIngestor,
         artifacts: SnapshotArtifactPublisher,
         metadata: DatasetSnapshotMetadataWriter,
@@ -84,7 +76,6 @@ class MvpSnapshotIngestionCoordinator:
         self._us_equity_calendar = us_equity_calendar
         self._crypto_utc_calendar = crypto_utc_calendar
         self._etf_bars = etf_bars
-        self._vix_closes = vix_closes
         self._btcusdt_bars = btcusdt_bars
         self._artifacts = artifacts
         self._metadata = metadata
@@ -127,13 +118,11 @@ class MvpSnapshotIngestionCoordinator:
             *self._etf_bars.fetch_for_calendar(sessions, start, end),
             *btcusdt.daily_bars,
         )
-        reference_closes = self._vix_closes.fetch_for_calendar(sessions)
         return publish_dataset_snapshot(
             snapshot,
             provenance,
             sessions,
             daily_bars,
-            reference_closes,
             calendar_components=components,
             corporate_actions_applied=request.corporate_actions_applied,
             point_in_time_validation_passed=request.point_in_time_validation_passed,

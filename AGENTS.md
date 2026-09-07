@@ -90,10 +90,7 @@ SPY
 TQQQ
 SOXL
 BTCUSDT
-VIX
 ```
-
-VIX는 Signal/Reference 전용이며 Execution Asset으로 사용하지 않는다.
 
 MVP는 Daily Bar만 지원한다.
 

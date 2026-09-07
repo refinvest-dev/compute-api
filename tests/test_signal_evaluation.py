@@ -129,7 +129,7 @@ def test_returns_no_signals_when_no_session_matches() -> None:
 
 
 def test_uses_primary_signal_sessions_when_conditions_reference_another_asset() -> None:
-    vix_bar = bar("VIX", date(2025, 1, 3), "18")
+    spy_bar = bar("SPY", date(2025, 1, 3), "18")
     signal_sessions = (date(2025, 1, 4), date(2025, 1, 5))
     calendar = StaticCalendar(
         {
@@ -137,15 +137,15 @@ def test_uses_primary_signal_sessions_when_conditions_reference_another_asset() 
                 completion("BTCUSDT", signal_sessions[0], datetime(2025, 1, 5, tzinfo=UTC)),
                 completion("BTCUSDT", signal_sessions[1], datetime(2025, 1, 6, tzinfo=UTC)),
             ),
-            "VIX": (completion("VIX", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),),
+            "SPY": (completion("SPY", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),),
         }
     )
     market_data = StaticMarketData(
-        {vix_bar.asset_session: DailyBarLookup(DailyBarAvailability.AVAILABLE, vix_bar)}
+        {spy_bar.asset_session: DailyBarLookup(DailyBarAvailability.AVAILABLE, spy_bar)}
     )
     tested_strategy = strategy(
         AssetSymbol.BTCUSDT,
-        Condition(ComparisonOperator.LT, None, simple(AssetSymbol.VIX), Decimal("20")),
+        Condition(ComparisonOperator.LT, None, simple(AssetSymbol.SPY), Decimal("20")),
     )
 
     assert evaluate_signals(calendar, market_data, tested_strategy, signal_sessions) == (

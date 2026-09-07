@@ -1,10 +1,15 @@
 """Publish the deterministic local snapshot used by cross-service integration checks."""
 
+from collections.abc import Callable
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
 
 from refinvest.app.config import Settings, get_settings
-from refinvest.app.snapshot_storage import create_snapshot_artifact_publisher, snapshot_storage_path
+from refinvest.app.snapshot_storage import (
+    create_snapshot_artifact_publisher,
+    create_snapshot_execution_data_loader,
+    snapshot_storage_path,
+)
 from refinvest.application.dataset_snapshots import DatasetSnapshot
 from refinvest.ingestion.snapshot.workflow import publish_dataset_snapshot
 from refinvest.marketdata.domain import (
@@ -18,12 +23,15 @@ from refinvest.persistence.postgres.dataset_snapshots import PostgresDatasetSnap
 
 INTEGRATION_SNAPSHOT_ID = "integration-e2e-v1"
 _CREATED_AT = datetime(2025, 1, 1, tzinfo=UTC)
-_CALENDAR_PROVENANCE = CalendarProvenance("integration-fixture", "v1", "qqq-202501-v1")
-_SESSIONS = tuple(date(2025, 1, day) for day in (2, 3, 6, 7, 8))
+_CALENDAR_PROVENANCE = CalendarProvenance("integration-fixture", "v1", "mvp-5-assets-202501-v1")
+_US_EQUITY_SESSIONS = tuple(date(2025, 1, day) for day in (2, 3, 6, 7, 8))
+_CRYPTO_UTC_SESSIONS = tuple(date(2025, 1, day) for day in range(2, 9))
+_ETF_ASSETS = ("QQQ", "SPY", "TQQQ", "SOXL")
+_MVP_ASSETS = (*_ETF_ASSETS, "BTCUSDT")
 
 
 def publish_integration_fixture(settings: Settings) -> DatasetSnapshot:
-    """Publish one immutable QQQ fixture, or return its already-published metadata."""
+    """Publish one immutable five-asset MVP fixture, or return its published metadata."""
     if not settings.database_url:
         raise ValueError("REFINVEST_DATABASE_URL is required for integration fixture publication.")
     storage_path = snapshot_storage_path(settings, INTEGRATION_SNAPSHOT_ID)
@@ -34,6 +42,11 @@ def publish_integration_fixture(settings: Settings) -> DatasetSnapshot:
             raise ValueError(
                 "Integration fixture storage path does not match the published snapshot."
             )
+        _assert_existing_fixture_has_mvp_coverage(
+            create_snapshot_execution_data_loader(settings)
+            .load(existing)
+            .calendar.expected_sessions
+        )
         return existing
 
     snapshot = DatasetSnapshot(
@@ -70,18 +83,46 @@ def integration_fixture_main() -> None:
 
 
 def _sessions() -> dict[AssetSession, CalendarSession]:
-    return {
-        AssetSession("QQQ", session): CalendarSession(
-            CalendarSessionState.EXPECTED,
-            datetime.combine(session, time(21), UTC),
+    us_equity = {
+        AssetSession(asset, session): CalendarSession(
+            CalendarSessionState.EXPECTED, datetime.combine(session, time(21), UTC)
         )
-        for session in _SESSIONS
+        for asset in _ETF_ASSETS
+        for session in _US_EQUITY_SESSIONS
     }
+    crypto = {
+        AssetSession("BTCUSDT", session): CalendarSession(
+            CalendarSessionState.EXPECTED, datetime.combine(session, time.min, UTC)
+        )
+        for session in _CRYPTO_UTC_SESSIONS
+    }
+    return {**us_equity, **crypto}
 
 
 def _bars() -> tuple[DailyBar, ...]:
-    prices = tuple(map(Decimal, ("100", "101", "102", "103", "104")))
-    return tuple(
-        DailyBar("QQQ", session, price, price, price, price, Decimal("1000"))
-        for session, price in zip(_SESSIONS, prices, strict=True)
+    etf_prices = tuple(map(Decimal, ("100", "101", "102", "103", "104")))
+    crypto_prices = tuple(
+        map(Decimal, ("90000", "91000", "92000", "93000", "94000", "95000", "96000"))
     )
+    return (
+        *(
+            DailyBar(asset, session, price, price, price, price, Decimal("1000"))
+            for asset in _ETF_ASSETS
+            for session, price in zip(_US_EQUITY_SESSIONS, etf_prices, strict=True)
+        ),
+        *(
+            DailyBar("BTCUSDT", session, price, price, price, price, Decimal("10"))
+            for session, price in zip(_CRYPTO_UTC_SESSIONS, crypto_prices, strict=True)
+        ),
+    )
+
+
+def _assert_existing_fixture_has_mvp_coverage(
+    expected_sessions: Callable[[str], tuple[date, ...]],
+) -> None:
+    missing_assets = tuple(asset for asset in _MVP_ASSETS if not expected_sessions(asset))
+    if missing_assets:
+        raise ValueError(
+            "Integration fixture is outdated and lacks MVP asset coverage; "
+            "recreate the isolated integration database."
+        )

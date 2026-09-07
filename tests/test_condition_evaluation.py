@@ -104,18 +104,18 @@ def test_evaluates_exact_decimal_literal_comparisons() -> None:
 
 def test_relative_cross_calendar_condition_uses_metric_dispatch() -> None:
     qqq_bar = bar("QQQ", date(2025, 1, 3), "500")
-    vix_bar = bar("VIX", date(2025, 1, 3), "18")
+    spy_bar = bar("SPY", date(2025, 1, 3), "18")
     calendar = StaticCalendar(
         {
             "BTCUSDT": (completion("BTCUSDT", date(2025, 1, 4), datetime(2025, 1, 5, tzinfo=UTC)),),
             "QQQ": (completion("QQQ", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),),
-            "VIX": (completion("VIX", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),),
+            "SPY": (completion("SPY", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),),
         }
     )
     market_data = StaticMarketData(
         {
             qqq_bar.asset_session: DailyBarLookup(DailyBarAvailability.AVAILABLE, qqq_bar),
-            vix_bar.asset_session: DailyBarLookup(DailyBarAvailability.AVAILABLE, vix_bar),
+            spy_bar.asset_session: DailyBarLookup(DailyBarAvailability.AVAILABLE, spy_bar),
         }
     )
 
@@ -124,7 +124,7 @@ def test_relative_cross_calendar_condition_uses_metric_dispatch() -> None:
         market_data,
         AssetSymbol.BTCUSDT,
         date(2025, 1, 4),
-        (condition(ComparisonOperator.GT, simple(AssetSymbol.QQQ), simple(AssetSymbol.VIX)),),
+        (condition(ComparisonOperator.GT, simple(AssetSymbol.QQQ), simple(AssetSymbol.SPY)),),
     )
 
 
@@ -134,22 +134,22 @@ def test_relative_cross_calendar_condition_uses_metric_dispatch() -> None:
 )
 def test_combines_a_uniform_condition_group(combinator: LogicalCombinator, expected: bool) -> None:
     qqq_bar = bar("QQQ", date(2025, 1, 3), "100")
-    vix_bar = bar("VIX", date(2025, 1, 3), "18")
+    spy_bar = bar("SPY", date(2025, 1, 3), "18")
     calendar = StaticCalendar(
         {
             "QQQ": (completion("QQQ", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),),
-            "VIX": (completion("VIX", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),),
+            "SPY": (completion("SPY", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),),
         }
     )
     market_data = StaticMarketData(
         {
             qqq_bar.asset_session: DailyBarLookup(DailyBarAvailability.AVAILABLE, qqq_bar),
-            vix_bar.asset_session: DailyBarLookup(DailyBarAvailability.AVAILABLE, vix_bar),
+            spy_bar.asset_session: DailyBarLookup(DailyBarAvailability.AVAILABLE, spy_bar),
         }
     )
     conditions = (
         condition(ComparisonOperator.GT, simple(AssetSymbol.QQQ), Decimal("200")),
-        condition(ComparisonOperator.LT, simple(AssetSymbol.VIX), Decimal("20"), combinator),
+        condition(ComparisonOperator.LT, simple(AssetSymbol.SPY), Decimal("20"), combinator),
     )
 
     assert (
@@ -165,13 +165,13 @@ def test_true_or_condition_does_not_hide_later_missing_data() -> None:
     calendar = StaticCalendar(
         {
             "QQQ": (completion("QQQ", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),),
-            "VIX": (completion("VIX", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),),
+            "SPY": (completion("SPY", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),),
         }
     )
     market_data = StaticMarketData(
         {
             qqq_bar.asset_session: DailyBarLookup(DailyBarAvailability.AVAILABLE, qqq_bar),
-            AssetSession("VIX", date(2025, 1, 3)): DailyBarLookup(
+            AssetSession("SPY", date(2025, 1, 3)): DailyBarLookup(
                 DailyBarAvailability.MISSING_EXPECTED_SESSION
             ),
         }
@@ -180,7 +180,7 @@ def test_true_or_condition_does_not_hide_later_missing_data() -> None:
         condition(ComparisonOperator.GT, simple(AssetSymbol.QQQ), Decimal("1")),
         condition(
             ComparisonOperator.LT,
-            simple(AssetSymbol.VIX),
+            simple(AssetSymbol.SPY),
             Decimal("20"),
             LogicalCombinator.OR,
         ),

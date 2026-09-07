@@ -152,3 +152,32 @@ def test_missing_snapshot_and_period_limits_have_explicit_responses() -> None:
     assert loads(unavailable.body)["errorCode"] == "DATASET_UNAVAILABLE"
     assert unknown.status_code == 404
     assert too_long.status_code == 400
+
+
+def test_series_rejects_vix_and_more_than_five_symbols(monkeypatch) -> None:
+    monkeypatch.setattr(
+        series_route, "create_snapshot_execution_data_loader", lambda _: FakeLoader()
+    )
+    vix = series_route.get_series(
+        "VIX",
+        "PRICE",
+        date(2025, 1, 2),
+        date(2025, 1, 3),
+        FakeSnapshots(_snapshot()),
+        Settings(None),
+        None,
+    )
+    too_many = series_route.get_series(
+        "QQQ,SPY,TQQQ,SOXL,BTCUSDT,IWM",
+        "PRICE",
+        date(2025, 1, 2),
+        date(2025, 1, 3),
+        FakeSnapshots(_snapshot()),
+        Settings(None),
+        None,
+    )
+
+    assert vix.status_code == 400
+    assert loads(vix.body) == {"message": "Unsupported asset: VIX"}
+    assert too_many.status_code == 400
+    assert loads(too_many.body) == {"message": "Invalid series request."}

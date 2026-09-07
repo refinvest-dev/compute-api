@@ -125,7 +125,7 @@ paths:
     get:
       operationId: listAssets
       tags: [assets]
-      summary: MVP Asset Universe(6종) 목록과 메타데이터 (`ListAssets`)
+      summary: MVP Asset Universe(5종) 목록과 메타데이터 (`ListAssets`)
       responses:
         '200':
           description: OK
@@ -218,7 +218,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/SeriesResponse'
         '400':
-          description: 존재하지 않는 symbol, 중복 symbol, 1~6개 범위 초과, start > end, 최대 10년/20,000 point 제한 초과.
+          description: 존재하지 않는 symbol, 중복 symbol, 1~5개 범위 초과, start > end, 최대 10년/20,000 point 제한 초과.
           content:
             application/json:
               schema:
@@ -263,13 +263,13 @@ components:
     # ---- 공통 값 타입 ----
     AssetSymbol:
       type: string
-      enum: [QQQ, SPY, TQQQ, SOXL, BTCUSDT, VIX]
-      description: MVP Asset Universe 6종(ADR-001).
+      enum: [QQQ, SPY, TQQQ, SOXL, BTCUSDT]
+      description: MVP Asset Universe 5종(ADR-001, ADR-050).
 
     ExecutionAssetSymbol:
       type: string
       enum: [QQQ, SPY, TQQQ, SOXL, BTCUSDT]
-      description: Execution Asset 하위 집합 — VIX 제외(ADR-001, `docs/DOMAIN.md` §1.2 불변식).
+      description: MVP Asset Universe와 같은 Execution Asset 집합(ADR-001, ADR-050, `docs/DOMAIN.md` §1.2 불변식).
 
     Percent:
       type: number

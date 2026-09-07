@@ -12,7 +12,6 @@ class AssetSymbol(StrEnum):
     TQQQ = "TQQQ"
     SOXL = "SOXL"
     BTCUSDT = "BTCUSDT"
-    VIX = "VIX"
 
 
 class MetricType(StrEnum):

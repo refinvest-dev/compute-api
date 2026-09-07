@@ -98,7 +98,7 @@ def test_rejects_unadjusted_wrong_ticker_or_invalid_ohlcv(response: bytes) -> No
 def test_rejects_unsupported_asset_and_download_failure() -> None:
     with pytest.raises(MassiveEtfIngestionError, match="unsupported"):
         MassiveEtfDailyBarsClient("test-key").fetch_daily_bars(
-            "VIX", date(2025, 1, 2), date(2025, 1, 2)
+            "IWM", date(2025, 1, 2), date(2025, 1, 2)
         )
 
     def unavailable(_: str) -> bytes:
