@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from refinvest.application.dataset_snapshots import DatasetSnapshot
+from refinvest.application.dataset_snapshots import DatasetSnapshot, SourceArtifact
 from refinvest.ingestion.snapshot.artifacts import (
     FilesystemSnapshotArtifactPublisher,
     SnapshotPublicationError,
@@ -38,11 +38,46 @@ def test_publishes_deterministic_artifacts_that_the_loader_can_replay(tmp_path: 
     assert published.snapshot_id == snapshot.snapshot_id
     assert published.storage_path == snapshot.storage_path
     assert (Path(snapshot.storage_path) / "manifest.json").exists()
-    assert b'"formatVersion":2' in (Path(snapshot.storage_path) / "manifest.json").read_bytes()
+    assert b'"formatVersion":3' in (Path(snapshot.storage_path) / "manifest.json").read_bytes()
     assert b'"volume":"1000"' in (Path(snapshot.storage_path) / "daily-bars.ndjson").read_bytes()
     assert loaded.snapshot_id == snapshot.snapshot_id
     assert loaded.calendar.expected_sessions("QQQ") == (date(2025, 1, 2), date(2025, 1, 3))
     assert loaded.market_data.get_daily_bar("QQQ", date(2025, 1, 3)).bar == _bars()[0]
+
+
+def test_records_verified_source_artifacts_in_immutable_manifest(tmp_path: Path) -> None:
+    snapshot = DatasetSnapshot(
+        "snapshot-1",
+        datetime(2025, 1, 1, tzinfo=UTC),
+        "BINANCE_PUBLIC_DATA",
+        {},
+        "unadjusted",
+        str(tmp_path / "snapshot-1"),
+        "test-calendar",
+        "v1",
+        "calendar-provenance-hash",
+        (
+            SourceArtifact(
+                "https://data.binance.vision/archive.zip",
+                "a" * 64,
+                datetime(2025, 1, 2, tzinfo=UTC),
+            ),
+        ),
+    )
+
+    FilesystemSnapshotArtifactPublisher().publish(
+        snapshot,
+        _provenance(),
+        _sessions(),
+        _bars(),
+        corporate_actions_applied=False,
+        point_in_time_validation_passed=True,
+    )
+
+    manifest = (Path(snapshot.storage_path) / "manifest.json").read_text(encoding="utf-8")
+    assert '"uri":"https://data.binance.vision/archive.zip"' in manifest
+    assert '"sha256":"' + "a" * 64 + '"' in manifest
+    assert '"retrievedAt":"2025-01-02T00:00:00Z"' in manifest
 
 
 def test_publication_is_byte_deterministic_regardless_of_input_order(tmp_path: Path) -> None:

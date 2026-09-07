@@ -22,9 +22,12 @@ from refinvest.ingestion.snapshot.mvp import (
 from refinvest.ingestion.vendors.binance_btcusdt import BinanceBtcusdtDailyBarsClient
 from refinvest.ingestion.vendors.cboe_vix import CboeVixHistoricalClient
 from refinvest.ingestion.vendors.massive_etf import MassiveEtfDailyBarsClient
+from refinvest.persistence.postgres.binance_archive_revisions import (
+    PostgresBinanceArchiveRevisionRepository,
+)
 from refinvest.persistence.postgres.dataset_snapshots import PostgresDatasetSnapshotRepository
 
-MVP_SNAPSHOT_SOURCE = "massive-eod-us-stocks+cboe-vix-history+binance-spot"
+MVP_SNAPSHOT_SOURCE = "BINANCE_PUBLIC_DATA"
 MVP_ADJUSTMENT_POLICY = "split-adjusted-ohlcv-cash-dividends-unadjusted"
 _SNAPSHOT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _LOGGER = logging.getLogger(__name__)
@@ -43,7 +46,9 @@ def create_mvp_snapshot_ingestion_coordinator(
         build_crypto_utc_calendar,
         MassiveEtfDailyBarsClient(settings.massive_api_key),
         CboeVixHistoricalClient(),
-        BinanceBtcusdtDailyBarsClient(),
+        BinanceBtcusdtDailyBarsClient(
+            revisions=PostgresBinanceArchiveRevisionRepository(settings.database_url)
+        ),
         create_snapshot_artifact_publisher(settings),
         PostgresDatasetSnapshotRepository(settings.database_url),
     )

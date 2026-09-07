@@ -57,6 +57,9 @@ class FakeMetadata:
         self.events.append("metadata")
         self.snapshots.append(snapshot)
 
+    def latest(self) -> DatasetSnapshot | None:
+        return self.snapshots[-1] if self.snapshots else None
+
 
 def test_publishes_artifacts_before_inserting_snapshot_metadata() -> None:
     events: list[str] = []
@@ -82,6 +85,15 @@ def test_publishes_artifacts_before_inserting_snapshot_metadata() -> None:
 def test_does_not_expose_metadata_when_artifact_publication_fails() -> None:
     events: list[str] = []
     metadata = FakeMetadata(events)
+    previous = DatasetSnapshot(
+        "published-before-failure",
+        datetime(2024, 12, 31, tzinfo=UTC),
+        "BINANCE_PUBLIC_DATA",
+        {},
+        "unadjusted",
+        "previous-path",
+    )
+    metadata.snapshots.append(previous)
 
     with pytest.raises(RuntimeError, match="storage unavailable"):
         publish_dataset_snapshot(
@@ -96,7 +108,7 @@ def test_does_not_expose_metadata_when_artifact_publication_fails() -> None:
         )
 
     assert events == ["publish"]
-    assert metadata.snapshots == []
+    assert metadata.latest() == previous
 
 
 def test_publishes_vix_reference_closes_before_inserting_snapshot_metadata() -> None:
