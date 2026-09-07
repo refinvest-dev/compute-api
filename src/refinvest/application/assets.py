@@ -22,7 +22,6 @@ ASSET_REFERENCES = (
     AssetReference("TQQQ", "US_EQUITY", date(2010, 2, 9), True),
     AssetReference("SOXL", "US_EQUITY", date(2010, 3, 11), True),
     AssetReference("BTCUSDT", "CRYPTO_UTC", date(2017, 8, 17), True),
-    AssetReference("VIX", "US_EQUITY", date(1993, 1, 19), False),
 )
 _BY_SYMBOL = {asset.symbol: asset for asset in ASSET_REFERENCES}
 

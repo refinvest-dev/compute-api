@@ -133,19 +133,19 @@ def test_expected_anchor_without_a_daily_bar_fails_fast() -> None:
 
 
 def test_simple_metric_is_deterministic_for_the_same_snapshot_inputs() -> None:
-    vix_bar = bar("VIX", date(2025, 1, 3), "18.50")
+    spy_bar = bar("SPY", date(2025, 1, 3), "18.50")
     calendar = StaticCalendar(
         {
             "QQQ": (completion("QQQ", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),),
-            "VIX": (completion("VIX", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),),
+            "SPY": (completion("SPY", date(2025, 1, 3), datetime(2025, 1, 3, 21, tzinfo=UTC)),),
         }
     )
     market_data = StaticMarketData(
-        {vix_bar.asset_session: DailyBarLookup(DailyBarAvailability.AVAILABLE, vix_bar)}
+        {spy_bar.asset_session: DailyBarLookup(DailyBarAvailability.AVAILABLE, spy_bar)}
     )
     values = [
         evaluate_simple_metric(
-            calendar, market_data, AssetSymbol.QQQ, date(2025, 1, 3), simple_metric(AssetSymbol.VIX)
+            calendar, market_data, AssetSymbol.QQQ, date(2025, 1, 3), simple_metric(AssetSymbol.SPY)
         )
         for _ in range(2)
     ]

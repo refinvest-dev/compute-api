@@ -18,7 +18,7 @@ class AssetCalendar(StrEnum):
 
 
 def calendar_for_asset(asset: str) -> AssetCalendar:
-    if asset in {"QQQ", "SPY", "TQQQ", "SOXL", "VIX"}:
+    if asset in {"QQQ", "SPY", "TQQQ", "SOXL"}:
         return AssetCalendar.US_EQUITY
     if asset == "BTCUSDT":
         return AssetCalendar.CRYPTO_UTC

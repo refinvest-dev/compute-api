@@ -32,7 +32,6 @@ def test_publishes_one_complete_mvp_snapshot_after_all_sources_validate() -> Non
         us_calendar,
         crypto_calendar,
         FakeEtfBars(),
-        FakeVixCloses(),
         FakeBtcusdtBars(),
         artifacts,
         metadata,
@@ -49,7 +48,7 @@ def test_publishes_one_complete_mvp_snapshot_after_all_sources_validate() -> Non
         "CRYPTO_UTC",
     }
     assert {bar.asset for bar in artifacts.daily_bars} == {"QQQ", "SPY", "TQQQ", "SOXL", "BTCUSDT"}
-    assert artifacts.reference_closes == (ReferenceClose("VIX", date(2025, 1, 2), Decimal("18")),)
+    assert artifacts.reference_closes == ()
 
 
 def test_does_not_publish_when_a_vendor_fails() -> None:
@@ -58,7 +57,6 @@ def test_does_not_publish_when_a_vendor_fails() -> None:
         us_calendar,
         crypto_calendar,
         FailingEtfBars(),
-        FakeVixCloses(),
         FakeBtcusdtBars(),
         FakeArtifacts(events),
         FakeMetadata(events),
@@ -129,14 +127,6 @@ class FailingEtfBars:
     ) -> tuple[DailyBar, ...]:
         del sessions, start, end
         raise RuntimeError("Massive unavailable")
-
-
-class FakeVixCloses:
-    def fetch_for_calendar(
-        self, sessions: Mapping[AssetSession, CalendarSession]
-    ) -> tuple[ReferenceClose, ...]:
-        del sessions
-        return (ReferenceClose("VIX", date(2025, 1, 2), Decimal("18")),)
 
 
 class FakeBtcusdtBars:

@@ -60,7 +60,7 @@ def test_verifies_catalog_and_cross_calendar_series_from_one_snapshot() -> None:
 
     assert result["status"] == "ok"
     assert result["datasetSnapshotId"] == "snapshot-1"
-    assert result["availabilitySymbols"] == ["QQQ", "SPY", "TQQQ", "SOXL", "BTCUSDT", "VIX"]
+    assert result["availabilitySymbols"] == ["QQQ", "SPY", "TQQQ", "SOXL", "BTCUSDT"]
     assert result["seriesSymbols"] == ["QQQ", "BTCUSDT"]
     assert result["seriesStart"] == date(2024, 12, 27)
     assert result["seriesEnd"] == date(2025, 1, 3)

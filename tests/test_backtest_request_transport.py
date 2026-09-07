@@ -73,7 +73,28 @@ def test_transport_validation_maps_to_the_openapi_error_shape() -> None:
     }
 
 
-def test_transport_rejects_vix_as_an_execution_asset() -> None:
+@pytest.mark.parametrize(
+    ("strategy", "location"),
+    [
+        ({"primarySignalAsset": "VIX"}, ("strategyVersion", "primarySignalAsset")),
+        (
+            {
+                "conditions": [
+                    {
+                        "operator": "GT",
+                        "operandA": {"asset": "VIX", "metric": "SIMPLE"},
+                        "operandB": 0.0,
+                    }
+                ]
+            },
+            ("strategyVersion", "conditions", 0, "operandA", "asset"),
+        ),
+        ({"executionAsset": "VIX"}, ("strategyVersion", "executionAsset")),
+    ],
+)
+def test_transport_rejects_vix_from_every_strategy_asset_field(
+    strategy: dict[str, object], location: tuple[str | int, ...]
+) -> None:
     with pytest.raises(ValidationError) as raised:
         CreateBacktestRequestTransport.model_validate(
             {
@@ -86,16 +107,17 @@ def test_transport_rejects_vix_as_an_execution_asset() -> None:
                             "operandB": 0.0,
                         }
                     ],
-                    "executionAsset": "VIX",
+                    "executionAsset": "TQQQ",
                     "lag": 0,
                     "exit": {"holdingSignalSessions": 1},
+                    **strategy,
                 },
                 "feeModel": {"commission": 0.0, "slippage": 0.0},
                 "period": {"start": "2024-01-01", "end": "2024-12-31"},
             }
         )
 
-    assert raised.value.errors()[0]["loc"] == ("strategyVersion", "executionAsset")
+    assert raised.value.errors()[0]["loc"] == location
 
 
 def test_transport_rejects_non_positive_metric_windows() -> None:

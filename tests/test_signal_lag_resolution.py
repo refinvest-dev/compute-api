@@ -39,9 +39,7 @@ def test_lag_moves_to_the_next_primary_signal_asset_session() -> None:
 
 def test_btc_weekend_lag_uses_the_btc_signal_calendar() -> None:
     signal = Signal(AssetSymbol.BTCUSDT, date(2025, 1, 4))
-    calendar = StaticCalendar(
-        {"BTCUSDT": (date(2025, 1, 4), date(2025, 1, 5), date(2025, 1, 6))}
-    )
+    calendar = StaticCalendar({"BTCUSDT": (date(2025, 1, 4), date(2025, 1, 5), date(2025, 1, 6))})
 
     assert resolve_entry_candidates(calendar, AssetSymbol.BTCUSDT, 1, (signal,)) == (
         EntryCandidate(AssetSymbol.BTCUSDT, date(2025, 1, 4), date(2025, 1, 5)),
@@ -60,12 +58,12 @@ def test_lag_beyond_the_pinned_calendar_fails_fast() -> None:
 
 def test_rejects_signals_from_another_asset_or_an_unordered_sequence() -> None:
     calendar = StaticCalendar(
-        {"QQQ": (date(2025, 1, 3), date(2025, 1, 6)), "VIX": (date(2025, 1, 3),)}
+        {"QQQ": (date(2025, 1, 3), date(2025, 1, 6)), "SPY": (date(2025, 1, 3),)}
     )
 
     with pytest.raises(ValueError, match="explicit Primary Signal Asset"):
         resolve_entry_candidates(
-            calendar, AssetSymbol.QQQ, 0, (Signal(AssetSymbol.VIX, date(2025, 1, 3)),)
+            calendar, AssetSymbol.QQQ, 0, (Signal(AssetSymbol.SPY, date(2025, 1, 3)),)
         )
     with pytest.raises(ValueError, match="strictly ascending"):
         resolve_entry_candidates(
@@ -83,10 +81,7 @@ def test_lag_resolution_is_deterministic_for_the_same_snapshot_inputs() -> None:
     signals = (Signal(AssetSymbol.QQQ, date(2025, 1, 3)),)
     calendar = StaticCalendar({"QQQ": (date(2025, 1, 3), date(2025, 1, 6))})
 
-    assert [
-        resolve_entry_candidates(calendar, AssetSymbol.QQQ, 1, signals)
-        for _ in range(2)
-    ] == [
+    assert [resolve_entry_candidates(calendar, AssetSymbol.QQQ, 1, signals) for _ in range(2)] == [
         (EntryCandidate(AssetSymbol.QQQ, date(2025, 1, 3), date(2025, 1, 6)),),
         (EntryCandidate(AssetSymbol.QQQ, date(2025, 1, 3), date(2025, 1, 6)),),
     ]

@@ -20,7 +20,6 @@ from refinvest.ingestion.snapshot.mvp import (
     MvpSnapshotRequest,
 )
 from refinvest.ingestion.vendors.binance_btcusdt import BinanceBtcusdtDailyBarsClient
-from refinvest.ingestion.vendors.cboe_vix import CboeVixHistoricalClient
 from refinvest.ingestion.vendors.massive_etf import MassiveEtfDailyBarsClient
 from refinvest.persistence.postgres.binance_archive_revisions import (
     PostgresBinanceArchiveRevisionRepository,
@@ -45,7 +44,6 @@ def create_mvp_snapshot_ingestion_coordinator(
         generate_us_equity_calendar,
         build_crypto_utc_calendar,
         MassiveEtfDailyBarsClient(settings.massive_api_key),
-        CboeVixHistoricalClient(),
         BinanceBtcusdtDailyBarsClient(
             revisions=PostgresBinanceArchiveRevisionRepository(settings.database_url)
         ),

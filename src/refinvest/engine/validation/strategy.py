@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 
 from refinvest.engine.validation.models import (
-    AssetSymbol,
     MetricReference,
     MetricType,
     PositionPolicy,
@@ -49,8 +48,6 @@ def validate_strategy_version(strategy: StrategyVersion) -> None:
 
     _validate_condition_group_combinators(strategy, issues)
 
-    if strategy.execution_asset is AssetSymbol.VIX:
-        issues.append(ValidationIssue("executionAsset", "VIX cannot be an execution asset."))
     if strategy.lag < 0:
         issues.append(ValidationIssue("lag", "Lag must be zero or greater."))
     if strategy.holding_signal_sessions <= 0:
@@ -88,9 +85,7 @@ def _validate_condition_group_combinators(
     strategy: StrategyVersion, issues: list[ValidationIssue]
 ) -> None:
     """Reject ambiguous mixed AND/OR groups before snapshot-backed evaluation."""
-    combinators = [
-        condition.logical_combinator for condition in strategy.conditions[1:]
-    ]
+    combinators = [condition.logical_combinator for condition in strategy.conditions[1:]]
     expected = next((combinator for combinator in combinators if combinator is not None), None)
     if expected is None:
         return

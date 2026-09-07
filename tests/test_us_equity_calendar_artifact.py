@@ -33,7 +33,7 @@ def test_builds_all_mvp_us_equity_sessions_with_pinned_provenance() -> None:
         artifact.sessions[AssetSession("QQQ", date(2025, 1, 2))].state
         is CalendarSessionState.EXPECTED
     )
-    assert artifact.sessions[AssetSession("VIX", date(2025, 1, 2))].completed_at == datetime(
+    assert artifact.sessions[AssetSession("SOXL", date(2025, 1, 2))].completed_at == datetime(
         2025, 1, 2, 21, tzinfo=UTC
     )
     assert (

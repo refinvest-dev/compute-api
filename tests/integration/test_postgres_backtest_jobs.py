@@ -1,6 +1,6 @@
 """PostgreSQL worker lifecycle integration checks.
 
-Set REFINVEST_TEST_DATABASE_URL to an isolated database with migrations 0001-0007 applied.
+Set REFINVEST_TEST_DATABASE_URL to an isolated database with migrations 0001-0009 applied.
 """
 
 import hashlib
@@ -161,7 +161,7 @@ def test_capacity_admission_is_exclusive_and_existing_replay_bypasses_the_limit(
         with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
             cursor.execute(
                 "DELETE FROM compute_backtest_jobs WHERE idempotency_key_hash = ANY(%s)",
-                (key_hashes,),
+                (list(key_hashes),),
             )
 
 
@@ -252,7 +252,9 @@ def test_cleanup_removes_only_expired_terminal_jobs() -> None:
         assert repository.get(pending) is not None
     finally:
         with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
-            cursor.execute("DELETE FROM compute_backtest_jobs WHERE run_id = ANY(%s)", (run_ids,))
+            cursor.execute(
+                "DELETE FROM compute_backtest_jobs WHERE run_id = ANY(%s)", (list(run_ids),)
+            )
 
 
 def test_worker_completes_a_manifest_backed_zero_trade_backtest(tmp_path: Path) -> None:

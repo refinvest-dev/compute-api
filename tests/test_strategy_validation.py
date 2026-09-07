@@ -64,7 +64,7 @@ def test_allows_primary_signal_asset_without_a_condition_reference() -> None:
             "strategyVersion": strategy_with(
                 {
                     "operator": "LTE",
-                    "operandA": {"asset": "VIX", "metric": "SIMPLE"},
+                    "operandA": {"asset": "SPY", "metric": "SIMPLE"},
                     "operandB": 20.0,
                 }
             ),
@@ -76,7 +76,7 @@ def test_allows_primary_signal_asset_without_a_condition_reference() -> None:
     validate_strategy_version(request.strategy_version)
 
 
-def test_pure_validator_rejects_execution_and_metric_invariants() -> None:
+def test_pure_validator_rejects_metric_and_timing_invariants() -> None:
     strategy = StrategyVersion(
         primary_signal_asset=AssetSymbol.QQQ,
         conditions=(
@@ -91,7 +91,7 @@ def test_pure_validator_rejects_execution_and_metric_invariants() -> None:
                 operand_b=0.0,
             ),
         ),
-        execution_asset=AssetSymbol.VIX,
+        execution_asset=AssetSymbol.TQQQ,
         lag=-1,
         holding_signal_sessions=0,
         position_policy=None,
@@ -102,7 +102,6 @@ def test_pure_validator_rejects_execution_and_metric_invariants() -> None:
 
     assert [issue.path for issue in raised.value.issues] == [
         "conditions[0].operandA.window",
-        "executionAsset",
         "lag",
         "exit.holdingSignalSessions",
     ]
@@ -127,7 +126,7 @@ def test_requires_combinators_after_the_first_condition() -> None:
                     },
                     {
                         "operator": "LT",
-                        "operandA": {"asset": "VIX", "metric": "SIMPLE"},
+                        "operandA": {"asset": "SPY", "metric": "SIMPLE"},
                         "operandB": 20.0,
                     },
                 ],
@@ -156,7 +155,7 @@ def test_rejects_mixed_condition_group_combinators() -> None:
             Condition(
                 ComparisonOperator.LT,
                 LogicalCombinator.AND,
-                MetricReference(AssetSymbol.VIX, MetricType.SIMPLE, None),
+                MetricReference(AssetSymbol.SPY, MetricType.SIMPLE, None),
                 Decimal("20"),
             ),
             Condition(

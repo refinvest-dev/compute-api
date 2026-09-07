@@ -30,20 +30,7 @@ SPY
 TQQQ
 SOXL
 BTCUSDT
-VIX
 ```
-
-Execution 가능:
-
-```text
-QQQ
-SPY
-TQQQ
-SOXL
-BTCUSDT
-```
-
-VIX는 Signal/Reference 전용이다.
 
 Daily Bar만 지원한다.
 
@@ -85,7 +72,6 @@ window: int | null
 - SIMPLE window는 없음
 - lag ≥ 0
 - holdingSignalSessions > 0
-- executionAsset에 VIX 불가
 - PositionPolicy는 Long Only / Single Position / Duplicate Ignore
 - 단일 Condition Group의 후속 `logicalCombinator`는 모두 `AND` 또는 모두 `OR`
   이어야 하며, mixed combinator와 중첩은 MVP에서 지원하지 않음
@@ -267,7 +253,7 @@ Engine의 wall clock, vendor latest response, 처리 순서의 비결정적 차�
 
 1. QQQ 단일 자산 조건
 2. QQQ Signal → TQQQ Execution
-3. QQQ + VIX AND
+3. QQQ + SPY AND
 4. Primary Signal Asset이 Condition에 직접 없을 수 있음
 5. BTC Signal → TQQQ Execution
 6. BTC 주말 Signal → 다음 TQQQ Session
