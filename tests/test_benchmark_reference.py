@@ -61,7 +61,7 @@ def calendar() -> StaticCalendar:
     return StaticCalendar(
         {
             "TQQQ": (date(2025, 1, 2), date(2025, 1, 3), date(2025, 1, 6), date(2025, 1, 7)),
-            "SPY": (date(2025, 1, 2), date(2025, 1, 3), date(2025, 1, 6), date(2025, 1, 7)),
+            "QQQ": (date(2025, 1, 2), date(2025, 1, 3), date(2025, 1, 6), date(2025, 1, 7)),
         }
     )
 
@@ -69,7 +69,7 @@ def calendar() -> StaticCalendar:
 def market_data() -> StaticMarketData:
     sessions = calendar().expected_sessions("TQQQ")
     tqqq_closes = ("100", "120", "90", "110")
-    spy_closes = ("20", "25", "15", "30")
+    qqq_closes = ("20", "25", "15", "30")
     return StaticMarketData(
         {
             **{
@@ -77,8 +77,8 @@ def market_data() -> StaticMarketData:
                 for session, close in zip(sessions, tqqq_closes, strict=True)
             },
             **{
-                AssetSession("SPY", session): daily_bar(AssetSymbol.SPY, session, close)
-                for session, close in zip(sessions, spy_closes, strict=True)
+                AssetSession("QQQ", session): daily_bar(AssetSymbol.QQQ, session, close)
+                for session, close in zip(sessions, qqq_closes, strict=True)
             },
         }
     )
@@ -100,14 +100,14 @@ def test_builds_cost_free_close_to_close_reference_metrics() -> None:
     assert result.cagr == expected_cagr
 
 
-def test_spy_is_a_secondary_market_reference_for_cross_market_strategy() -> None:
+def test_qqq_is_a_secondary_reference_for_same_market_different_asset_strategy() -> None:
     result = evaluate_benchmark_references(
-        calendar(), market_data(), AssetSymbol.TQQQ, AssetSymbol.SPY, period()
+        calendar(), market_data(), AssetSymbol.TQQQ, AssetSymbol.QQQ, period()
     )
 
     assert result.primary.asset is AssetSymbol.TQQQ
     assert result.secondary_reference is not None
-    assert result.secondary_reference.asset is AssetSymbol.SPY
+    assert result.secondary_reference.asset is AssetSymbol.QQQ
     assert result.secondary_reference.total_return == Decimal("0.5")
 
 
@@ -154,6 +154,6 @@ def test_period_without_asset_session_is_calendar_resolution_failure() -> None:
 
 
 def test_benchmark_evaluation_is_deterministic() -> None:
-    inputs = (calendar(), market_data(), AssetSymbol.TQQQ, AssetSymbol.SPY, period())
+    inputs = (calendar(), market_data(), AssetSymbol.TQQQ, AssetSymbol.QQQ, period())
 
     assert evaluate_benchmark_references(*inputs) == evaluate_benchmark_references(*inputs)

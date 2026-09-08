@@ -302,6 +302,18 @@ def test_worker_completes_a_manifest_backed_zero_trade_backtest(tmp_path: Path) 
         assert status.engine_version == "integration-v1"
         assert status.result_payload is not None
         assert status.result_payload["sampleSizeWarning"] == "ZERO"
+        assert status.result_payload["signalExecutionMarketRelation"] == "SAME_MARKET"
+        benchmark = status.result_payload["benchmark"]
+        assert isinstance(benchmark, dict)
+        assert set(benchmark) == {"primary"}
+        primary = benchmark["primary"]
+        assert isinstance(primary, dict)
+        assert set(primary) == {"asset", "equityCurve", "totalReturn", "cagr", "mdd"}
+        assert primary["asset"] == "QQQ"
+        assert primary["equityCurve"] == [
+            {"date": "2025-01-02", "value": "1"},
+            {"date": "2025-01-03", "value": "1"},
+        ]
     finally:
         with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
             cursor.execute("DELETE FROM compute_backtest_jobs WHERE run_id = %s", (run_id,))

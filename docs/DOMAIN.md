@@ -188,6 +188,7 @@ BacktestResult
 ├── equityCurve
 ├── trades
 ├── benchmark
+├── signalExecutionMarketRelation
 ├── signalExecutionDelay
 ├── sampleSizeWarning
 └── dataIntegrityStatus
@@ -196,7 +197,13 @@ BacktestResult
 Benchmark:
 
 - Primary: Execution Asset Buy & Hold
-- Secondary: Signal Asset Buy & Hold (필요한 cross-market 전략)
+- Secondary: Primary Signal Asset이 Execution Asset과 다를 때의 Signal Asset Buy & Hold
+
+`signalExecutionMarketRelation`은 Primary Signal Asset과 Execution Asset의 calendar가 같으면
+`SAME_MARKET`, 다르면 `CROSS_MARKET`이다. 이는 Timeline의 signal/entry/exit timestamp 해석용
+metadata이며 체결 규칙이나 Temporal Rule을 바꾸지 않는다. Strategy 및 각 Buy & Hold
+`equityCurve`는 시작값 `1`의 immutable portfolio index이고, 서로 다른 calendar의 curve는
+공통 날짜를 합성하거나 forward-fill/interpolation하지 않는다.
 
 ## 10. Sample Semantics
 

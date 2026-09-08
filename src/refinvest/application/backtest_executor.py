@@ -48,6 +48,7 @@ from refinvest.engine.validation.models import (
     StrategyVersion,
 )
 from refinvest.marketdata.adapters.in_memory import CalendarResolutionError
+from refinvest.marketdata.domain import calendar_for_asset
 from refinvest.marketdata.ports import (
     DatasetCorruptionError,
     MarketDataPort,
@@ -348,6 +349,9 @@ def _result_payload(
             for trade in trades
         ],
         "benchmark": _benchmark_payload(assembled.benchmark),
+        "signalExecutionMarketRelation": _signal_execution_market_relation(
+            primary_signal_asset, execution_asset
+        ),
         "signalExecutionDelay": _signal_execution_delay_payload(
             trades, calendar, primary_signal_asset, execution_asset
         ),
@@ -449,10 +453,24 @@ def _benchmark_payload(references: BenchmarkReferences) -> dict[str, object]:
 
 def _reference_payload(item: BuyAndHoldReference) -> dict[str, object]:
     return {
+        "asset": item.asset.value,
+        "equityCurve": [
+            {"date": point.session_date.isoformat(), "value": str(point.value)}
+            for point in item.equity_curve
+        ],
         "totalReturn": str(item.total_return),
         "cagr": _decimal_text(item.cagr),
         "mdd": str(item.mdd),
     }
+
+
+def _signal_execution_market_relation(
+    primary_signal_asset: AssetSymbol, execution_asset: AssetSymbol
+) -> str:
+    """Describe calendar relation without affecting temporal execution semantics."""
+    if calendar_for_asset(primary_signal_asset.value) == calendar_for_asset(execution_asset.value):
+        return "SAME_MARKET"
+    return "CROSS_MARKET"
 
 
 def _decimal_text(value: Decimal | None) -> str | None:

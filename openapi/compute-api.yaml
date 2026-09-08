@@ -475,6 +475,10 @@ components:
 
     EquityCurvePoint:
       type: object
+      description: |
+        pinned DatasetSnapshot으로 계산한 portfolio index point다. `value`의 시작값은 1이며
+        원시 close/OHLC가 아니다. Strategy curve는 Execution Asset session별 전략 자본가치,
+        Buy & Hold curve는 해당 asset의 첫 available close 대비 Close-to-Close 값이다(ADR-052).
       required: [date, value]
       properties:
         date: { type: string, format: date }
@@ -495,12 +499,28 @@ components:
     BuyAndHoldResult:
       type: object
       description: |
-        ADR-007에 필드 상세가 정의돼 있지 않아 Core Metrics(§7.1)과 동일한 최소 집합으로 임시
-        구성함 — 팀 확인 필요(placeholder).
+        하나의 asset에 대한 cost-free Close-to-Close Buy & Hold reference다. `equityCurve`는
+        해당 asset의 독립 session을 보존하는 portfolio index이며, 다른 calendar의 curve와
+        공통 date를 합성하거나 forward-fill하지 않는다(ADR-007, ADR-052).
+      required: [asset, equityCurve, totalReturn, cagr, mdd]
       properties:
+        asset:
+          $ref: '#/components/schemas/AssetSymbol'
+        equityCurve:
+          type: array
+          items:
+            $ref: '#/components/schemas/EquityCurvePoint'
         totalReturn: { type: number }
-        cagr: { type: number }
+        cagr: { type: number, nullable: true }
         mdd: { type: number }
+
+    SignalExecutionMarketRelation:
+      type: string
+      enum: [SAME_MARKET, CROSS_MARKET]
+      description: |
+        Primary Signal Asset과 Execution Asset의 calendar가 같으면 SAME_MARKET, 다르면
+        CROSS_MARKET이다. Trade의 signal/entry/exit timeline에서 신호와 체결 시장의 관계를
+        표시하는 metadata이며, 체결 규칙을 바꾸지 않는다(ADR-003, ADR-052).
 
     SignalExecutionDelay:
       type: object
@@ -540,6 +560,7 @@ components:
         - equityCurve
         - trades
         - benchmark
+        - signalExecutionMarketRelation
         - signalExecutionDelay
         - sampleSizeWarning
         - dataIntegrityStatus
@@ -565,7 +586,9 @@ components:
             secondaryReference:
               $ref: '#/components/schemas/BuyAndHoldResult'
               nullable: true
-              description: Signal Asset Buy & Hold. Cross-Market 전략에서만 존재(ADR-007).
+              description: Primary Signal Asset이 Execution Asset과 다를 때만 존재하는 Signal Asset Buy & Hold(ADR-007, ADR-052).
+        signalExecutionMarketRelation:
+          $ref: '#/components/schemas/SignalExecutionMarketRelation'
         signalExecutionDelay:
           $ref: '#/components/schemas/SignalExecutionDelay'
         sampleSizeWarning:
