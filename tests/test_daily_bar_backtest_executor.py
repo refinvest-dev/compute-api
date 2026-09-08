@@ -94,6 +94,30 @@ def test_executes_btc_weekend_signal_at_next_tqqq_session_deterministically() ->
     assert first.actual_period.start == date(2025, 1, 3)
     assert first.actual_period.end == date(2025, 1, 7)
     assert first.result_payload["sampleSizeWarning"] == "LOW"
+    assert first.result_payload["signalExecutionMarketRelation"] == "CROSS_MARKET"
+    benchmark = first.result_payload["benchmark"]
+    assert benchmark["primary"]["asset"] == "TQQQ"
+    assert benchmark["primary"]["equityCurve"] == [
+        {"date": "2025-01-03", "value": "1"},
+        {"date": "2025-01-06", "value": "1.111111111111111111111111111"},
+        {"date": "2025-01-07", "value": "1.222222222222222222222222222"},
+    ]
+    assert set(benchmark["primary"]) == {"asset", "equityCurve", "totalReturn", "cagr", "mdd"}
+    assert benchmark["secondaryReference"]["asset"] == "BTCUSDT"
+    assert benchmark["secondaryReference"]["equityCurve"] == [
+        {"date": "2025-01-03", "value": "1"},
+        {"date": "2025-01-04", "value": "0.01"},
+        {"date": "2025-01-05", "value": "0.01"},
+        {"date": "2025-01-06", "value": "0.01"},
+        {"date": "2025-01-07", "value": "0.01"},
+    ]
+    assert set(benchmark["secondaryReference"]) == {
+        "asset",
+        "equityCurve",
+        "totalReturn",
+        "cagr",
+        "mdd",
+    }
     assert first.result_payload["signalExecutionDelay"] == {
         "median": "69.016666666667",
         "max": "69.016666666667",

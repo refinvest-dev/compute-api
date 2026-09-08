@@ -179,7 +179,7 @@ Trade Count < 10은 LOW sample warning으로 처리한다.
 Benchmark:
 
 - Primary = Execution Asset Buy & Hold
-- Secondary = Signal Asset Buy & Hold (cross-market에서 참고용)
+- Secondary = Signal Asset Buy & Hold (Primary Signal Asset이 Execution Asset과 다를 때 참고용)
 
 ## 10. Internal API Security
 

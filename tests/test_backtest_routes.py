@@ -148,9 +148,7 @@ def test_backtest_submission_is_authenticated_and_durable() -> None:
                 }
             ],
         }
-        response = client.post(
-            "/backtests", headers=headers(), json=payload
-        )
+        response = client.post("/backtests", headers=headers(), json=payload)
         assert response.status_code == 400
         assert response.json()["errorCode"] == "DSL_INVALID"
         assert len(repository.jobs) == 1
@@ -212,9 +210,7 @@ def test_submission_requires_uuid_v4_idempotency_key() -> None:
         missing = client.post(
             "/backtests", headers={"X-Internal-Api-Key": "test-key"}, json=valid_request()
         )
-        non_v4 = client.post(
-            "/backtests", headers=headers(str(UUID(int=0))), json=valid_request()
-        )
+        non_v4 = client.post("/backtests", headers=headers(str(UUID(int=0))), json=valid_request())
 
     assert missing.status_code == non_v4.status_code == 400
     assert missing.json() == non_v4.json() == {"message": "Idempotency-Key must be a UUID v4."}
@@ -246,9 +242,24 @@ def test_failed_backtest_status_includes_documented_failure_fields() -> None:
 def test_completed_backtest_status_includes_result_metadata() -> None:
     repository = FakeBacktestJobRepository()
     repository.status_views["run-completed"] = BacktestJobStatusView(
-        "run-completed", "strategy-v1", "snapshot-1", BacktestJobStatus.COMPLETED,
-        actual_period=Period(date(2025, 1, 2), date(2025, 1, 3)), engine_version="v1",
-        result_payload={"metrics": {"totalReturn": "0.12345678901234"}},
+        "run-completed",
+        "strategy-v1",
+        "snapshot-1",
+        BacktestJobStatus.COMPLETED,
+        actual_period=Period(date(2025, 1, 2), date(2025, 1, 3)),
+        engine_version="v1",
+        result_payload={
+            "metrics": {"totalReturn": "0.12345678901234"},
+            "benchmark": {
+                "primary": {
+                    "asset": "TQQQ",
+                    "equityCurve": [{"date": "2025-01-02", "value": "1"}],
+                    "totalReturn": "0",
+                    "cagr": None,
+                    "mdd": "0",
+                }
+            },
+        },
     )
     with configured_client(repository) as client:
         response = client.get(
@@ -258,13 +269,24 @@ def test_completed_backtest_status_includes_result_metadata() -> None:
     assert response.json()["actualPeriod"] == {"start": "2025-01-02", "end": "2025-01-03"}
     assert response.json()["engineVersion"] == "v1"
     assert response.json()["result"]["metrics"]["totalReturn"] == 0.123456789012
+    assert response.json()["result"]["benchmark"]["primary"] == {
+        "asset": "TQQQ",
+        "equityCurve": [{"date": "2025-01-02", "value": 1.0}],
+        "totalReturn": 0.0,
+        "cagr": None,
+        "mdd": 0.0,
+    }
 
 
 def test_completed_backtest_status_converts_signal_execution_delay_numbers() -> None:
     repository = FakeBacktestJobRepository()
     repository.status_views["run-completed"] = BacktestJobStatusView(
-        "run-completed", "strategy-v1", "snapshot-1", BacktestJobStatus.COMPLETED,
-        actual_period=Period(date(2025, 1, 2), date(2025, 1, 3)), engine_version="v1",
+        "run-completed",
+        "strategy-v1",
+        "snapshot-1",
+        BacktestJobStatus.COMPLETED,
+        actual_period=Period(date(2025, 1, 2), date(2025, 1, 3)),
+        engine_version="v1",
         result_payload={
             "signalExecutionDelay": {
                 "median": "69.016666666667",
