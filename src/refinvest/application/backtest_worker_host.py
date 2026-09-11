@@ -8,6 +8,7 @@ from threading import Event, Thread
 from time import monotonic
 from typing import Literal, Protocol
 
+from refinvest.application.backtest_failure_observability import record_terminal_backtest_failure
 from refinvest.application.backtest_workers import (
     BacktestWorkerRepository,
     ExecutableBacktestJob,
@@ -215,17 +216,15 @@ class BacktestWorkerHost:
                 outcome.failure_reason,
                 outcome.error_code,
             )
-            _event(
-                "backtest_execution_failed",
-                level=logging.WARNING,
-                run_id=job.claim.run_id,
-                worker_id=self._worker_id,
-                snapshot_id=job.claim.dataset_snapshot_id,
-                attempt=job.claim.attempt_count,
-                execution_duration_seconds=duration_seconds,
-                error_code=outcome.error_code,
-                persisted=persisted,
-            )
+            if persisted:
+                record_terminal_backtest_failure(
+                    run_id=job.claim.run_id,
+                    snapshot_id=job.claim.dataset_snapshot_id,
+                    worker_id=self._worker_id,
+                    attempt=job.claim.attempt_count,
+                    execution_duration_seconds=duration_seconds,
+                    error_code=outcome.error_code,
+                )
         else:
             self._record_retryable_failure(job, outcome.failure_reason, duration_seconds)
         return True

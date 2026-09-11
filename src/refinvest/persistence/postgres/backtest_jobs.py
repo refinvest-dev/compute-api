@@ -6,6 +6,7 @@ from typing import cast
 from psycopg import connect
 from psycopg.types.json import Jsonb
 
+from refinvest.application.backtest_failure_observability import record_terminal_backtest_failure
 from refinvest.application.backtest_workers import ClaimedBacktestJob
 from refinvest.application.backtests import (
     BacktestCapacityExceeded,
@@ -295,6 +296,12 @@ class PostgresBacktestJobRepository:
             reclaimed_stale_lease,
         ) = cast(tuple[str, str, str | None, int, dict[str, object], datetime, bool], row)
         if status != BacktestJobStatus.RUNNING.value or dataset_snapshot_id is None:
+            if status == BacktestJobStatus.FAILED.value:
+                record_terminal_backtest_failure(
+                    run_id=str(run_id),
+                    snapshot_id=None,
+                    error_code="MISSING_REQUIRED_DATA",
+                )
             return None
         return ClaimedBacktestJob(
             run_id=str(run_id),

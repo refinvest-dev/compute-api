@@ -139,6 +139,64 @@ def test_terminal_failure_is_recorded_without_retry() -> None:
     assert jobs.retries == []
 
 
+def test_terminal_failure_emits_structured_error_code_and_counter(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+    jobs = FakeJobs([claim()])
+    worker = host(
+        jobs,
+        FakeExecutor(
+            TerminalBacktestFailure(
+                "calendar resolution detail must not be logged", "CALENDAR_RESOLUTION_FAILED"
+            )
+        ),
+    )
+
+    assert worker.process_once()
+
+    events = [json.loads(record.message) for record in caplog.records]
+    failure = next(event for event in events if event["event"] == "backtest_execution_failed")
+    assert failure["run_status"] == "FAILED"
+    assert failure["error_code"] == "CALENDAR_RESOLUTION_FAILED"
+    assert failure["run_id"] == "run-1"
+    assert failure["snapshot_id"] == "snapshot-1"
+    counter = next(
+        event
+        for event in events
+        if event.get("metric_name") == "backtest_runs_failed_total"
+    )
+    assert counter == {
+        "error_code": "CALENDAR_RESOLUTION_FAILED",
+        "event": "metric_recorded",
+        "metric_name": "backtest_runs_failed_total",
+        "metric_type": "counter",
+        "value": 1,
+    }
+    assert "calendar resolution detail must not be logged" not in caplog.text
+
+
+def test_retry_exhaustion_uses_unspecified_error_code_for_failure_counter(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+    jobs = FakeJobs([claim(attempt_count=4)])
+
+    assert host(jobs, FakeExecutor(RetryableBacktestFailure("database unavailable"))).process_once()
+
+    events = [json.loads(record.message) for record in caplog.records]
+    failure = next(event for event in events if event["event"] == "backtest_execution_failed")
+    assert failure["run_status"] == "FAILED"
+    assert failure["error_code"] == "UNSPECIFIED"
+    counter = next(
+        event
+        for event in events
+        if event.get("metric_name") == "backtest_runs_failed_total"
+    )
+    assert counter["error_code"] == "UNSPECIFIED"
+    assert "database unavailable" not in caplog.text
+
+
 def test_execution_timeout_is_recorded_without_retry() -> None:
     jobs = FakeJobs([claim()])
     worker = host(
