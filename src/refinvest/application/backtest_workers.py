@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
 
+from refinvest.application.backtest_failure_observability import record_terminal_backtest_failure
 from refinvest.application.dataset_snapshots import (
     DatasetSnapshot,
     DatasetSnapshotRepository,
@@ -73,12 +74,20 @@ def claim_executable_backtest(
 
     snapshot = snapshots.get(claim.dataset_snapshot_id)
     if snapshot is None:
-        jobs.mark_failed(
+        persisted = jobs.mark_failed(
             claim.run_id,
             worker_id,
             "The pinned DatasetSnapshot is unavailable.",
             MISSING_REQUIRED_DATA,
         )
+        if persisted:
+            record_terminal_backtest_failure(
+                run_id=claim.run_id,
+                snapshot_id=claim.dataset_snapshot_id,
+                worker_id=worker_id,
+                attempt=claim.attempt_count,
+                error_code=MISSING_REQUIRED_DATA,
+            )
         return None
     return ExecutableBacktestJob(claim, snapshot)
 
@@ -96,5 +105,14 @@ def record_transient_failure(
     """Release a leased job for its bounded retry, or make the final failure terminal."""
     delay = retry_delay_for_attempt(claim.attempt_count)
     if delay is None:
-        return jobs.mark_failed(claim.run_id, claim.worker_id, failure_reason, None)
+        persisted = jobs.mark_failed(claim.run_id, claim.worker_id, failure_reason, None)
+        if persisted:
+            record_terminal_backtest_failure(
+                run_id=claim.run_id,
+                snapshot_id=claim.dataset_snapshot_id,
+                worker_id=claim.worker_id,
+                attempt=claim.attempt_count,
+                error_code=None,
+            )
+        return persisted
     return jobs.schedule_retry(claim.run_id, claim.worker_id, delay, failure_reason)

@@ -49,6 +49,14 @@ or service conditions:
 | `backtest_stale_lease_reclaimed` | Immediate | Inspect prior worker termination or heartbeat loss. |
 | cleanup unit failure / overdue terminal backlog | Immediate | Restore cleanup and verify ADR-041 retention. |
 
+Every durable `FAILED` transition also emits `backtest_execution_failed` with
+`run_status=FAILED` and a normalized `error_code`, followed by a log-derived counter increment:
+`metric_name=backtest_runs_failed_total`, `metric_type=counter`, `value=1`, and the sole
+low-cardinality tag `error_code`. `run_id` and `snapshot_id` appear only on the failure event,
+never on the counter. A missing or unrecognized legacy code is counted as
+`error_code=UNSPECIFIED`. Failure reasons, request payloads, and exception traces are omitted
+from both events.
+
 `backtest_cleanup_completed` includes `deleted_count` for normal hourly audit. Log forwarding,
 alert destinations, and log retention are infrastructure-owned configuration.
 
