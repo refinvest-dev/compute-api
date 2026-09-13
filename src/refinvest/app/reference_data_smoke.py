@@ -9,9 +9,9 @@ from typing import Protocol
 from refinvest.app.config import Settings, get_settings
 from refinvest.app.snapshot_storage import create_snapshot_execution_data_loader
 from refinvest.application.assets import ASSET_REFERENCES, availability_for_snapshot
-from refinvest.application.backtest_executor import SnapshotExecutionDataLoader
 from refinvest.application.dataset_snapshots import DatasetSnapshot, DatasetSnapshotRepository
 from refinvest.application.series import build_series
+from refinvest.application.snapshot_execution_data import SnapshotExecutionDataLoader
 from refinvest.persistence.postgres.dataset_snapshots import PostgresDatasetSnapshotRepository
 
 _SERIES_SYMBOLS = ("QQQ", "BTCUSDT")

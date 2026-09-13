@@ -5,7 +5,6 @@ import pytest
 
 from refinvest.application.dataset_snapshots import DatasetSnapshot
 from refinvest.marketdata.adapters.in_memory import (
-    CalendarResolutionError,
     InMemorySnapshotCalendar,
     InMemorySnapshotDailyBars,
     SnapshotMarketData,
@@ -21,6 +20,7 @@ from refinvest.marketdata.domain import (
     DailyBarLookup,
     calendar_for_asset,
 )
+from refinvest.marketdata.errors import CalendarResolutionError
 from refinvest.marketdata.ports import (
     MissingRequiredMarketDataError,
     require_daily_bar,

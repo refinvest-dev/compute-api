@@ -5,8 +5,8 @@ import pytest
 
 from refinvest.app.config import Settings
 from refinvest.app.reference_data_smoke import verify_reference_data
-from refinvest.application.backtest_executor import SnapshotExecutionData
 from refinvest.application.dataset_snapshots import DatasetSnapshot
+from refinvest.application.snapshot_execution_data import SnapshotExecutionData
 from refinvest.marketdata.domain import ClosePriceLookup, DailyBarAvailability
 
 

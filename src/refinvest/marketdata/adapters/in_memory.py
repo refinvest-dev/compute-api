@@ -18,10 +18,7 @@ from refinvest.marketdata.domain import (
     ReferenceClose,
     calendar_for_asset,
 )
-
-
-class CalendarResolutionError(ValueError):
-    """The immutable snapshot lacks a calendar classification for an AssetSession."""
+from refinvest.marketdata.errors import CalendarResolutionError
 
 
 class InMemorySnapshotCalendar:

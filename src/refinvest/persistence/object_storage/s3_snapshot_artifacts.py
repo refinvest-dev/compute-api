@@ -5,8 +5,8 @@ from pathlib import Path, PurePosixPath
 from typing import Protocol, cast
 from urllib.parse import urlparse
 
-from refinvest.application.backtest_executor import SnapshotExecutionData
 from refinvest.application.dataset_snapshots import DatasetSnapshot
+from refinvest.application.snapshot_execution_data import SnapshotExecutionData
 from refinvest.ingestion.snapshot.artifacts import (
     PublishedSnapshotArtifacts,
     SnapshotPublicationError,

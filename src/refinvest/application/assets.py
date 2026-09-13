@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Protocol
 
-from refinvest.application.backtest_executor import SnapshotExecutionDataLoader
 from refinvest.application.dataset_snapshots import DatasetSnapshot
+from refinvest.application.snapshot_execution_data import SnapshotExecutionDataLoader
 
 
 @dataclass(frozen=True)

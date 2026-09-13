@@ -4,9 +4,9 @@ from json import loads
 
 import refinvest.api.routes.series as series_route
 from refinvest.app.config import Settings
-from refinvest.application.backtest_executor import SnapshotExecutionData
 from refinvest.application.dataset_snapshots import DatasetSnapshot
 from refinvest.application.series import SeriesPoint, build_series
+from refinvest.application.snapshot_execution_data import SnapshotExecutionData
 from refinvest.marketdata.domain import ClosePriceLookup, DailyBarAvailability
 
 
