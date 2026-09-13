@@ -4,7 +4,7 @@ from datetime import date
 from decimal import Decimal
 from typing import cast
 
-from refinvest.application.backtest_executor import _result_payload
+from refinvest.application.backtest_result_payload import backtest_result_payload
 from refinvest.engine.benchmark import BenchmarkCurvePoint, BenchmarkReferences, BuyAndHoldReference
 from refinvest.engine.performance import EquityCurvePoint, PerformanceMetrics, PerformanceReport
 from refinvest.engine.results import ResultDataIntegrityStatus, assemble_backtest_result
@@ -69,6 +69,47 @@ def test_same_asset_zero_trade_result_keeps_primary_benchmark_without_secondary(
     }
 
 
+def test_zero_trade_result_preserves_the_complete_canonical_payload() -> None:
+    payload = _zero_trade_payload(AssetSymbol.QQQ, AssetSymbol.QQQ)
+
+    assert payload == {
+        "backtestRunId": "run-1",
+        "metrics": {
+            "totalReturn": None,
+            "cagr": None,
+            "mdd": None,
+            "sharpe": None,
+            "winRate": None,
+            "tradeCount": 0,
+            "avgTradeReturn": None,
+            "avgHoldingPeriod": None,
+            "profitFactor": None,
+        },
+        "equityCurve": [{"date": "2025-01-02", "value": "1"}],
+        "trades": [],
+        "benchmark": {
+            "primary": {
+                "asset": "QQQ",
+                "equityCurve": [
+                    {"date": "2025-01-02", "value": "1"},
+                    {"date": "2025-01-03", "value": "1.1"},
+                ],
+                "totalReturn": "0.1",
+                "cagr": None,
+                "mdd": "0",
+            }
+        },
+        "signalExecutionMarketRelation": "SAME_MARKET",
+        "signalExecutionDelay": {"median": "0", "max": "0", "distribution": []},
+        "sampleSizeWarning": "ZERO",
+        "dataIntegrityStatus": {
+            "datasetSnapshotId": "snapshot-1",
+            "corporateActionsApplied": True,
+            "pointInTimeValidationPassed": True,
+        },
+    }
+
+
 def _zero_trade_payload(
     primary_signal_asset: AssetSymbol, execution_asset: AssetSymbol
 ) -> dict[str, object]:
@@ -95,7 +136,7 @@ def _payload(
         benchmark,
         ResultDataIntegrityStatus("snapshot-1", True, True),
     )
-    return _result_payload(
+    return backtest_result_payload(
         "run-1",
         result,
         cast(SessionCalendarPort, object()),
