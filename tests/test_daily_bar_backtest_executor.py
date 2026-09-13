@@ -1,13 +1,11 @@
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
 
-from refinvest.application.backtest_executor import (
-    DailyBarBacktestExecutor,
-    SnapshotExecutionData,
-)
+from refinvest.application.backtest_executor import DailyBarBacktestExecutor
 from refinvest.application.backtest_worker_host import CompletedBacktestExecution
 from refinvest.application.backtest_workers import ClaimedBacktestJob, ExecutableBacktestJob
 from refinvest.application.dataset_snapshots import DatasetSnapshot
+from refinvest.application.snapshot_execution_data import SnapshotExecutionData
 from refinvest.marketdata.adapters.in_memory import (
     InMemorySnapshotCalendar,
     InMemorySnapshotDailyBars,

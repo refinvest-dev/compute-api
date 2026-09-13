@@ -1,9 +1,8 @@
 """Snapshot-pinned adapter that runs the Daily Bar backtest pipeline."""
 
-from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Protocol, cast
+from typing import cast
 
 from refinvest.application.backtest_worker_host import (
     CompletedBacktestExecution,
@@ -11,7 +10,7 @@ from refinvest.application.backtest_worker_host import (
     FatalErrorCode,
     TerminalBacktestFailure,
 )
-from refinvest.application.dataset_snapshots import DatasetSnapshot
+from refinvest.application.snapshot_execution_data import SnapshotExecutionDataLoader
 from refinvest.engine.benchmark import (
     BenchmarkReferences,
     BuyAndHoldReference,
@@ -47,31 +46,13 @@ from refinvest.engine.validation.models import (
     PositionPolicy,
     StrategyVersion,
 )
-from refinvest.marketdata.adapters.in_memory import CalendarResolutionError
 from refinvest.marketdata.domain import calendar_for_asset
+from refinvest.marketdata.errors import CalendarResolutionError
 from refinvest.marketdata.ports import (
     DatasetCorruptionError,
-    MarketDataPort,
     MissingRequiredMarketDataError,
     SessionCalendarPort,
 )
-
-
-@dataclass(frozen=True)
-class SnapshotExecutionData:
-    """Immutable Engine inputs plus ingestion-provided integrity facts."""
-
-    snapshot_id: str
-    calendar: SessionCalendarPort
-    market_data: MarketDataPort
-    corporate_actions_applied: bool
-    point_in_time_validation_passed: bool
-
-
-class SnapshotExecutionDataLoader(Protocol):
-    """Loads only artifacts belonging to the worker's already-pinned snapshot."""
-
-    def load(self, snapshot: DatasetSnapshot) -> SnapshotExecutionData: ...
 
 
 class DailyBarBacktestExecutor:

@@ -3,8 +3,8 @@ from json import loads
 
 import refinvest.api.routes.assets as assets_route
 from refinvest.app.config import Settings
-from refinvest.application.backtest_executor import SnapshotExecutionData
 from refinvest.application.dataset_snapshots import DatasetSnapshot
+from refinvest.application.snapshot_execution_data import SnapshotExecutionData
 
 
 class FakeSnapshots:

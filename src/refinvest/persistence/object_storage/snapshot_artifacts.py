@@ -8,8 +8,8 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
 from typing import cast
 
-from refinvest.application.backtest_executor import SnapshotExecutionData
 from refinvest.application.dataset_snapshots import DatasetSnapshot
+from refinvest.application.snapshot_execution_data import SnapshotExecutionData
 from refinvest.ingestion.snapshot.calendar import CalendarComponent, validate_composite_calendar
 from refinvest.marketdata.adapters.in_memory import (
     InMemorySnapshotCalendar,

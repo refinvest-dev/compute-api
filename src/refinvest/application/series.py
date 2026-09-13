@@ -5,8 +5,8 @@ from datetime import date
 from decimal import Decimal
 
 from refinvest.application.assets import asset_reference
-from refinvest.application.backtest_executor import SnapshotExecutionDataLoader
 from refinvest.application.dataset_snapshots import DatasetSnapshot
+from refinvest.application.snapshot_execution_data import SnapshotExecutionDataLoader
 from refinvest.marketdata.ports import require_close
 
 
