@@ -1,8 +1,13 @@
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
 
+import pytest
+
 from refinvest.application.backtest_executor import DailyBarBacktestExecutor
-from refinvest.application.backtest_worker_host import CompletedBacktestExecution
+from refinvest.application.backtest_worker_host import (
+    CompletedBacktestExecution,
+    TerminalBacktestFailure,
+)
 from refinvest.application.backtest_workers import ClaimedBacktestJob, ExecutableBacktestJob
 from refinvest.application.dataset_snapshots import DatasetSnapshot
 from refinvest.application.snapshot_execution_data import SnapshotExecutionData
@@ -18,6 +23,8 @@ from refinvest.marketdata.domain import (
     CalendarSessionState,
     DailyBar,
 )
+from refinvest.marketdata.errors import CalendarResolutionError
+from refinvest.marketdata.ports import DatasetCorruptionError, MissingRequiredMarketDataError
 
 
 class SnapshotLoader:
@@ -91,6 +98,12 @@ def test_executes_btc_weekend_signal_at_next_tqqq_session_deterministically() ->
     assert loader.loaded_snapshot_ids == ["snapshot-1", "snapshot-1"]
     assert first.actual_period.start == date(2025, 1, 3)
     assert first.actual_period.end == date(2025, 1, 7)
+    assert first.engine_version == "engine-v1"
+    assert first.result_payload["dataIntegrityStatus"] == {
+        "datasetSnapshotId": "snapshot-1",
+        "corporateActionsApplied": True,
+        "pointInTimeValidationPassed": True,
+    }
     assert first.result_payload["sampleSizeWarning"] == "LOW"
     assert first.result_payload["signalExecutionMarketRelation"] == "CROSS_MARKET"
     benchmark = first.result_payload["benchmark"]
@@ -132,6 +145,64 @@ def test_executes_btc_weekend_signal_at_next_tqqq_session_deterministically() ->
             "holdingPeriod": 3,
         }
     ]
+
+
+@pytest.mark.parametrize(
+    ("error", "error_code"),
+    (
+        (CalendarResolutionError("calendar failed"), "CALENDAR_RESOLUTION_FAILED"),
+        (MissingRequiredMarketDataError("market data missing"), "MISSING_REQUIRED_DATA"),
+        (DatasetCorruptionError("snapshot corrupt"), "DATASET_CORRUPTION"),
+    ),
+)
+def test_maps_data_boundary_errors_to_the_same_terminal_failure(
+    error: ValueError, error_code: str
+) -> None:
+    snapshot = _snapshot()
+    executor = DailyBarBacktestExecutor(FailingSnapshotLoader(error), "engine-v1")
+    job = ExecutableBacktestJob(
+        ClaimedBacktestJob("run-1", "worker-1", snapshot.snapshot_id, 1, _payload()), snapshot
+    )
+
+    result = executor.execute(job)
+
+    assert result == TerminalBacktestFailure(str(error), error_code)
+
+
+def test_maps_malformed_stored_payload_to_dataset_corruption() -> None:
+    snapshot = _snapshot()
+    executor = DailyBarBacktestExecutor(FailingSnapshotLoader(AssertionError()), "engine-v1")
+    job = ExecutableBacktestJob(
+        ClaimedBacktestJob("run-1", "worker-1", snapshot.snapshot_id, 1, {}), snapshot
+    )
+
+    result = executor.execute(job)
+
+    assert isinstance(result, TerminalBacktestFailure)
+    assert result.error_code == "DATASET_CORRUPTION"
+
+
+class FailingSnapshotLoader:
+    def __init__(self, error: BaseException) -> None:
+        self._error = error
+
+    def load(self, snapshot: DatasetSnapshot) -> SnapshotExecutionData:
+        del snapshot
+        raise self._error
+
+
+def _snapshot() -> DatasetSnapshot:
+    return DatasetSnapshot(
+        "snapshot-1",
+        datetime(2025, 1, 1, tzinfo=UTC),
+        "test",
+        {},
+        "adjusted",
+        "memory://snapshot-1",
+        "test-calendar",
+        "v1",
+        "calendar-hash",
+    )
 
 
 def _bar(asset: str, session: date, price: str) -> DailyBar:
