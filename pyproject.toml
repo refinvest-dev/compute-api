@@ -21,6 +21,7 @@ refinvest-publish-snapshot = "refinvest.app.snapshot_ingestion:snapshot_ingestio
 refinvest-publish-integration-fixture = "refinvest.app.integration_fixture:integration_fixture_main"
 refinvest-verify-reference-data = "refinvest.app.reference_data_smoke:reference_data_smoke_main"
 refinvest-cleanup-backtest-jobs = "refinvest.app.backtest_job_cleanup:backtest_job_cleanup_main"
+refinvest-benchmark = "refinvest.app.benchmark:benchmark_main"
 
 [tool.pyright]
 include = ["src"]
