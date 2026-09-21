@@ -3,9 +3,18 @@ from contextlib import contextmanager
 from datetime import date
 from uuid import UUID
 
+import pytest
+from prometheus_client import generate_latest
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 from starlette.testclient import TestClient
 
 from refinvest.api.dependencies.backtests import get_backtest_job_repository
+from refinvest.api.routes.backtests import create_backtest
+from refinvest.api.schemas.backtests import (
+    BacktestAcceptedTransport,
+    CreateBacktestRequestTransport,
+)
 from refinvest.app.config import Settings, get_settings
 from refinvest.app.main import app
 from refinvest.application.backtests import (
@@ -41,7 +50,9 @@ class FakeBacktestJobRepository:
             fingerprint, submission = existing
             if fingerprint != request_fingerprint:
                 raise BacktestIdempotencyConflict("different request")
-            return submission
+            return BacktestSubmission(
+                submission.run_id, submission.strategy_version_id, newly_created=False
+            )
         active_jobs = sum(
             job.status in (BacktestJobStatus.PENDING, BacktestJobStatus.RUNNING)
             for job in self.jobs.values()
@@ -102,6 +113,41 @@ def configured_client(repository: BacktestJobRepository) -> Iterator[TestClient]
             yield client
     finally:
         app.dependency_overrides.clear()
+
+
+def test_metrics_distinguish_new_replay_and_capacity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REFINVEST_API_METRICS_ENABLED", "true")
+    repository = FakeBacktestJobRepository()
+    request = CreateBacktestRequestTransport.model_validate(valid_request())
+    http_request = Request({"type": "http", "app": app})
+    settings = Settings("test-key", backtest_active_job_limit=1)
+    before = generate_latest(app.state.metrics.registry).decode()
+    key = headers()["Idempotency-Key"]
+    first = create_backtest(request, http_request, repository, settings, key)
+    replay = create_backtest(request, http_request, repository, settings, key)
+    assert isinstance(first, BacktestAcceptedTransport)
+    assert isinstance(replay, BacktestAcceptedTransport)
+    assert first.status == replay.status == "PENDING"
+    other_key = "57cb8bb7-f221-4a40-ab5d-0a02ad9f3ce4"
+    response = create_backtest(request, http_request, repository, settings, other_key)
+    assert isinstance(response, JSONResponse)
+    assert response.status_code == 503
+    after = generate_latest(app.state.metrics.registry).decode()
+    for name in (
+        "refinvest_compute_backtest_jobs_accepted_total",
+        "refinvest_compute_backtest_idempotency_replays_total",
+        "refinvest_compute_backtest_capacity_rejections_total",
+    ):
+        assert _counter_value(after, name) - _counter_value(before, name) == 1
+
+
+def _counter_value(exposition: str, name: str) -> float:
+    for line in exposition.splitlines():
+        if line.startswith(f"{name} "):
+            return float(line.split(" ")[1])
+    return 0.0
 
 
 def test_backtest_submission_is_authenticated_and_durable() -> None:

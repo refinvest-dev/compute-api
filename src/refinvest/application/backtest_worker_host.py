@@ -61,6 +61,11 @@ class BacktestJobExecutor(Protocol):
     def execute(self, job: ExecutableBacktestJob) -> BacktestExecutionOutcome: ...
 
 
+class WorkerTimingObserver(Protocol):
+    def attempt_duration(self, seconds: float) -> None: ...
+    def timeout(self) -> None: ...
+
+
 class _LeaseHeartbeat:
     def __init__(
         self,
@@ -104,6 +109,7 @@ class BacktestWorkerHost:
         executor: BacktestJobExecutor,
         queue_wait_warning: timedelta = _QUEUE_WAIT_WARNING,
         execution_warning: timedelta = _EXECUTION_WARNING,
+        observer: WorkerTimingObserver | None = None,
     ) -> None:
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive.")
@@ -119,6 +125,7 @@ class BacktestWorkerHost:
         self._executor = executor
         self._queue_wait_warning = queue_wait_warning
         self._execution_warning = execution_warning
+        self._observer = observer
 
     def process_once(self) -> bool:
         """Process one claimed job; False means no eligible work was available."""
@@ -179,6 +186,8 @@ class BacktestWorkerHost:
             return True
         finally:
             heartbeat.stop()
+            if self._observer is not None:
+                _observe(self._observer.attempt_duration, monotonic() - started)
 
         duration_seconds = monotonic() - started
         if duration_seconds >= self._execution_warning.total_seconds():
@@ -210,6 +219,8 @@ class BacktestWorkerHost:
                 persisted=persisted,
             )
         elif isinstance(outcome, TerminalBacktestFailure):
+            if outcome.error_code == "EXECUTION_TIMEOUT" and self._observer is not None:
+                _observe(self._observer.timeout)
             persisted = self._jobs.mark_failed(
                 job.claim.run_id,
                 self._worker_id,
@@ -263,3 +274,10 @@ def _queue_wait_seconds(job: ExecutableBacktestJob) -> float | None:
 
 def _event(name: str, *, level: int = logging.INFO, **fields: object) -> None:
     _LOGGER.log(level, json.dumps({"event": name, **fields}, sort_keys=True, default=str))
+
+
+def _observe(operation: object, *args: object) -> None:
+    try:
+        operation(*args)  # type: ignore[operator]
+    except Exception:
+        _LOGGER.warning("worker_metric_record_failed")

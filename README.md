@@ -6,6 +6,8 @@
 고정 integration fixture로 결정성과 단계별 실행 비용을 측정하려면
 [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md)를 참고한다.
 
+개발·검증 환경의 Prometheus 계측은 [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md)를 참고한다.
+
 ```powershell
 uv run refinvest-benchmark --fixture-manifest <path> --snapshot-path <path> `
   --scenario <path> --warmups 3 --iterations 10 --cache-mode warm --output <path>

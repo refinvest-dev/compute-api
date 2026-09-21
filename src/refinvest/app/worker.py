@@ -17,11 +17,15 @@ from refinvest.application.backtest_worker_host import (
     RetryableBacktestFailure,
 )
 from refinvest.application.backtest_workers import ExecutableBacktestJob
+from refinvest.observability.job_repository import ObservedWorkerRepository
+from refinvest.observability.metrics import WorkerMetrics, serve_metrics
 from refinvest.persistence.postgres.backtest_jobs import PostgresBacktestJobRepository
 from refinvest.persistence.postgres.dataset_snapshots import PostgresDatasetSnapshotRepository
 
 
-def create_backtest_worker(settings: Settings) -> BacktestWorkerHost:
+def create_backtest_worker(
+    settings: Settings, metrics: WorkerMetrics | None = None
+) -> BacktestWorkerHost:
     """Compose the worker from explicit runtime configuration and immutable adapters."""
     if not settings.database_url:
         raise ValueError("REFINVEST_DATABASE_URL is required for the backtest worker.")
@@ -34,6 +38,7 @@ def create_backtest_worker(settings: Settings) -> BacktestWorkerHost:
         raise ValueError("Worker heartbeat interval must be shorter than its lease duration.")
 
     jobs = PostgresBacktestJobRepository(settings.database_url)
+    observed_jobs = ObservedWorkerRepository(jobs, metrics) if metrics is not None else jobs
     snapshots = PostgresDatasetSnapshotRepository(settings.database_url)
     executor = ProcessIsolatedBacktestExecutor(
         timedelta(seconds=settings.backtest_execution_timeout_seconds),
@@ -43,9 +48,10 @@ def create_backtest_worker(settings: Settings) -> BacktestWorkerHost:
         settings.worker_id or _default_worker_id(),
         lease_duration,
         heartbeat_interval,
-        jobs,
+        observed_jobs,
         snapshots,
         executor,
+        observer=metrics,
     )
 
 
@@ -68,8 +74,15 @@ def run_backtest_worker(settings: Settings, stop_requested: Event | None = None)
     """Run until SIGINT/SIGTERM; an in-flight lease is recoverable after shutdown."""
     stop = stop_requested or Event()
     _register_shutdown_signals(stop)
-    worker = create_backtest_worker(settings)
-    worker.run_forever(stop, timedelta(seconds=settings.worker_poll_seconds))
+    metrics = WorkerMetrics() if settings.worker_metrics.enabled else None
+    worker = (
+        create_backtest_worker(settings, metrics) if metrics else create_backtest_worker(settings)
+    )
+    if metrics is None:
+        worker.run_forever(stop, timedelta(seconds=settings.worker_poll_seconds))
+    else:
+        with serve_metrics(settings.worker_metrics, metrics.registry):
+            worker.run_forever(stop, timedelta(seconds=settings.worker_poll_seconds))
 
 
 def worker_main() -> None:

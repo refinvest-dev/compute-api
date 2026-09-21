@@ -11,6 +11,7 @@ dependencies = [
     "boto3>=1.42,<2",
     "exchange-calendars>=4.10,<5",
     "fastapi[standard]>=0.141.1",
+    "prometheus-client>=0.20,<1",
     "psycopg[binary]>=3.2",
 ]
 
