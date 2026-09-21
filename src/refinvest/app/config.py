@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from os import getenv
 
+from refinvest.observability.metrics import MetricsConfig
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -27,6 +29,8 @@ class Settings:
     snapshot_storage_s3_region: str | None = None
     snapshot_start_date: str | None = None
     us_equity_overrides_path: str | None = None
+    api_metrics: MetricsConfig = MetricsConfig()
+    worker_metrics: MetricsConfig = MetricsConfig(port=9102)
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -62,6 +66,8 @@ class Settings:
             snapshot_storage_s3_region=getenv("REFINVEST_SNAPSHOT_STORAGE_S3_REGION") or None,
             snapshot_start_date=getenv("REFINVEST_SNAPSHOT_START_DATE") or None,
             us_equity_overrides_path=getenv("REFINVEST_US_EQUITY_OVERRIDES_PATH") or None,
+            api_metrics=_metrics_config("API", 9101),
+            worker_metrics=_metrics_config("WORKER", 9102),
         )
 
 
@@ -81,3 +87,16 @@ def _positive_environment_integer(name: str, default: int) -> int:
     if parsed <= 0:
         raise ValueError(f"{name} must be a positive integer.")
     return parsed
+
+
+def _metrics_config(role: str, default_port: int) -> MetricsConfig:
+    prefix = f"REFINVEST_{role}_METRICS"
+    enabled = getenv(f"{prefix}_ENABLED", "false").lower()
+    if enabled not in {"true", "false"}:
+        raise ValueError(f"{prefix}_ENABLED must be true or false.")
+    raw_port = getenv(f"{prefix}_PORT", str(default_port))
+    try:
+        port = int(raw_port)
+    except ValueError as error:
+        raise ValueError(f"{prefix}_PORT must be an integer in 1..65535.") from error
+    return MetricsConfig(enabled == "true", getenv(f"{prefix}_BIND", "127.0.0.1"), port)

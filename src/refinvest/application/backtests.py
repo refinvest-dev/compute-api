@@ -49,6 +49,7 @@ class BacktestSubmission:
 
     run_id: str
     strategy_version_id: str | None
+    newly_created: bool = True
 
 
 class BacktestIdempotencyConflict(ValueError):

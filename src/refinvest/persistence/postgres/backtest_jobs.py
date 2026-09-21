@@ -68,7 +68,7 @@ class PostgresBacktestJobRepository:
                     raise BacktestIdempotencyConflict(
                         "Idempotency-Key was reused for a different request."
                     )
-                return BacktestSubmission(str(run_id), strategy_version_id)
+                return BacktestSubmission(str(run_id), strategy_version_id, newly_created=False)
             cursor.execute(
                 """
                 SELECT COUNT(*)
@@ -121,9 +121,18 @@ class PostgresBacktestJobRepository:
             return None
         status_row = cast(
             tuple[
-                str, str | None, str | None, str, str | None, str | None,
-                object | None, object | None, str | None, dict[str, object] | None,
-            ], row
+                str,
+                str | None,
+                str | None,
+                str,
+                str | None,
+                str | None,
+                object | None,
+                object | None,
+                str | None,
+                dict[str, object] | None,
+            ],
+            row,
         )
         (
             run_id_value,
@@ -174,8 +183,12 @@ class PostgresBacktestJobRepository:
                 WHERE run_id = %s AND status = 'RUNNING' AND worker_id = %s
                 """,
                 (
-                    Jsonb(result_payload), actual_period.start, actual_period.end, engine_version,
-                    run_id, worker_id,
+                    Jsonb(result_payload),
+                    actual_period.start,
+                    actual_period.end,
+                    engine_version,
+                    run_id,
+                    worker_id,
                 ),
             )
             return cursor.rowcount == 1
@@ -192,9 +205,7 @@ class PostgresBacktestJobRepository:
             )
             return cursor.rowcount == 1
 
-    def claim_next(
-        self, worker_id: str, lease_duration: timedelta
-    ) -> ClaimedBacktestJob | None:
+    def claim_next(self, worker_id: str, lease_duration: timedelta) -> ClaimedBacktestJob | None:
         """Atomically lease one ready or stale job without allowing a status reversal."""
         with connect(self._database_url) as connection, connection.cursor() as cursor:
             cursor.execute(

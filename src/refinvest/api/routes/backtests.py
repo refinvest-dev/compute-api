@@ -4,7 +4,7 @@ from decimal import ROUND_HALF_EVEN, Context, Decimal, localcontext
 from typing import Annotated, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, status
+from fastapi import APIRouter, Depends, Header, Request, status
 from fastapi.responses import JSONResponse
 
 from refinvest.api.dependencies.backtests import get_backtest_job_repository
@@ -25,6 +25,7 @@ from refinvest.application.backtests import (
     submit_backtest,
 )
 from refinvest.engine.validation import StrategyValidationError
+from refinvest.observability.metrics import ApiMetrics, safe_record
 
 router = APIRouter(
     prefix="/backtests",
@@ -32,11 +33,25 @@ router = APIRouter(
     dependencies=[Depends(require_internal_api_key)],
 )
 
-_RESULT_NUMBER_FIELDS = frozenset({
-    "totalReturn", "cagr", "mdd", "sharpe", "winRate", "avgTradeReturn",
-    "avgHoldingPeriod", "profitFactor", "value", "entryPrice", "exitPrice", "returnPct",
-    "median", "max", "distribution",
-})
+_RESULT_NUMBER_FIELDS = frozenset(
+    {
+        "totalReturn",
+        "cagr",
+        "mdd",
+        "sharpe",
+        "winRate",
+        "avgTradeReturn",
+        "avgHoldingPeriod",
+        "profitFactor",
+        "value",
+        "entryPrice",
+        "exitPrice",
+        "returnPct",
+        "median",
+        "max",
+        "distribution",
+    }
+)
 _RESULT_NUMBER_CONTEXT = Context(prec=28, rounding=ROUND_HALF_EVEN)
 
 
@@ -51,6 +66,7 @@ _RESULT_NUMBER_CONTEXT = Context(prec=28, rounding=ROUND_HALF_EVEN)
 )
 def create_backtest(
     request: CreateBacktestRequestTransport,
+    http_request: Request,
     repository: Annotated[BacktestJobRepository, Depends(get_backtest_job_repository)],
     settings: Annotated[Settings, Depends(get_settings)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
@@ -76,6 +92,9 @@ def create_backtest(
             content={"message": "Idempotency-Key was reused for a different request."},
         )
     except BacktestCapacityExceeded:
+        metrics = _metrics(http_request)
+        if metrics is not None:
+            safe_record(metrics.rejected.inc)
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={
@@ -84,11 +103,24 @@ def create_backtest(
             },
             headers={"Retry-After": "30"},
         )
+    metrics = _metrics(http_request)
+    if metrics is not None:
+        safe_record(_record_acceptance, metrics, accepted.newly_created)
     return BacktestAcceptedTransport(
         runId=accepted.run_id,
         strategyVersionId=accepted.strategy_version_id,
         status="PENDING",
     )
+
+
+def _metrics(request: Request) -> ApiMetrics | None:
+    if not get_settings().api_metrics.enabled:
+        return None
+    return getattr(request.app.state, "metrics", None)
+
+
+def _record_acceptance(metrics: ApiMetrics, newly_created: bool) -> None:
+    (metrics.accepted if newly_created else metrics.replayed).inc()
 
 
 def _idempotency_key(value: str | None) -> str | None:
@@ -101,9 +133,7 @@ def _idempotency_key(value: str | None) -> str | None:
     return str(key) if key.version == 4 else None
 
 
-@router.get(
-    "/{run_id}", response_model=BacktestStatusTransport, response_model_exclude_none=True
-)
+@router.get("/{run_id}", response_model=BacktestStatusTransport, response_model_exclude_none=True)
 def get_backtest_status(
     run_id: str,
     repository: Annotated[BacktestJobRepository, Depends(get_backtest_job_repository)],
