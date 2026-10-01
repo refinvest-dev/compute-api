@@ -1,0 +1,15 @@
+{
+  "scenarioId": "scenario-12-invalid-trade-id",
+  "import": {
+    "accepted": false,
+    "failureCode": "FILE_FORMAT_INVALID",
+    "warnings": []
+  },
+  "instrumentTerms": [],
+  "orderedExecutionKeysByInstrument": {},
+  "episodes": [],
+  "allocations": [],
+  "summaryMatches": [],
+  "conservation": null,
+  "manifest": null
+}

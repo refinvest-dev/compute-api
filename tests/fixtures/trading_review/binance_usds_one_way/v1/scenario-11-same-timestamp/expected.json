@@ -1,0 +1,195 @@
+{
+  "scenarioId": "scenario-11-same-timestamp",
+  "import": {
+    "accepted": true,
+    "failureCode": null,
+    "warnings": []
+  },
+  "instrumentTerms": [
+    {
+      "symbol": "SYNTHUSDT",
+      "stepSize": {
+        "unscaled": "1",
+        "scale": 0
+      },
+      "tickSize": {
+        "unscaled": "1",
+        "scale": 2
+      },
+      "contractMultiplier": {
+        "unscaled": "1",
+        "scale": 0
+      },
+      "settlementAsset": "USDT",
+      "settlementPrecision": 2
+    }
+  ],
+  "orderedExecutionKeysByInstrument": {
+    "SYNTHUSDT": [
+      "2026-01-01T10:00:01.000000Z|301",
+      "2026-01-01T10:00:01.000000Z|302"
+    ]
+  },
+  "episodes": [
+    {
+      "deterministicKey": "ep-f19c1485ac8dac095f48",
+      "symbol": "SYNTHUSDT",
+      "direction": "LONG",
+      "openedAt": "2026-01-01T10:00:01.000000Z",
+      "closedAt": null,
+      "initialQuantity": {
+        "unscaled": "2",
+        "scale": 0
+      },
+      "maxQuantity": {
+        "unscaled": "2",
+        "scale": 0
+      },
+      "openingVolume": {
+        "unscaled": "2",
+        "scale": 0
+      },
+      "closingVolume": {
+        "unscaled": "1",
+        "scale": 0
+      },
+      "averageEntry": {
+        "numerator": {
+          "unscaled": "20",
+          "scale": 0
+        },
+        "denominator": {
+          "unscaled": "2",
+          "scale": 0
+        }
+      },
+      "averageExit": {
+        "numerator": {
+          "unscaled": "11",
+          "scale": 0
+        },
+        "denominator": {
+          "unscaled": "1",
+          "scale": 0
+        }
+      },
+      "grossTradingPnl": {
+        "unscaled": "0",
+        "scale": 0
+      },
+      "tradingFeesByAsset": {
+        "USDT": {
+          "unscaled": "0",
+          "scale": 2
+        }
+      },
+      "netTradingPnl": {
+        "unscaled": "0",
+        "scale": 2
+      },
+      "reconstructionStatus": "RIGHT_CENSORED",
+      "reconciliationStatus": "INCOMPLETE_TRADES",
+      "capabilities": [
+        "FEES",
+        "INITIAL_EXPOSURE",
+        "MAX_EXPOSURE",
+        "POSITION_INCREASES",
+        "POSITION_MODE_USER_DECLARED",
+        "VENUE_REPORTED_PNL"
+      ],
+      "eligible": false,
+      "exclusionReasons": [
+        "EPISODE_RIGHT_CENSORED"
+      ],
+      "provenance": [
+        "BINANCE_USDS_TRADE_HISTORY_V1:r1:38f6d5cf1ab8",
+        "BINANCE_USDS_TRADE_HISTORY_V1:r2:3f680e0f4ddf"
+      ]
+    }
+  ],
+  "allocations": [
+    {
+      "executionKey": "SYNTHUSDT:301",
+      "episodeKey": "ep-f19c1485ac8dac095f48",
+      "action": "OPEN",
+      "allocatedQuantity": {
+        "unscaled": "2",
+        "scale": 0
+      },
+      "feeByAsset": {
+        "USDT": {
+          "unscaled": "0",
+          "scale": 2
+        }
+      },
+      "allocatedReportedPnl": {
+        "unscaled": "0",
+        "scale": 0
+      },
+      "reversalGroupId": null,
+      "provenance": [
+        "BINANCE_USDS_TRADE_HISTORY_V1:r2:3f680e0f4ddf"
+      ]
+    },
+    {
+      "executionKey": "SYNTHUSDT:302",
+      "episodeKey": "ep-f19c1485ac8dac095f48",
+      "action": "REDUCE",
+      "allocatedQuantity": {
+        "unscaled": "1",
+        "scale": 0
+      },
+      "feeByAsset": {
+        "USDT": {
+          "unscaled": "0",
+          "scale": 2
+        }
+      },
+      "allocatedReportedPnl": {
+        "unscaled": "0",
+        "scale": 0
+      },
+      "reversalGroupId": null,
+      "provenance": [
+        "BINANCE_USDS_TRADE_HISTORY_V1:r1:38f6d5cf1ab8"
+      ]
+    }
+  ],
+  "summaryMatches": [],
+  "conservation": {
+    "quantity": true,
+    "completeEpisodeVolumes": true,
+    "feesByAsset": {
+      "USDT": {
+        "source": {
+          "unscaled": "0",
+          "scale": 2
+        },
+        "allocated": {
+          "unscaled": "0",
+          "scale": 2
+        },
+        "equal": true
+      }
+    },
+    "reportedPnl": {
+      "source": {
+        "unscaled": "0",
+        "scale": 0
+      },
+      "allocated": {
+        "unscaled": "0",
+        "scale": 0
+      },
+      "equal": true
+    },
+    "errors": [],
+    "passed": true
+  },
+  "manifest": {
+    "schemaVersion": "1",
+    "normalizerVersion": "binance-usds-csv-v1",
+    "reconstructionPolicyVersion": "binance-usds-one-way-reconstruction-v1",
+    "canonicalHash": "ad2abcab9d947540ba9aa790aa63f09f9284f2c82ac3b3bc9f0bec38563c5cfb"
+  }
+}

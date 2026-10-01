@@ -1,0 +1,29 @@
+{
+  "scenarioId": "scenario-16-same-minute-multiple-episodes",
+  "knownSpecificationConflict": {
+    "code": "TR0A_SCENARIO_16_ONE_WAY_OVERLAP",
+    "actualOrderedExecutions": [
+      "1601",
+      "1603",
+      "1602",
+      "1604"
+    ],
+    "reason": "The normative rows overlap A and B for one symbol. The signed One-way state machine therefore creates one episode, not two flat-to-flat episodes.",
+    "documentedExpected": {
+      "episodeCount": 2,
+      "reconstructionStatus": [
+        "COMPLETE",
+        "COMPLETE"
+      ],
+      "reconciliationStatus": [
+        "EXACT",
+        "EXACT"
+      ],
+      "eligible": [
+        true,
+        true
+      ]
+    },
+    "resolutionRequiredIn": "context/docs/TRADING_RECONSTRUCTION.md#o2-normal-boundary-scenarios"
+  }
+}

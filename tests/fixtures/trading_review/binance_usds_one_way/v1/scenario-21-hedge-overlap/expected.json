@@ -1,0 +1,15 @@
+{
+  "scenarioId": "scenario-21-hedge-overlap",
+  "import": {
+    "accepted": false,
+    "failureCode": "UNSUPPORTED_POSITION_MODE",
+    "warnings": []
+  },
+  "instrumentTerms": [],
+  "orderedExecutionKeysByInstrument": {},
+  "episodes": [],
+  "allocations": [],
+  "summaryMatches": [],
+  "conservation": null,
+  "manifest": null
+}
