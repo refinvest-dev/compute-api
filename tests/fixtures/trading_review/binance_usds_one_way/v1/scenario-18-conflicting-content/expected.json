@@ -1,0 +1,15 @@
+{
+  "scenarioId": "scenario-18-conflicting-content",
+  "import": {
+    "accepted": false,
+    "failureCode": "RECORD_CONFLICT",
+    "warnings": []
+  },
+  "instrumentTerms": [],
+  "orderedExecutionKeysByInstrument": {},
+  "episodes": [],
+  "allocations": [],
+  "summaryMatches": [],
+  "conservation": null,
+  "manifest": null
+}

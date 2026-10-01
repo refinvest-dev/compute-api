@@ -1,0 +1,34 @@
+{
+  "scenarioId": "scenario-17-duplicate-row",
+  "sourceTimezone": "UTC",
+  "declaredPositionMode": "ONE_WAY",
+  "product": "BINANCE_USDS_LINEAR_PERPETUAL",
+  "manifestSchemaVersion": "1",
+  "normalizerVersion": "binance-usds-csv-v1",
+  "reconstructionPolicyVersion": "binance-usds-one-way-reconstruction-v1",
+  "instrumentTerms": [
+    {
+      "symbol": "SYNTHUSDT",
+      "stepSize": "1",
+      "tickSize": "0.01",
+      "contractMultiplier": "1",
+      "settlementAsset": "USDT",
+      "settlementPrecision": 2
+    }
+  ],
+  "trInvariants": [
+    "TR-I01",
+    "TR-I02",
+    "TR-I03",
+    "TR-I04",
+    "TR-I05",
+    "TR-I06",
+    "TR-I07",
+    "TR-I08",
+    "TR-I09",
+    "TR-I10",
+    "TR-I11",
+    "TR-I12",
+    "TR-I13"
+  ]
+}

@@ -1,0 +1,4 @@
+Uid,Time,Symbol,Side,Price,Quantity,Amount,Fee,Realized Profit,Buyer,Maker,Trade ID,Order ID
+synthetic-account,2026-01-01 10:00:01,SYNTHUSDT,BUY,10,3,30,0.00USDT,0,true,false,701,O-701
+synthetic-account,2026-01-01 10:05:01,SYNTHUSDT,SELL,9,5,45,0.05USDT,-3,false,false,702,O-702
+synthetic-account,2026-01-01 10:06:01,SYNTHUSDT,BUY,8,2,16,0.00USDT,2,true,false,703,O-703

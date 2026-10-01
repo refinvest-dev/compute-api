@@ -1,0 +1,103 @@
+{
+  "scenarioId": "scenario-15-summary-only",
+  "import": {
+    "accepted": true,
+    "failureCode": null,
+    "warnings": []
+  },
+  "instrumentTerms": [
+    {
+      "symbol": "SYNTHUSDT",
+      "stepSize": {
+        "unscaled": "1",
+        "scale": 0
+      },
+      "tickSize": {
+        "unscaled": "1",
+        "scale": 2
+      },
+      "contractMultiplier": {
+        "unscaled": "1",
+        "scale": 0
+      },
+      "settlementAsset": "USDT",
+      "settlementPrecision": 2
+    }
+  ],
+  "orderedExecutionKeysByInstrument": {},
+  "episodes": [
+    {
+      "deterministicKey": "shell-4422e9a087045aa32757",
+      "symbol": "SYNTHUSDT",
+      "direction": "LONG",
+      "openedAt": null,
+      "closedAt": null,
+      "initialQuantity": null,
+      "maxQuantity": null,
+      "openingVolume": {
+        "unscaled": "0",
+        "scale": 0
+      },
+      "closingVolume": {
+        "unscaled": "0",
+        "scale": 0
+      },
+      "averageEntry": null,
+      "averageExit": null,
+      "grossTradingPnl": null,
+      "tradingFeesByAsset": {},
+      "netTradingPnl": null,
+      "reconstructionStatus": "INCONSISTENT",
+      "reconciliationStatus": "INCOMPLETE_TRADES",
+      "capabilities": [
+        "POSITION_MODE_USER_DECLARED",
+        "VENUE_POSITION_SUMMARY"
+      ],
+      "eligible": false,
+      "exclusionReasons": [
+        "POSITION_SUMMARY_WITHOUT_TRADES"
+      ],
+      "provenance": [
+        "BINANCE_USDS_POSITION_HISTORY_V1:r1:e625a8462a44"
+      ]
+    }
+  ],
+  "allocations": [],
+  "summaryMatches": [
+    {
+      "summaryKey": "BINANCE_USDS_POSITION_HISTORY_V1:r1:e625a8462a44",
+      "summarySourceRow": 1,
+      "episodeKey": null,
+      "status": "INCOMPLETE_TRADES",
+      "candidateEpisodeKeys": [],
+      "evaluatedPairs": [],
+      "provenance": [
+        "BINANCE_USDS_POSITION_HISTORY_V1:r1:e625a8462a44"
+      ]
+    }
+  ],
+  "conservation": {
+    "quantity": true,
+    "completeEpisodeVolumes": true,
+    "feesByAsset": {},
+    "reportedPnl": {
+      "source": {
+        "unscaled": "0",
+        "scale": 0
+      },
+      "allocated": {
+        "unscaled": "0",
+        "scale": 0
+      },
+      "equal": true
+    },
+    "errors": [],
+    "passed": true
+  },
+  "manifest": {
+    "schemaVersion": "1",
+    "normalizerVersion": "binance-usds-csv-v1",
+    "reconstructionPolicyVersion": "binance-usds-one-way-reconstruction-v1",
+    "canonicalHash": "8676898182ed3f1b782cb5c3df408fe53f8de2bc49d1e5a772f73cb9c785bead"
+  }
+}
