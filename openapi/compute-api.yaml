@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: compute API
-  version: "0.1.0"
+  version: "0.2.0"
   description: |
     Core(`core-api`) → Compute(`compute-api`) 내부 계약.
 
@@ -9,9 +9,8 @@ info:
       한쪽 레포만 보고 응답 필드를 추측해 구현하지 않는다(`AI_AGENT.md` §1).
     - Compute는 인터넷에 직접 노출하지 않는다. Core만 호출 가능한 내부망 서비스로 배포한다
       (`docs/ARCHITECTURE.md` §6, `AI_AGENT.md` §3).
-    - Compute는 `Strategy`/`User`/`Subscription`을 모른다 — 상태 없는(stateless) 계산 서비스이며,
-      요청마다 필요한 값(StrategyVersion 전체, Fee/Slippage, 기간 등)을 전부 payload로 받는다
-      (`docs/DOMAIN.md` §3).
+    - Compute는 `Strategy`/`User`/`Subscription`을 모른다. 계산 입력을 request에 고정하고 durable runtime
+      job/terminal payload만 제한 기간 소유하며 장기 제품 Aggregate/result는 Core가 소유한다.
     - 필드명은 `docs/GLOSSARY.md`의 코드 네이밍을 그대로 따른다. 임의로 축약하거나 동의어로 바꾸지 않는다.
 
     - Core는 사용자별 quota/rate limit을 소유한다. Compute는 ADR-044의 전역 active-job
@@ -29,6 +28,10 @@ tags:
     description: 비동기 백테스트 실행 (`docs/USECASES.md`의 `ExecuteBacktest`)
   - name: assets
     description: Asset/Calendar 참조 데이터 및 보류된 시계열 capability (`docs/USECASES.md`, ADR-049)
+  - name: trading-review-jobs
+    description: Core 전용 normalization/reconciliation/analytics 비동기 runtime (`docs/TRADING_REVIEW_API.md`)
+  - name: trading-review-payloads
+    description: opaque terminal payload download와 Core persistence acknowledgement
 
 paths:
   /backtests:
@@ -121,6 +124,177 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  # ============ Trading Review normalization / reconciliation ============
+  /trading-review/normalization-jobs:
+    post:
+      operationId: createTradingNormalizationJob
+      tags: [trading-review-jobs]
+      summary: normalization/reconciliation job 생성
+      description: same Idempotency-Key/request fingerprint는 같은 Compute job을 반환한다.
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CreateTradingNormalizationJobRequest' } } }
+      responses:
+        '202':
+          description: accepted.
+          content: { application/json: { schema: { $ref: '#/components/schemas/TradingComputeJobAccepted' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /trading-review/normalization-jobs/{jobId}:
+    get:
+      operationId: getTradingNormalizationJobStatus
+      tags: [trading-review-jobs]
+      summary: normalization job polling
+      parameters: [ { $ref: '#/components/parameters/TradingComputeJobId' } ]
+      responses:
+        '200':
+          description: terminal failure는 structured failure를 포함한다.
+          content: { application/json: { schema: { $ref: '#/components/schemas/TradingComputeJobStatusResponse' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /trading-review/normalization-jobs/{jobId}/result:
+    get:
+      operationId: getTradingNormalizationJobResult
+      tags: [trading-review-jobs]
+      summary: completed normalization terminal payload descriptor
+      parameters: [ { $ref: '#/components/parameters/TradingComputeJobId' } ]
+      responses:
+        '200':
+          description: opaque payload descriptor; records를 inline하지 않는다.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ComputeTerminalResultDescriptor' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ResultUnavailable' }
+
+  /trading-review/normalization-jobs/{jobId}/cancellation:
+    post:
+      operationId: cancelTradingNormalizationJob
+      tags: [trading-review-jobs]
+      summary: normalization job best-effort cancellation
+      parameters:
+        - $ref: '#/components/parameters/TradingComputeJobId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: cancellation accepted 또는 existing terminal job.
+          content: { application/json: { schema: { $ref: '#/components/schemas/TradingComputeJobStatusResponse' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ============ Trading Review analytics ============
+  /trading-review/analytics-jobs:
+    post:
+      operationId: createTradingAnalyticsJob
+      tags: [trading-review-jobs]
+      summary: Behavior Analytics job 생성
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CreateTradingAnalyticsJobRequest' } } }
+      responses:
+        '202':
+          description: accepted.
+          content: { application/json: { schema: { $ref: '#/components/schemas/TradingComputeJobAccepted' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /trading-review/analytics-jobs/{jobId}:
+    get:
+      operationId: getTradingAnalyticsJobStatus
+      tags: [trading-review-jobs]
+      summary: analytics job polling
+      parameters: [ { $ref: '#/components/parameters/TradingComputeJobId' } ]
+      responses:
+        '200':
+          description: status.
+          content: { application/json: { schema: { $ref: '#/components/schemas/TradingComputeJobStatusResponse' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /trading-review/analytics-jobs/{jobId}/result:
+    get:
+      operationId: getTradingAnalyticsJobResult
+      tags: [trading-review-jobs]
+      summary: completed analytics terminal payload descriptor
+      parameters: [ { $ref: '#/components/parameters/TradingComputeJobId' } ]
+      responses:
+        '200':
+          description: opaque payload descriptor.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ComputeTerminalResultDescriptor' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ResultUnavailable' }
+
+  /trading-review/analytics-jobs/{jobId}/cancellation:
+    post:
+      operationId: cancelTradingAnalyticsJob
+      tags: [trading-review-jobs]
+      summary: analytics job best-effort cancellation
+      parameters:
+        - $ref: '#/components/parameters/TradingComputeJobId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: cancellation accepted 또는 existing terminal job.
+          content: { application/json: { schema: { $ref: '#/components/schemas/TradingComputeJobStatusResponse' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ============ Trading Review terminal payload ============
+  /trading-review/terminal-payloads/{payloadId}:
+    get:
+      operationId: downloadTradingReviewTerminalPayload
+      tags: [trading-review-payloads]
+      summary: Core가 opaque terminal payload를 stream-download
+      parameters:
+        - name: payloadId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: descriptor의 mediaType/byteSize/SHA-256를 검증해야 한다.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/NormalizationTerminalPayload'
+                  - $ref: '#/components/schemas/AnalyticsTerminalPayload'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /trading-review/jobs/{jobId}/acknowledgement:
+    post:
+      operationId: acknowledgeTradingReviewJobResult
+      tags: [trading-review-payloads]
+      summary: Core 장기 저장 완료 acknowledgement
+      description: same acknowledgement는 idempotent no-op이며 ack 뒤 payload는 cleanup 가능하다.
+      parameters:
+        - $ref: '#/components/parameters/TradingComputeJobId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/AcknowledgeTradingReviewJobResultRequest' } } }
+      responses:
+        '204': { description: acknowledged. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /assets:
     get:
       operationId: listAssets
@@ -133,6 +307,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AssetListResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /assets/{symbol}/availability:
     get:
@@ -243,11 +418,40 @@ components:
       in: header
       required: true
       description: |
-        Core가 논리적 백테스트 요청마다 생성하는 UUID v4. 네트워크 재시도에는 동일 값을 사용한다.
-        동일 key와 동일 request는 최초 202 acceptance를 재반환하고, payload가 다르면 409이다.
+        Core가 logical request/dispatch마다 생성하는 1~128자 opaque key. 네트워크 재시도에는 동일 값을
+        사용한다. 동일 key와 canonical request는 최초 202 acceptance를 재반환하고, payload가 다르면 409다.
       schema:
         type: string
-        format: uuid
+        minLength: 1
+        maxLength: 128
+        pattern: '^[A-Za-z0-9._~-]+$'
+    TradingComputeJobId:
+      name: jobId
+      in: path
+      required: true
+      schema: { type: string }
+  responses:
+    BadRequest:
+      description: malformed request 또는 invalid idempotency key.
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+    Unauthorized:
+      description: internal API key 인증 실패.
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+    NotFound:
+      description: unknown 또는 terminal retention이 만료된 job/payload.
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+    Conflict:
+      description: idempotency payload, attempt, hash 또는 state conflict.
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+    UnprocessableEntity:
+      description: exact version/input schema가 지원되지 않거나 semantic precondition 불충족.
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+    ResultUnavailable:
+      description: job이 terminal completed가 아니거나 descriptor가 아직 없음.
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+    ServiceUnavailable:
+      description: temporary dependency 또는 global capacity failure; job은 생성되지 않을 수 있음.
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
   securitySchemes:
     InternalApiKey:
       type: apiKey
@@ -276,6 +480,653 @@ components:
       format: double
       description: 0.001 = 0.1% 형태의 소수 비율.
       example: 0.001
+
+    # ---- Trading Review common/runtime ----
+    TradingDecimalString:
+      type: string
+      pattern: '^-?(0|[1-9][0-9]*)(\.[0-9]+)?$'
+      description: Arbitrary-precision plain decimal; exponent/leading plus 금지.
+    TradingSha256:
+      type: string
+      pattern: '^[a-f0-9]{64}$'
+    TradingMoney:
+      type: object
+      required: [amount, currency, sourceScale]
+      properties:
+        amount: { $ref: '#/components/schemas/TradingDecimalString' }
+        currency: { type: string }
+        sourceScale: { type: integer, minimum: 0 }
+    TradingQuantity:
+      type: object
+      required: [value, sourceScale]
+      properties:
+        value: { $ref: '#/components/schemas/TradingDecimalString' }
+        sourceScale: { type: integer, minimum: 0 }
+    TradingPrice:
+      type: object
+      required: [value, sourceScale]
+      properties:
+        value: { $ref: '#/components/schemas/TradingDecimalString' }
+        sourceScale: { type: integer, minimum: 0 }
+    TradingRational:
+      type: object
+      required: [numerator, denominator]
+      properties:
+        numerator: { type: string, pattern: '^-?(0|[1-9][0-9]*)$' }
+        denominator: { type: string, pattern: '^[1-9][0-9]*$' }
+    TradingInstantInterval:
+      type: object
+      required: [startInclusive, endExclusive, precision]
+      properties:
+        startInclusive: { type: string, format: date-time }
+        endExclusive: { type: string, format: date-time }
+        precision: { type: string, enum: [MINUTE, EXACT_INSTANT] }
+    TradingStructuredFailure:
+      type: object
+      required: [code, message, retryable]
+      properties:
+        code: { $ref: '#/components/schemas/TradingReviewComputeFailureCode' }
+        message: { type: string }
+        retryable: { type: boolean }
+        details:
+          type: array
+          items:
+            type: object
+            required: [field, reason]
+            additionalProperties: false
+            properties:
+              field: { type: string }
+              reason: { type: string }
+              rowNumber: { type: integer, minimum: 1 }
+              artifactRole: { type: string, enum: [TRADE_HISTORY, POSITION_HISTORY] }
+      description: raw value/identifier/filename/path/URL 없는 safe failure.
+    TradingReviewComputeFailureCode:
+      type: string
+      enum:
+        - FILE_FORMAT_INVALID
+        - REQUIRED_COLUMN_MISSING
+        - UNSUPPORTED_SOURCE_SCHEMA
+        - UNSUPPORTED_PRODUCT
+        - UNSUPPORTED_POSITION_MODE
+        - RECORD_CONFLICT
+        - ARTIFACT_REFERENCE_EXPIRED
+        - ARTIFACT_ACCESS_DENIED
+        - VERSION_UNAVAILABLE
+        - VERSION_INCOMPATIBLE
+        - CANONICAL_SCHEMA_INCOMPATIBLE
+        - INSTRUMENT_TERMS_UNAVAILABLE
+        - INVALID_ANALYSIS_CONFIG
+        - MISSING_CAPABILITY
+        - INCOMPLETE_ANALYSIS_RESULT
+        - RESULT_HASH_MISMATCH
+        - STALE_RESULT_AFTER_DELETION
+        - JOB_CANCELLED
+        - TEMPORARY_DEPENDENCY_FAILURE
+        - INTERNAL_ERROR
+    TradingComputeJobKind:
+      type: string
+      enum: [NORMALIZATION_RECONCILIATION, ANALYTICS]
+    TradingComputeJobAccepted:
+      type: object
+      required: [jobId, coreLogicalJobId, kind, status, createdAt]
+      properties:
+        jobId: { type: string }
+        coreLogicalJobId: { type: string }
+        kind: { $ref: '#/components/schemas/TradingComputeJobKind' }
+        status: { type: string, enum: [PENDING] }
+        createdAt: { type: string, format: date-time }
+    TradingComputeJobStatusBase:
+      type: object
+      required: [jobId, coreLogicalJobId, kind, progressStage, attempt, createdAt, updatedAt]
+      properties:
+        jobId: { type: string }
+        coreLogicalJobId: { type: string }
+        kind: { $ref: '#/components/schemas/TradingComputeJobKind' }
+        progressStage: { type: string }
+        attempt: { type: integer, minimum: 1 }
+        createdAt: { type: string, format: date-time }
+        startedAt: { type: string, format: date-time, nullable: true }
+        updatedAt: { type: string, format: date-time }
+    TradingComputeJobNonTerminal:
+      allOf:
+        - $ref: '#/components/schemas/TradingComputeJobStatusBase'
+        - type: object
+          required: [status]
+          properties:
+            status: { type: string, enum: [PENDING, RUNNING] }
+    TradingComputeJobCompleted:
+      allOf:
+        - $ref: '#/components/schemas/TradingComputeJobStatusBase'
+        - type: object
+          required: [status, terminalPayloadId, resultHash, terminalAt]
+          properties:
+            status: { type: string, enum: [COMPLETED] }
+            terminalPayloadId: { type: string }
+            resultHash: { $ref: '#/components/schemas/TradingSha256' }
+            terminalAt: { type: string, format: date-time }
+    TradingComputeJobFailed:
+      allOf:
+        - $ref: '#/components/schemas/TradingComputeJobStatusBase'
+        - type: object
+          required: [status, failure, terminalAt]
+          properties:
+            status: { type: string, enum: [FAILED] }
+            failure: { $ref: '#/components/schemas/TradingStructuredFailure' }
+            terminalAt: { type: string, format: date-time }
+    TradingComputeJobCancelled:
+      allOf:
+        - $ref: '#/components/schemas/TradingComputeJobStatusBase'
+        - type: object
+          required: [status, terminalAt]
+          properties:
+            status: { type: string, enum: [CANCELLED] }
+            terminalAt: { type: string, format: date-time }
+    TradingComputeJobStatusResponse:
+      oneOf:
+        - $ref: '#/components/schemas/TradingComputeJobNonTerminal'
+        - $ref: '#/components/schemas/TradingComputeJobCompleted'
+        - $ref: '#/components/schemas/TradingComputeJobFailed'
+        - $ref: '#/components/schemas/TradingComputeJobCancelled'
+      discriminator:
+        propertyName: status
+        mapping:
+          PENDING: '#/components/schemas/TradingComputeJobNonTerminal'
+          RUNNING: '#/components/schemas/TradingComputeJobNonTerminal'
+          COMPLETED: '#/components/schemas/TradingComputeJobCompleted'
+          FAILED: '#/components/schemas/TradingComputeJobFailed'
+          CANCELLED: '#/components/schemas/TradingComputeJobCancelled'
+    ComputeTerminalResultDescriptor:
+      type: object
+      required: [jobId, coreLogicalJobId, payloadId, mediaType, byteSize, payloadSha256, inputHash, versionSetHash, resultHash, createdAt, expiresAt]
+      properties:
+        jobId: { type: string }
+        coreLogicalJobId: { type: string }
+        payloadId: { type: string }
+        mediaType:
+          type: string
+          enum: [application/vnd.refinvest.trading-normalization+json, application/vnd.refinvest.trading-analytics+json]
+        byteSize: { type: integer, format: int64, minimum: 1 }
+        payloadSha256: { $ref: '#/components/schemas/TradingSha256' }
+        inputHash: { $ref: '#/components/schemas/TradingSha256' }
+        versionSetHash: { $ref: '#/components/schemas/TradingSha256' }
+        resultHash: { $ref: '#/components/schemas/TradingSha256' }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time, description: terminalAt + 최대 PT24H 이내. }
+    AcknowledgeTradingReviewJobResultRequest:
+      type: object
+      required: [coreAggregateId, payloadId, payloadSha256, terminalResultHash, persistedAt]
+      additionalProperties: false
+      properties:
+        coreAggregateId: { type: string }
+        payloadId: { type: string }
+        payloadSha256: { $ref: '#/components/schemas/TradingSha256' }
+        terminalResultHash: { $ref: '#/components/schemas/TradingSha256' }
+        persistedAt: { type: string, format: date-time }
+
+    ArtifactRole:
+      type: string
+      enum: [TRADE_HISTORY, POSITION_HISTORY]
+    ArtifactReadGrant:
+      type: object
+      required: [coreArtifactId, role, rawSha256, byteSize, contentType, accessUri, expiresAt]
+      properties:
+        coreArtifactId: { type: string }
+        role: { $ref: '#/components/schemas/ArtifactRole' }
+        rawSha256: { $ref: '#/components/schemas/TradingSha256' }
+        byteSize: { type: integer, format: int64, minimum: 1, maximum: 52428800 }
+        contentType: { type: string, enum: [text/csv, application/vnd.ms-excel] }
+        accessUri: { type: string, format: uri, description: 최대 5분 single-read job-bound signed internal URI; log 금지. }
+        expiresAt: { type: string, format: date-time }
+    TradingBookProduct:
+      type: object
+      required: [venue, productFamily, positionMode, settlementAsset]
+      properties:
+        venue: { type: string, enum: [BINANCE] }
+        productFamily: { type: string, enum: [LINEAR_PERPETUAL] }
+        positionMode: { type: string, enum: [ONE_WAY] }
+        settlementAsset: { type: string, enum: [USDT] }
+    PinnedInstrumentTerms:
+      type: object
+      required: [instrumentId, venueSymbol, settlementAsset, quantityStep, priceTick, contractMultiplier, settlementPrecision, instrumentTermsVersion]
+      properties:
+        instrumentId: { type: string }
+        venueSymbol: { type: string }
+        settlementAsset: { type: string }
+        quantityStep: { $ref: '#/components/schemas/TradingDecimalString' }
+        priceTick: { $ref: '#/components/schemas/TradingDecimalString' }
+        contractMultiplier: { $ref: '#/components/schemas/TradingDecimalString' }
+        settlementPrecision: { type: integer, minimum: 0 }
+        instrumentTermsVersion: { type: string }
+    InternalNormalizerVersionSet:
+      type: object
+      required: [sourceDialectVersionsByArtifactRole, adapterVersion, normalizerVersion, canonicalSchemaVersion, reconstructionPolicyVersion, reconciliationVersion, reviewUnitSchemaVersion, evidenceSchemaVersion, implementationDigest, versionSetHash]
+      properties:
+        sourceDialectVersionsByArtifactRole:
+          type: object
+          required: [TRADE_HISTORY, POSITION_HISTORY]
+          properties:
+            TRADE_HISTORY: { type: string }
+            POSITION_HISTORY: { type: string }
+        adapterVersion: { type: string }
+        normalizerVersion: { type: string }
+        canonicalSchemaVersion: { type: string }
+        reconstructionPolicyVersion: { type: string }
+        reconciliationVersion: { type: string }
+        reviewUnitSchemaVersion: { type: string }
+        evidenceSchemaVersion: { type: string }
+        implementationDigest: { type: string }
+        versionSetHash: { $ref: '#/components/schemas/TradingSha256' }
+    CreateTradingNormalizationJobRequest:
+      type: object
+      required: [coreLogicalJobId, coreImportSessionId, bookProduct, artifacts, sourceTimezone, reviewTimezone, targetVersionSet, pinnedInstrumentTerms, expectedInputHash, deletionGeneration, attemptToken]
+      additionalProperties: false
+      properties:
+        coreLogicalJobId: { type: string }
+        coreImportSessionId: { type: string }
+        bookProduct: { $ref: '#/components/schemas/TradingBookProduct' }
+        artifacts:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: { $ref: '#/components/schemas/ArtifactReadGrant' }
+          description: role별 정확히 하나.
+        sourceTimezone: { type: string }
+        reviewTimezone: { type: string }
+        targetVersionSet: { $ref: '#/components/schemas/InternalNormalizerVersionSet' }
+        pinnedInstrumentTerms: { type: array, items: { $ref: '#/components/schemas/PinnedInstrumentTerms' } }
+        expectedInputHash: { $ref: '#/components/schemas/TradingSha256' }
+        deletionGeneration: { type: integer, format: int64, minimum: 0 }
+        attemptToken: { type: string }
+    CorePayloadReference:
+      type: object
+      required: [coreReferenceId, mediaType, byteSize, sha256, accessUri, expiresAt]
+      properties:
+        coreReferenceId: { type: string }
+        mediaType: { type: string }
+        byteSize: { type: integer, format: int64, minimum: 1 }
+        sha256: { $ref: '#/components/schemas/TradingSha256' }
+        accessUri: { type: string, format: uri, description: job-bound internal read; public 노출/log 금지. }
+        expiresAt: { type: string, format: date-time }
+    InternalAnalysisConfig:
+      type: object
+      required: [schemaVersion, analysisPeriod, reviewTimezone, timezoneDatabaseVersion, outcomeBasis, fundingTreatment, eligibleReviewUnitPolicy, reversalTreatment, reentryWindow, baselinePolicy, metricMinimums, findingMinimums]
+      additionalProperties: false
+      properties:
+        schemaVersion: { type: integer, enum: [1] }
+        analysisPeriod:
+          type: object
+          required: [startInclusive, endExclusive]
+          properties:
+            startInclusive: { type: string, format: date-time }
+            endExclusive: { type: string, format: date-time }
+        reviewTimezone: { type: string }
+        timezoneDatabaseVersion: { type: string }
+        outcomeBasis: { type: string, enum: [NET_TRADING_PNL] }
+        fundingTreatment: { type: string, enum: [EXCLUDED] }
+        eligibleReviewUnitPolicy: { type: string, enum: [COMPLETE_AND_RECONCILED_ONLY] }
+        reversalTreatment: { type: string, enum: [SEPARATE] }
+        reentryWindow: { type: string, enum: [PT30M] }
+        baselinePolicy: { type: string, enum: [PRIOR_PERIOD_SAME_INSTRUMENT_DIRECTION] }
+        metricMinimums:
+          type: object
+          required: [reentryEligibleLosses, exposurePairs, priorBaselineEpisodes, holdingWins, holdingLosses]
+          additionalProperties: false
+          properties:
+            reentryEligibleLosses: { type: integer, minimum: 1 }
+            exposurePairs: { type: integer, minimum: 1 }
+            priorBaselineEpisodes: { type: integer, minimum: 1 }
+            holdingWins: { type: integer, minimum: 1 }
+            holdingLosses: { type: integer, minimum: 1 }
+        findingMinimums:
+          type: object
+          required: [reentryEligibleLosses, exposurePairs, holdingWins, holdingLosses]
+          additionalProperties: false
+          properties:
+            reentryEligibleLosses: { type: integer, minimum: 1 }
+            exposurePairs: { type: integer, minimum: 1 }
+            holdingWins: { type: integer, minimum: 1 }
+            holdingLosses: { type: integer, minimum: 1 }
+    InternalAnalyticsVersionSet:
+      type: object
+      required: [metricDefinitionVersionsByMetricId, findingRuleSetVersion, analysisConfigVersion, evidenceSchemaVersion, implementationDigest, versionSetHash]
+      properties:
+        metricDefinitionVersionsByMetricId:
+          type: object
+          required: [ENTRY_WITHIN_WINDOW_AFTER_LOSS, INITIAL_EXPOSURE_CHANGE_AFTER_LOSS, WIN_LOSS_HOLDING_DURATION_DIFFERENCE]
+          properties:
+            ENTRY_WITHIN_WINDOW_AFTER_LOSS: { type: string }
+            INITIAL_EXPOSURE_CHANGE_AFTER_LOSS: { type: string }
+            WIN_LOSS_HOLDING_DURATION_DIFFERENCE: { type: string }
+        findingRuleSetVersion: { type: string }
+        analysisConfigVersion: { type: string }
+        evidenceSchemaVersion: { type: string }
+        implementationDigest: { type: string }
+        versionSetHash: { $ref: '#/components/schemas/TradingSha256' }
+    InternalAnalysisCapability:
+      type: string
+      enum: [CLOSED_OUTCOME, INITIAL_EXPOSURE, MAX_EXPOSURE, POSITION_INCREASES, FEES, FUNDING_PAYMENTS, MARKET_PRICE_PATH, VENUE_REPORTED_PNL, POSITION_MODE_USER_DECLARED, POSITION_MODE_OBSERVED_COMPATIBLE, VENUE_POSITION_SUMMARY, EXECUTION_ORIGIN_KNOWN, STABLE_EPISODE_TIME]
+    CreateTradingAnalyticsJobRequest:
+      type: object
+      required: [coreLogicalJobId, coreAnalysisRunId, ledgerRevisionId, ledgerRevisionContent, reconciliationManifest, targetVersionSet, analysisConfig, analysisConfigHash, capabilitySnapshot, expectedInputHash, deletionGeneration, attemptToken]
+      additionalProperties: false
+      properties:
+        coreLogicalJobId: { type: string }
+        coreAnalysisRunId: { type: string }
+        ledgerRevisionId: { type: string }
+        ledgerRevisionContent: { $ref: '#/components/schemas/CorePayloadReference' }
+        reconciliationManifest: { $ref: '#/components/schemas/CorePayloadReference' }
+        targetVersionSet: { $ref: '#/components/schemas/InternalAnalyticsVersionSet' }
+        analysisConfig: { $ref: '#/components/schemas/InternalAnalysisConfig' }
+        analysisConfigHash: { $ref: '#/components/schemas/TradingSha256' }
+        capabilitySnapshot: { type: array, items: { $ref: '#/components/schemas/InternalAnalysisCapability' } }
+        expectedInputHash: { $ref: '#/components/schemas/TradingSha256' }
+        deletionGeneration: { type: integer, format: int64, minimum: 0 }
+        attemptToken: { type: string }
+
+    # ---- Normalization terminal payload ----
+    InternalSourceEvidenceSnapshot:
+      type: object
+      required: [snapshotId, coreArtifactId, artifactRole, sourceRowNumber, sourceRowHash, dialect, maskingPolicyVersion, allowlistedFields, capturedAt]
+      properties:
+        snapshotId: { type: string }
+        coreArtifactId: { type: string }
+        artifactRole: { $ref: '#/components/schemas/ArtifactRole' }
+        sourceRowNumber: { type: integer, minimum: 1 }
+        sourceRowHash: { $ref: '#/components/schemas/TradingSha256' }
+        dialect: { type: string }
+        maskedTradeId: { type: string, nullable: true }
+        maskedOrderId: { type: string, nullable: true }
+        maskingPolicyVersion: { type: string }
+        allowlistedFields:
+          type: array
+          items:
+            type: object
+            required: [name, value]
+            properties:
+              name: { type: string }
+              value: { type: string }
+        capturedAt: { type: string, format: date-time }
+    CanonicalRecordBase:
+      type: object
+      required: [recordId, instrumentId, sourceEvidenceSnapshotId, recordHash]
+      properties:
+        recordId: { type: string }
+        instrumentId: { type: string }
+        sourceEvidenceSnapshotId: { type: string }
+        recordHash: { $ref: '#/components/schemas/TradingSha256' }
+    CanonicalExecutionRecord:
+      allOf:
+        - $ref: '#/components/schemas/CanonicalRecordBase'
+        - type: object
+          required: [recordType, sourceExecutionKey, occurredAt, side, price, quantity, executionOrigin]
+          properties:
+            recordType: { type: string, enum: [EXECUTION] }
+            sourceExecutionKey: { type: string, description: opaque HMAC-derived identity; raw UID 없음. }
+            occurredAt: { type: string, format: date-time }
+            side: { type: string, enum: [BUY, SELL] }
+            price: { $ref: '#/components/schemas/TradingPrice' }
+            quantity: { $ref: '#/components/schemas/TradingQuantity' }
+            executionOrigin: { type: string, enum: [UNKNOWN] }
+    CanonicalFeeRecord:
+      allOf:
+        - $ref: '#/components/schemas/CanonicalRecordBase'
+        - type: object
+          required: [recordType, sourceExecutionKey, occurredAt, sourceAmount, feeKind]
+          properties:
+            recordType: { type: string, enum: [FEE] }
+            sourceExecutionKey: { type: string }
+            occurredAt: { type: string, format: date-time }
+            sourceAmount: { $ref: '#/components/schemas/TradingMoney' }
+            feeKind: { type: string, enum: [COST, REBATE, ZERO] }
+    CanonicalPnlRecord:
+      allOf:
+        - $ref: '#/components/schemas/CanonicalRecordBase'
+        - type: object
+          required: [recordType, sourceExecutionKey, occurredAt, realizedPnl]
+          properties:
+            recordType: { type: string, enum: [VENUE_REPORTED_PNL] }
+            sourceExecutionKey: { type: string }
+            occurredAt: { type: string, format: date-time }
+            realizedPnl: { $ref: '#/components/schemas/TradingMoney' }
+    CanonicalPositionSummaryRecord:
+      allOf:
+        - $ref: '#/components/schemas/CanonicalRecordBase'
+        - type: object
+          required: [recordType, openedInterval, closedInterval, direction, marginMode, entryPrice, averageClosePrice, maxOpenInterest, closedVolume, closingPnl, sourceStatus]
+          properties:
+            recordType: { type: string, enum: [VENUE_POSITION_SUMMARY] }
+            openedInterval: { $ref: '#/components/schemas/TradingInstantInterval' }
+            closedInterval: { $ref: '#/components/schemas/TradingInstantInterval' }
+            direction: { type: string, enum: [LONG, SHORT] }
+            marginMode: { type: string, enum: [ISOLATED, CROSS] }
+            entryPrice: { $ref: '#/components/schemas/TradingPrice' }
+            averageClosePrice: { $ref: '#/components/schemas/TradingPrice' }
+            maxOpenInterest: { $ref: '#/components/schemas/TradingQuantity' }
+            closedVolume: { $ref: '#/components/schemas/TradingQuantity' }
+            closingPnl: { $ref: '#/components/schemas/TradingMoney' }
+            sourceStatus: { type: string, enum: [CLOSED] }
+    CanonicalTradingRecord:
+      oneOf:
+        - $ref: '#/components/schemas/CanonicalExecutionRecord'
+        - $ref: '#/components/schemas/CanonicalFeeRecord'
+        - $ref: '#/components/schemas/CanonicalPnlRecord'
+        - $ref: '#/components/schemas/CanonicalPositionSummaryRecord'
+      discriminator:
+        propertyName: recordType
+        mapping:
+          EXECUTION: '#/components/schemas/CanonicalExecutionRecord'
+          FEE: '#/components/schemas/CanonicalFeeRecord'
+          VENUE_REPORTED_PNL: '#/components/schemas/CanonicalPnlRecord'
+          VENUE_POSITION_SUMMARY: '#/components/schemas/CanonicalPositionSummaryRecord'
+    InternalPositionAllocation:
+      type: object
+      required: [recordId, reviewUnitId, action, allocatedQuantity]
+      properties:
+        recordId: { type: string }
+        reviewUnitId: { type: string }
+        action: { type: string, enum: [OPEN, INCREASE, REDUCE, CLOSE, REVERSAL_CLOSE, REVERSAL_OPEN] }
+        allocatedQuantity: { $ref: '#/components/schemas/TradingQuantity' }
+        allocatedFee:
+          allOf: [ { $ref: '#/components/schemas/TradingMoney' } ]
+          type: object
+          nullable: true
+        allocatedReportedPnl:
+          allOf: [ { $ref: '#/components/schemas/TradingMoney' } ]
+          type: object
+          nullable: true
+    InternalReviewUnit:
+      type: object
+      required: [reviewUnitId, type, instrumentId, direction, outcomeClassification, reconstructionStatus, reconciliationStatus, allocations, capability]
+      properties:
+        reviewUnitId: { type: string }
+        type: { type: string, enum: [FUTURES_POSITION_EPISODE] }
+        instrumentId: { type: string }
+        direction: { type: string, enum: [LONG, SHORT] }
+        openedAt: { type: string, format: date-time, nullable: true }
+        closedAt: { type: string, format: date-time, nullable: true }
+        initialQuantity:
+          allOf: [ { $ref: '#/components/schemas/TradingQuantity' } ]
+          type: object
+          nullable: true
+        initialNotional:
+          allOf: [ { $ref: '#/components/schemas/TradingMoney' } ]
+          type: object
+          nullable: true
+        outcomeClassification: { type: string, enum: [LOSS, BREAKEVEN, WIN, UNAVAILABLE] }
+        netTradingPnl:
+          allOf: [ { $ref: '#/components/schemas/TradingMoney' } ]
+          type: object
+          nullable: true
+        reconstructionStatus: { type: string, enum: [COMPLETE, LEFT_CENSORED, RIGHT_CENSORED, INCONSISTENT, UNSUPPORTED] }
+        reconciliationStatus: { type: string, enum: [EXACT, WITHIN_ROUNDING_TOLERANCE, AMBIGUOUS, INCOMPLETE_TRADES, SUMMARY_MISMATCH, UNSUPPORTED_OVERLAP] }
+        allocations: { type: array, items: { $ref: '#/components/schemas/InternalPositionAllocation' } }
+        capability: { type: array, items: { $ref: '#/components/schemas/InternalAnalysisCapability' } }
+        exclusionReasons: { type: array, items: { type: string } }
+    ReconciliationManifestPayload:
+      type: object
+      required: [manifestVersion, inputHash, manifestHash, reconstructionPolicyVersion, reconciliationVersion, reviewUnits, capability, quantityConservationPassed, cashFlowConservationPassed]
+      properties:
+        manifestVersion: { type: string }
+        inputHash: { $ref: '#/components/schemas/TradingSha256' }
+        manifestHash: { $ref: '#/components/schemas/TradingSha256' }
+        reconstructionPolicyVersion: { type: string }
+        reconciliationVersion: { type: string }
+        reviewUnits: { type: array, items: { $ref: '#/components/schemas/InternalReviewUnit' } }
+        capability: { type: array, items: { $ref: '#/components/schemas/InternalAnalysisCapability' } }
+        quantityConservationPassed: { type: boolean }
+        cashFlowConservationPassed: { type: boolean }
+    InternalValidationIssue:
+      type: object
+      required: [code, severity, artifactRole]
+      properties:
+        code: { type: string }
+        severity: { type: string, enum: [WARNING, ERROR] }
+        artifactRole: { $ref: '#/components/schemas/ArtifactRole' }
+        sourceRowNumber: { type: integer, minimum: 1, nullable: true }
+        field: { type: string, nullable: true }
+      description: raw offending value 없음.
+    InternalQualityReport:
+      type: object
+      required: [qualityStatus, rowCountsByArtifactRole, ignoredNonTradingRowCounts, validationIssues, reconciliationStatusCounts, excludedReasonCounts]
+      properties:
+        qualityStatus: { type: string, enum: [ACCEPTABLE, ACCEPTABLE_WITH_EXCLUSIONS, REJECTED] }
+        rowCountsByArtifactRole:
+          type: object
+          additionalProperties: { type: integer, format: int64, minimum: 0 }
+        ignoredNonTradingRowCounts:
+          type: object
+          additionalProperties: { type: integer, format: int64, minimum: 0 }
+        validationIssues: { type: array, items: { $ref: '#/components/schemas/InternalValidationIssue' } }
+        reconciliationStatusCounts:
+          type: object
+          additionalProperties: { type: integer, format: int64, minimum: 0 }
+        excludedReasonCounts:
+          type: object
+          additionalProperties: { type: integer, format: int64, minimum: 0 }
+    NormalizationTerminalPayload:
+      type: object
+      required: [jobId, coreLogicalJobId, coreImportSessionId, status, versionSet, inputHash, canonicalRecords, sourceEvidenceSnapshots, reconciliationManifest, capability, qualityReport, ledgerContentHash, resultHash, createdAt, terminalAt]
+      properties:
+        jobId: { type: string }
+        coreLogicalJobId: { type: string }
+        coreImportSessionId: { type: string }
+        status: { type: string, enum: [COMPLETED] }
+        versionSet: { $ref: '#/components/schemas/InternalNormalizerVersionSet' }
+        inputHash: { $ref: '#/components/schemas/TradingSha256' }
+        canonicalRecords: { type: array, items: { $ref: '#/components/schemas/CanonicalTradingRecord' } }
+        sourceEvidenceSnapshots: { type: array, items: { $ref: '#/components/schemas/InternalSourceEvidenceSnapshot' } }
+        reconciliationManifest: { $ref: '#/components/schemas/ReconciliationManifestPayload' }
+        capability: { type: array, items: { $ref: '#/components/schemas/InternalAnalysisCapability' } }
+        qualityReport: { $ref: '#/components/schemas/InternalQualityReport' }
+        ledgerContentHash: { $ref: '#/components/schemas/TradingSha256' }
+        resultHash: { $ref: '#/components/schemas/TradingSha256' }
+        createdAt: { type: string, format: date-time }
+        terminalAt: { type: string, format: date-time }
+
+    # ---- Analytics terminal payload ----
+    InternalMetricStatus:
+      type: string
+      enum: [AVAILABLE, INSUFFICIENT_SAMPLE, MISSING_CAPABILITY, NOT_APPLICABLE]
+    InternalBehaviorObservation:
+      type: object
+      required: [observationId, definitionId, definitionVersion, subjectReviewUnitIds, observedAt, attributes, evidenceRecordIds]
+      properties:
+        observationId: { type: string }
+        definitionId: { type: string, enum: [ENTRY_WITHIN_WINDOW_AFTER_LOSS, INITIAL_EXPOSURE_CHANGE_AFTER_LOSS, WIN_LOSS_HOLDING_DURATION_DIFFERENCE] }
+        definitionVersion: { type: string }
+        subjectReviewUnitIds: { type: array, items: { type: string } }
+        observedAt: { type: string, format: date-time }
+        attributes:
+          type: array
+          items:
+            type: object
+            required: [name, value]
+            properties:
+              name: { type: string }
+              value: { type: string }
+        evidenceRecordIds: { type: array, items: { type: string } }
+    InternalBehaviorMetric:
+      type: object
+      required: [metricId, definitionId, definitionVersion, status, findingEligibility, populationCount, eligibleCount, excludedCount, excludedReasonCounts, subjectReviewUnitIds, comparisonReviewUnitIds, capabilitySnapshot, result, evidenceReference, metricHash]
+      properties:
+        metricId: { type: string }
+        definitionId: { type: string, enum: [ENTRY_WITHIN_WINDOW_AFTER_LOSS, INITIAL_EXPOSURE_CHANGE_AFTER_LOSS, WIN_LOSS_HOLDING_DURATION_DIFFERENCE] }
+        definitionVersion: { type: string }
+        status: { $ref: '#/components/schemas/InternalMetricStatus' }
+        findingEligibility: { type: string, enum: [ELIGIBLE, INELIGIBLE_SAMPLE, INELIGIBLE_METRIC_STATUS] }
+        populationCount: { type: integer, format: int64, minimum: 0 }
+        eligibleCount: { type: integer, format: int64, minimum: 0 }
+        excludedCount: { type: integer, format: int64, minimum: 0 }
+        excludedReasonCounts:
+          type: object
+          additionalProperties: { type: integer, format: int64, minimum: 0 }
+        subjectReviewUnitIds: { type: array, items: { type: string } }
+        comparisonReviewUnitIds: { type: array, items: { type: string } }
+        capabilitySnapshot: { type: array, items: { $ref: '#/components/schemas/InternalAnalysisCapability' } }
+        result:
+          type: object
+          properties:
+            decimal:
+              allOf: [ { $ref: '#/components/schemas/TradingDecimalString' } ]
+              type: string
+              nullable: true
+            ratio:
+              allOf: [ { $ref: '#/components/schemas/TradingRational' } ]
+              type: object
+              nullable: true
+            durationMicroseconds: { type: integer, format: int64, minimum: 0, nullable: true }
+        evidenceReference: { type: string }
+        metricHash: { $ref: '#/components/schemas/TradingSha256' }
+    InternalBehaviorFinding:
+      type: object
+      required: [findingId, definitionId, definitionVersion, observation, evidenceMetricIds, supportingReviewUnitIds, comparisonReviewUnitIds, sampleAssessment, rankReason]
+      properties:
+        findingId: { type: string }
+        definitionId: { type: string }
+        definitionVersion: { type: string }
+        observation: { type: string }
+        evidenceMetricIds: { type: array, items: { type: string } }
+        supportingReviewUnitIds: { type: array, items: { type: string } }
+        comparisonReviewUnitIds: { type: array, items: { type: string } }
+        sampleAssessment: { type: string, enum: [INSUFFICIENT, LIMITED, DESCRIPTIVE] }
+        rankReason: { type: string }
+    InternalEvidenceMembership:
+      type: object
+      required: [metricId, reviewUnitId, role, allocationRecordIds, sourceEvidenceSnapshotIds]
+      properties:
+        metricId: { type: string }
+        reviewUnitId: { type: string }
+        role: { type: string, enum: [SUPPORTING, COMPARISON, EXCLUDED_CANDIDATE, SELECTION_BOUNDARY] }
+        exclusionReason: { type: string, nullable: true }
+        allocationRecordIds: { type: array, items: { type: string } }
+        sourceEvidenceSnapshotIds: { type: array, items: { type: string } }
+    AnalyticsTerminalPayload:
+      type: object
+      required: [jobId, coreLogicalJobId, coreAnalysisRunId, status, versionSet, analysisConfig, analysisConfigHash, inputHash, reviewUnits, observations, metrics, findings, evidenceMembership, populationCount, eligibleCount, excludedCount, exclusionReasonCounts, evidenceHash, resultHash, createdAt, terminalAt]
+      properties:
+        jobId: { type: string }
+        coreLogicalJobId: { type: string }
+        coreAnalysisRunId: { type: string }
+        status: { type: string, enum: [COMPLETED] }
+        versionSet: { $ref: '#/components/schemas/InternalAnalyticsVersionSet' }
+        analysisConfig: { $ref: '#/components/schemas/InternalAnalysisConfig' }
+        analysisConfigHash: { $ref: '#/components/schemas/TradingSha256' }
+        inputHash: { $ref: '#/components/schemas/TradingSha256' }
+        reviewUnits: { type: array, items: { $ref: '#/components/schemas/InternalReviewUnit' } }
+        observations: { type: array, items: { $ref: '#/components/schemas/InternalBehaviorObservation' } }
+        metrics: { type: array, minItems: 3, maxItems: 3, items: { $ref: '#/components/schemas/InternalBehaviorMetric' } }
+        findings: { type: array, items: { $ref: '#/components/schemas/InternalBehaviorFinding' } }
+        evidenceMembership: { type: array, items: { $ref: '#/components/schemas/InternalEvidenceMembership' } }
+        populationCount: { type: integer, format: int64, minimum: 0 }
+        eligibleCount: { type: integer, format: int64, minimum: 0 }
+        excludedCount: { type: integer, format: int64, minimum: 0 }
+        exclusionReasonCounts:
+          type: object
+          additionalProperties: { type: integer, format: int64, minimum: 0 }
+        evidenceHash: { $ref: '#/components/schemas/TradingSha256' }
+        resultHash: { $ref: '#/components/schemas/TradingSha256' }
+        createdAt: { type: string, format: date-time }
+        terminalAt: { type: string, format: date-time }
 
     Period:
       type: object
@@ -611,6 +1462,7 @@ components:
         actualPeriod:
           allOf:
             - $ref: '#/components/schemas/Period'
+          type: object
           nullable: true
           description: Asset Availability 교집합 반영 후의 실제 기간(`docs/DOMAIN.md` §1.3).
         engineVersion:
@@ -781,10 +1633,28 @@ components:
     # ---- 공통 에러 ----
     ErrorResponse:
       type: object
-      required: [message]
+      required: [code, message, traceId, retryable]
       properties:
+        code:
+          type: string
         message:
           type: string
+        traceId:
+          type: string
+        retryable:
+          type: boolean
+        details:
+          type: array
+          items:
+            type: object
+            required: [field, reason]
+            additionalProperties: false
+            properties:
+              field: { type: string }
+              reason: { type: string }
+              rowNumber: { type: integer, minimum: 1 }
+              artifactRole: { type: string, enum: [TRADE_HISTORY, POSITION_HISTORY] }
+          description: raw source value/identifier/filename/path/URL 금지.
 
     ValidationErrorResponse:
       type: object
