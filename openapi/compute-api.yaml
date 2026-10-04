@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: compute API
-  version: "0.2.0"
+  version: "0.3.0"
   description: |
     Core(`core-api`) → Compute(`compute-api`) 내부 계약.
 
@@ -514,13 +514,6 @@ components:
       properties:
         numerator: { type: string, pattern: '^-?(0|[1-9][0-9]*)$' }
         denominator: { type: string, pattern: '^[1-9][0-9]*$' }
-    TradingInstantInterval:
-      type: object
-      required: [startInclusive, endExclusive, precision]
-      properties:
-        startInclusive: { type: string, format: date-time }
-        endExclusive: { type: string, format: date-time }
-        precision: { type: string, enum: [MINUTE, EXACT_INSTANT] }
     TradingStructuredFailure:
       type: object
       required: [code, message, retryable]
@@ -666,6 +659,19 @@ components:
     ArtifactRole:
       type: string
       enum: [TRADE_HISTORY, POSITION_HISTORY]
+    InternalArtifactCoverage:
+      type: object
+      required: [artifactRole, earliestObservedAt, latestObservedAt, rowCount, sourceTimezone, timestampPrecision, coverageCompleteness]
+      additionalProperties: false
+      properties:
+        artifactRole: { $ref: '#/components/schemas/ArtifactRole' }
+        earliestObservedAt: { type: string, format: date-time, nullable: true }
+        latestObservedAt: { type: string, format: date-time, nullable: true }
+        rowCount: { type: integer, format: int64, minimum: 0 }
+        sourceTimezone: { type: string }
+        timestampPrecision: { type: string, enum: [SECOND] }
+        coverageCompleteness: { type: string, enum: [NOT_PROVEN] }
+      description: Trade는 Time min/max, Position은 Opened min/Closed max인 observed coverage; 거래소 export의 연속성·완전성을 증명하지 않는다.
     ArtifactReadGrant:
       type: object
       required: [coreArtifactId, role, rawSha256, byteSize, contentType, accessUri, expiresAt]
@@ -690,7 +696,7 @@ components:
       required: [instrumentId, venueSymbol, settlementAsset, quantityStep, priceTick, contractMultiplier, settlementPrecision, instrumentTermsVersion]
       properties:
         instrumentId: { type: string }
-        venueSymbol: { type: string }
+        venueSymbol: { type: string, description: lossless opaque source symbol; trim/case/Unicode normalization 금지. }
         settlementAsset: { type: string }
         quantityStep: { $ref: '#/components/schemas/TradingDecimalString' }
         priceTick: { $ref: '#/components/schemas/TradingDecimalString' }
@@ -861,7 +867,7 @@ components:
           required: [recordType, sourceExecutionKey, occurredAt, side, price, quantity, executionOrigin]
           properties:
             recordType: { type: string, enum: [EXECUTION] }
-            sourceExecutionKey: { type: string, description: opaque HMAC-derived identity; raw UID 없음. }
+            sourceExecutionKey: { type: string, description: versioned account fingerprint + lossless symbol + raw Trade ID의 opaque canonical identity; raw UID 없음. }
             occurredAt: { type: string, format: date-time }
             side: { type: string, enum: [BUY, SELL] }
             price: { $ref: '#/components/schemas/TradingPrice' }
@@ -892,11 +898,11 @@ components:
       allOf:
         - $ref: '#/components/schemas/CanonicalRecordBase'
         - type: object
-          required: [recordType, openedInterval, closedInterval, direction, marginMode, entryPrice, averageClosePrice, maxOpenInterest, closedVolume, closingPnl, sourceStatus]
+          required: [recordType, openedAt, closedAt, direction, marginMode, entryPrice, averageClosePrice, maxOpenInterest, closedVolume, closingPnl, sourceStatus]
           properties:
             recordType: { type: string, enum: [VENUE_POSITION_SUMMARY] }
-            openedInterval: { $ref: '#/components/schemas/TradingInstantInterval' }
-            closedInterval: { $ref: '#/components/schemas/TradingInstantInterval' }
+            openedAt: { type: string, format: date-time, description: second-precision source local timestamp를 pinned timezone으로 변환한 exact UTC instant. }
+            closedAt: { type: string, format: date-time, description: second-precision source local timestamp를 pinned timezone으로 변환한 exact UTC instant. }
             direction: { type: string, enum: [LONG, SHORT] }
             marginMode: { type: string, enum: [ISOLATED, CROSS] }
             entryPrice: { $ref: '#/components/schemas/TradingPrice' }
@@ -1005,7 +1011,7 @@ components:
           additionalProperties: { type: integer, format: int64, minimum: 0 }
     NormalizationTerminalPayload:
       type: object
-      required: [jobId, coreLogicalJobId, coreImportSessionId, status, versionSet, inputHash, canonicalRecords, sourceEvidenceSnapshots, reconciliationManifest, capability, qualityReport, ledgerContentHash, resultHash, createdAt, terminalAt]
+      required: [jobId, coreLogicalJobId, coreImportSessionId, status, versionSet, inputHash, artifactCoverages, canonicalRecords, sourceEvidenceSnapshots, reconciliationManifest, capability, qualityReport, ledgerContentHash, resultHash, createdAt, terminalAt]
       properties:
         jobId: { type: string }
         coreLogicalJobId: { type: string }
@@ -1013,6 +1019,12 @@ components:
         status: { type: string, enum: [COMPLETED] }
         versionSet: { $ref: '#/components/schemas/InternalNormalizerVersionSet' }
         inputHash: { $ref: '#/components/schemas/TradingSha256' }
+        artifactCoverages:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: { $ref: '#/components/schemas/InternalArtifactCoverage' }
+          description: TRADE_HISTORY와 POSITION_HISTORY role별 정확히 하나.
         canonicalRecords: { type: array, items: { $ref: '#/components/schemas/CanonicalTradingRecord' } }
         sourceEvidenceSnapshots: { type: array, items: { $ref: '#/components/schemas/InternalSourceEvidenceSnapshot' } }
         reconciliationManifest: { $ref: '#/components/schemas/ReconciliationManifestPayload' }
