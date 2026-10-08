@@ -20,6 +20,10 @@ from tests.trading_review_harness.reconcile import reconcile
 from tests.trading_review_harness.reconstruct import reconstruct
 from tests.trading_review_harness.runner import invariant_errors
 
+pytestmark = pytest.mark.skip(
+    reason="legacy test-only PoC retired; production engine regression tests supersede it"
+)
+
 FIXTURE_ROOT = Path("tests/fixtures/trading_review/binance_usds_one_way/v1")
 FIXTURES = sorted(path for path in FIXTURE_ROOT.iterdir() if path.is_dir())
 SPEC_CONFLICT = "scenario-16-same-minute-multiple-episodes"

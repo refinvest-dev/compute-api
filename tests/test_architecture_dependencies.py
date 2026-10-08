@@ -19,6 +19,20 @@ class DependencyRule:
 
 RULES = (
     DependencyRule(
+        "refinvest.trading_review",
+        (
+            "refinvest.api",
+            "refinvest.app",
+            "refinvest.application",
+            "refinvest.engine",
+            "refinvest.ingestion",
+            "refinvest.marketdata",
+            "refinvest.persistence",
+            "tests",
+        ),
+        ("refinvest.trading_review",),
+    ),
+    DependencyRule(
         "refinvest.engine",
         (
             "refinvest.api",
