@@ -1,5 +1,9 @@
 # Compute API Runbook
 
+Trading Review normalization jobs are documented in
+`docs/TRADING_REVIEW_JOB_RUNTIME.md`. They use the same internal API key boundary and a
+separate worker/retention lifecycle from Backtest jobs.
+
 The Compute API accepts Core-only backtest submissions and status polling. Backtest
 routes require `X-Internal-Api-Key`; `/health` is intentionally unauthenticated for a
 private deployment probe.

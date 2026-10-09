@@ -122,6 +122,12 @@ class ApiMetrics:
             "Capacity rejections",
             registry=self.registry,
         )
+        self.trading_review_submissions = Counter(
+            "refinvest_compute_trading_review_submissions_total",
+            "Normalization submission outcomes",
+            ["outcome"],
+            registry=self.registry,
+        )
 
 
 class WorkerMetrics:
@@ -177,3 +183,74 @@ class WorkerMetrics:
 
     def timeout(self) -> None:
         self.timeouts.inc()
+
+
+class TradingReviewWorkerMetrics:
+    """Low-cardinality normalization counters and latency histograms."""
+
+    def __init__(self) -> None:
+        self.registry = CollectorRegistry()
+        self.claims = Counter(
+            "refinvest_compute_trading_review_claims_total",
+            "Claimed normalization attempts",
+            registry=self.registry,
+        )
+        self.reclaims = Counter(
+            "refinvest_compute_trading_review_lease_reclaims_total",
+            "Expired leases reclaimed",
+            registry=self.registry,
+        )
+        self.queue = Histogram(
+            "refinvest_compute_trading_review_queue_seconds",
+            "Creation to claim",
+            buckets=QUEUE_BUCKETS,
+            registry=self.registry,
+        )
+        self.duration = Histogram(
+            "refinvest_compute_trading_review_attempt_seconds",
+            "Normalization attempt duration",
+            buckets=EXECUTION_BUCKETS,
+            registry=self.registry,
+        )
+        self.terminals = Counter(
+            "refinvest_compute_trading_review_terminal_total",
+            "Committed terminal transitions",
+            ["status"],
+            registry=self.registry,
+        )
+        self.retries = Counter(
+            "refinvest_compute_trading_review_retries_total",
+            "Committed retries",
+            registry=self.registry,
+        )
+        self.failures = Counter(
+            "refinvest_compute_trading_review_failures_total",
+            "Safe failure categories",
+            ["code"],
+            registry=self.registry,
+        )
+
+    def claimed(self, reclaimed: bool) -> None:
+        self.claims.inc()
+        if reclaimed:
+            self.reclaims.inc()
+
+    def queue_wait(self, seconds: float) -> None:
+        self.queue.observe(seconds)
+
+    def terminal(self, status: str, seconds: float) -> None:
+        self.terminals.labels(status).inc()
+        self.duration.observe(seconds)
+
+    def retry(self) -> None:
+        self.retries.inc()
+
+    def failure(self, code: str) -> None:
+        safe_codes = {
+            "FILE_FORMAT_INVALID",
+            "VERSION_INCOMPATIBLE",
+            "RESULT_HASH_MISMATCH",
+            "TEMPORARY_DEPENDENCY_FAILURE",
+            "INTERNAL_ERROR",
+        }
+        self.failures.labels(code if code in safe_codes else "OTHER").inc()

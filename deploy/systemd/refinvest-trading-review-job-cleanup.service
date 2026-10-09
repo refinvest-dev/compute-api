@@ -1,0 +1,13 @@
+[Unit]
+Description=Refinvest Trading Review terminal job cleanup
+
+[Service]
+Type=oneshot
+User=refinvest
+Group=refinvest
+WorkingDirectory=/opt/refinvest/compute-api
+EnvironmentFile=/etc/refinvest/trading-review-job-cleanup.env
+ExecStart=/opt/refinvest/compute-api/.venv/bin/refinvest-cleanup-trading-review-jobs
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict

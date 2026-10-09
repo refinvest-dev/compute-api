@@ -1,5 +1,7 @@
 """Configuration read at the service boundary."""
 
+from base64 import b64decode
+from binascii import Error as Base64Error
 from dataclasses import dataclass
 from os import getenv
 
@@ -21,6 +23,13 @@ class Settings:
     backtest_active_job_limit: int = 20
     backtest_job_retention_seconds: int = 86_400
     backtest_job_cleanup_batch_size: int = 1_000
+    trading_review_execution_timeout_seconds: int = 600
+    trading_review_cleanup_batch_size: int = 1_000
+    trading_review_timezone_database_version: str | None = None
+    trading_review_identity_key: str | None = None
+    trading_review_masking_key: str | None = None
+    trading_review_artifact_hosts: tuple[str, ...] = ()
+    trading_review_payload_encryption_key: str | None = None
     massive_api_key: str | None = None
     snapshot_storage_root: str | None = None
     snapshot_storage_backend: str = "filesystem"
@@ -58,6 +67,25 @@ class Settings:
             backtest_job_cleanup_batch_size=_positive_environment_integer(
                 "REFINVEST_BACKTEST_JOB_CLEANUP_BATCH_SIZE", 1_000
             ),
+            trading_review_execution_timeout_seconds=_positive_environment_integer(
+                "REFINVEST_TRADING_REVIEW_EXECUTION_TIMEOUT_SECONDS", 600
+            ),
+            trading_review_cleanup_batch_size=_positive_environment_integer(
+                "REFINVEST_TRADING_REVIEW_CLEANUP_BATCH_SIZE", 1_000
+            ),
+            trading_review_timezone_database_version=(
+                getenv("REFINVEST_TRADING_REVIEW_TZDB_VERSION") or None
+            ),
+            trading_review_identity_key=(getenv("REFINVEST_TRADING_IDENTITY_KEY") or None),
+            trading_review_masking_key=(getenv("REFINVEST_TRADING_MASKING_KEY") or None),
+            trading_review_artifact_hosts=tuple(
+                host.strip().lower()
+                for host in getenv("REFINVEST_TRADING_REVIEW_ARTIFACT_HOSTS", "").split(",")
+                if host.strip()
+            ),
+            trading_review_payload_encryption_key=(
+                getenv("REFINVEST_TRADING_REVIEW_PAYLOAD_KEY") or None
+            ),
             massive_api_key=getenv("REFINVEST_MASSIVE_API_KEY") or None,
             snapshot_storage_root=getenv("REFINVEST_SNAPSHOT_STORAGE_ROOT") or None,
             snapshot_storage_backend=getenv("REFINVEST_SNAPSHOT_STORAGE_BACKEND") or "filesystem",
@@ -74,6 +102,20 @@ class Settings:
 def get_settings() -> Settings:
     """Return settings without introducing configuration dependencies prematurely."""
     return Settings.from_environment()
+
+
+def trading_review_payload_key(settings: Settings) -> bytes:
+    """Decode the shared 256-bit API/worker payload key without logging its value."""
+    value = settings.trading_review_payload_encryption_key
+    if value is None:
+        raise ValueError("REFINVEST_TRADING_REVIEW_PAYLOAD_KEY is required.")
+    try:
+        key = b64decode(value, altchars=b"-_", validate=True)
+    except (Base64Error, ValueError) as error:
+        raise ValueError("REFINVEST_TRADING_REVIEW_PAYLOAD_KEY must be URL-safe base64.") from error
+    if len(key) != 32:
+        raise ValueError("REFINVEST_TRADING_REVIEW_PAYLOAD_KEY must decode to 32 bytes.")
+    return key
 
 
 def _positive_environment_integer(name: str, default: int) -> int:
