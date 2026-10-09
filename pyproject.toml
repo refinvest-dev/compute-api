@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.11"
 dependencies = [
     "boto3>=1.42,<2",
+    "cryptography>=46,<51",
     "exchange-calendars>=4.10,<5",
     "fastapi[standard]>=0.141.1",
     "prometheus-client>=0.20,<1",
@@ -18,6 +19,8 @@ dependencies = [
 [project.scripts]
 refinvest = "refinvest:main"
 refinvest-backtest-worker = "refinvest.app.worker:worker_main"
+refinvest-trading-review-worker = "refinvest.app.trading_review_worker:trading_review_worker_main"
+refinvest-cleanup-trading-review-jobs = "refinvest.app.trading_review_cleanup:trading_review_cleanup_main"
 refinvest-publish-snapshot = "refinvest.app.snapshot_ingestion:snapshot_ingestion_main"
 refinvest-publish-integration-fixture = "refinvest.app.integration_fixture:integration_fixture_main"
 refinvest-verify-reference-data = "refinvest.app.reference_data_smoke:reference_data_smoke_main"
@@ -43,7 +46,9 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "httpx2>=2.0",
+    "jsonschema>=4.23,<5",
     "pyright>=1.1.411",
+    "pyyaml>=6,<7",
     "pytest>=9.1.1",
     "ruff>=0.16.4",
 ]
