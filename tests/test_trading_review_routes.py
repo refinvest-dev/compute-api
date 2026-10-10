@@ -13,8 +13,10 @@ from refinvest.api.routes.trading_review_jobs import get_trading_review_reposito
 from refinvest.app.config import Settings, get_settings
 from refinvest.app.main import app
 from refinvest.application.trading_review_jobs import (
+    GrantUpdateReceipt,
     SafeTradingReviewFailure,
     TerminalPayloadDescriptor,
+    TradingReviewCapacityExceeded,
     TradingReviewIdempotencyConflict,
     TradingReviewJob,
     TradingReviewJobKind,
@@ -62,6 +64,8 @@ class MemoryJobs:
             deletion_generation=job.deletion_generation,
             created_at=now,
             updated_at=now,
+            expected_input_hash=job.expected_input_hash,
+            version_set_hash=job.version_set_hash,
         )
         return TradingReviewJobSubmission(job.job_id, job.core_logical_job_id, job.kind, now)
 
@@ -93,6 +97,29 @@ class MemoryJobs:
 
     def acknowledge(self, job_id: str, **_: object) -> bool:
         return self.descriptor is not None and self.descriptor.job_id == job_id
+
+    def update_grants(
+        self, job_id: str, _key: str, payload: dict[str, object]
+    ) -> GrantUpdateReceipt | None:
+        view = self.get(job_id)
+        if view is None:
+            return None
+        now = datetime.now(UTC)
+        self.view = replace(
+            view,
+            grant_revision=view.grant_revision + 1,
+            attempt_token=str(payload["nextAttemptToken"]),
+            grant_action="NONE",
+            grant_refresh_deadline_at=None,
+        )
+        return GrantUpdateReceipt(
+            job_id,
+            str(payload["mode"]),
+            self.view.grant_revision,
+            self.view.attempt_token,
+            self.view.status.value,
+            now,
+        )
 
 
 def _body() -> dict[str, object]:
@@ -199,7 +226,7 @@ def test_normalization_routes_auth_admission_status_result_cancel_and_ack() -> N
             dict(artifact, expiresAt="2020-01-01T00:00:00Z")
             for artifact in body["artifacts"]  # type: ignore[union-attr]
         ]
-        assert client.post(base, json=expired, headers=headers).status_code == 422
+        assert client.post(base, json=expired, headers=headers).json()["jobId"] == job_id
         assert client.get(f"{base}/{job_id}", headers=headers).json()["status"] == "PENDING"
         assert client.get(f"{base}/{job_id}/result", headers=headers).status_code == 409
         assert (
@@ -214,6 +241,9 @@ def test_normalization_routes_auth_admission_status_result_cancel_and_ack() -> N
             "payloadId": str(uuid4()),
             "payloadSha256": "a" * 64,
             "terminalResultHash": "b" * 64,
+            "attemptToken": "attempt-1",
+            "deletionGeneration": 0,
+            "disposition": "PERSISTED",
             "persistedAt": "2026-01-01T00:00:00Z",
         }
         assert (
@@ -248,6 +278,8 @@ def test_completed_descriptor_download_ack_and_failed_status() -> None:
             result_hash="b" * 64,
             created_at=now,
             expires_at=now + timedelta(hours=24),
+            attempt_token="attempt-1",
+            deletion_generation=0,
         )
         repository.payload = payload
         assert repository.view is not None
@@ -268,6 +300,9 @@ def test_completed_descriptor_download_ack_and_failed_status() -> None:
             "payloadId": payload_id,
             "payloadSha256": payload_hash,
             "terminalResultHash": "b" * 64,
+            "attemptToken": "attempt-1",
+            "deletionGeneration": 0,
+            "disposition": "PERSISTED",
             "persistedAt": now.isoformat(),
         }
         ack = client.post(
@@ -287,3 +322,55 @@ def test_completed_descriptor_download_ack_and_failed_status() -> None:
         assert failed.status_code == 200
         assert failed.json()["failure"]["code"] == "FILE_FORMAT_INVALID"
         assert client.get(f"{base}/{job_id}/result", headers=headers).status_code == 409
+
+
+def test_grant_update_route_auth_receipt_and_capacity_header() -> None:
+    repository = MemoryJobs()
+    with _client(repository) as client:
+        headers = {"X-Internal-Api-Key": "test-internal-key", "Idempotency-Key": "grant-1"}
+        body = _body()
+        created = client.post("/trading-review/normalization-jobs", json=body, headers=headers)
+        job_id = created.json()["jobId"]
+        assert repository.view is not None
+        repository.view = replace(
+            repository.view,
+            grant_action="REPLACE_QUEUED_GRANTS",
+            grant_refresh_deadline_at=datetime.now(UTC) + timedelta(minutes=5),
+        )
+        update = {
+            "mode": "REPLACE_QUEUED_GRANTS",
+            "expectedGrantRevision": 0,
+            "expectedAttemptToken": "attempt-1",
+            "nextAttemptToken": "attempt-1",
+            "expectedInputHash": body["expectedInputHash"],
+            "versionSetHash": body["targetVersionSet"]["versionSetHash"],  # type: ignore[index]
+            "deletionGeneration": 0,
+            "artifacts": body["artifacts"],
+        }
+        path = f"/trading-review/normalization-jobs/{job_id}/grant-updates"
+        assert client.post(path, json=update).status_code == 401
+        receipt = client.post(path, json=update, headers=headers)
+        assert receipt.status_code == 200
+        assert receipt.json()["grantRevision"] == 1
+        assert (
+            client.get(f"/trading-review/normalization-jobs/{job_id}", headers=headers).json()[
+                "grantAction"
+            ]
+            == "NONE"
+        )
+
+    class CapacityJobs(MemoryJobs):
+        def create_idempotently(
+            self, job: TradingReviewJob, key_hash: str
+        ) -> TradingReviewJobSubmission:
+            raise TradingReviewCapacityExceeded("full")
+
+    with _client(CapacityJobs()) as client:
+        capacity = client.post(
+            "/trading-review/normalization-jobs",
+            json=_body(),
+            headers={"X-Internal-Api-Key": "test-internal-key", "Idempotency-Key": "new"},
+        )
+        assert capacity.status_code == 503
+        assert capacity.json()["code"] == "TRADING_REVIEW_CAPACITY_EXCEEDED"
+        assert capacity.headers["Retry-After"] == "30"

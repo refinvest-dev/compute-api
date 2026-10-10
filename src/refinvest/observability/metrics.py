@@ -128,6 +128,12 @@ class ApiMetrics:
             ["outcome"],
             registry=self.registry,
         )
+        self.trading_review_grant_updates = Counter(
+            "refinvest_compute_trading_review_grant_updates_total",
+            "Conditional grant update outcomes",
+            ["outcome"],
+            registry=self.registry,
+        )
 
 
 class WorkerMetrics:
@@ -195,11 +201,6 @@ class TradingReviewWorkerMetrics:
             "Claimed normalization attempts",
             registry=self.registry,
         )
-        self.reclaims = Counter(
-            "refinvest_compute_trading_review_lease_reclaims_total",
-            "Expired leases reclaimed",
-            registry=self.registry,
-        )
         self.queue = Histogram(
             "refinvest_compute_trading_review_queue_seconds",
             "Creation to claim",
@@ -230,10 +231,8 @@ class TradingReviewWorkerMetrics:
             registry=self.registry,
         )
 
-    def claimed(self, reclaimed: bool) -> None:
+    def claimed(self) -> None:
         self.claims.inc()
-        if reclaimed:
-            self.reclaims.inc()
 
     def queue_wait(self, seconds: float) -> None:
         self.queue.observe(seconds)

@@ -25,6 +25,11 @@ class Settings:
     backtest_job_cleanup_batch_size: int = 1_000
     trading_review_execution_timeout_seconds: int = 600
     trading_review_cleanup_batch_size: int = 1_000
+    trading_review_active_job_limit: int | None = None
+    trading_review_capacity_retry_after_seconds: int = 30
+    trading_review_grant_renewal_cutoff_seconds: int = 3_600
+    trading_review_grant_refresh_wait_seconds: int = 300
+    trading_review_max_attempts: int = 3
     trading_review_timezone_database_version: str | None = None
     trading_review_identity_key: str | None = None
     trading_review_masking_key: str | None = None
@@ -72,6 +77,21 @@ class Settings:
             ),
             trading_review_cleanup_batch_size=_positive_environment_integer(
                 "REFINVEST_TRADING_REVIEW_CLEANUP_BATCH_SIZE", 1_000
+            ),
+            trading_review_active_job_limit=_optional_positive_environment_integer(
+                "REFINVEST_TRADING_REVIEW_ACTIVE_JOB_LIMIT"
+            ),
+            trading_review_capacity_retry_after_seconds=_positive_environment_integer(
+                "REFINVEST_TRADING_REVIEW_CAPACITY_RETRY_AFTER_SECONDS", 30
+            ),
+            trading_review_grant_renewal_cutoff_seconds=_positive_environment_integer(
+                "REFINVEST_TRADING_REVIEW_GRANT_RENEWAL_CUTOFF_SECONDS", 3_600
+            ),
+            trading_review_grant_refresh_wait_seconds=_positive_environment_integer(
+                "REFINVEST_TRADING_REVIEW_GRANT_REFRESH_WAIT_SECONDS", 300
+            ),
+            trading_review_max_attempts=_positive_environment_integer(
+                "REFINVEST_TRADING_REVIEW_MAX_ATTEMPTS", 3
             ),
             trading_review_timezone_database_version=(
                 getenv("REFINVEST_TRADING_REVIEW_TZDB_VERSION") or None
@@ -129,6 +149,12 @@ def _positive_environment_integer(name: str, default: int) -> int:
     if parsed <= 0:
         raise ValueError(f"{name} must be a positive integer.")
     return parsed
+
+
+def _optional_positive_environment_integer(name: str) -> int | None:
+    if getenv(name) is None:
+        return None
+    return _positive_environment_integer(name, 1)
 
 
 def _metrics_config(role: str, default_port: int) -> MetricsConfig:

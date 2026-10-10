@@ -1,4 +1,4 @@
-"""Compare normalization routes and terminal JSON with checked-in OpenAPI 0.3.0."""
+"""Compare normalization routes and terminal JSON with checked-in OpenAPI 0.4.0."""
 
 import json
 from datetime import UTC, datetime
@@ -28,6 +28,7 @@ def test_normalization_operation_ids_and_success_codes_match_contract() -> None:
     generated = app.openapi()["paths"]
     endpoints = (
         ("/trading-review/normalization-jobs", "post", 202),
+        ("/trading-review/normalization-jobs/{jobId}/grant-updates", "post", 200),
         ("/trading-review/normalization-jobs/{jobId}", "get", 200),
         ("/trading-review/normalization-jobs/{jobId}/result", "get", 200),
         ("/trading-review/normalization-jobs/{jobId}/cancellation", "post", 202),
@@ -51,6 +52,8 @@ def test_terminal_payload_and_error_shape_validate_against_openapi() -> None:
         job_id="job-1",
         core_logical_job_id="logical-1",
         core_import_session_id="session-1",
+        attempt_token="attempt-1",
+        deletion_generation=0,
         artifacts=request.artifacts,
         masking_key=b"synthetic-test-masking-key-32chars",
         created_at=now,

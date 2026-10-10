@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: compute API
-  version: "0.3.0"
+  version: "0.4.0"
   description: |
     Core(`core-api`) → Compute(`compute-api`) 내부 계약.
 
@@ -13,8 +13,10 @@ info:
       job/terminal payload만 제한 기간 소유하며 장기 제품 Aggregate/result는 Core가 소유한다.
     - 필드명은 `docs/GLOSSARY.md`의 코드 네이밍을 그대로 따른다. 임의로 축약하거나 동의어로 바꾸지 않는다.
 
-    - Core는 사용자별 quota/rate limit을 소유한다. Compute는 ADR-044의 전역 active-job
-      admission capacity만 적용한다.
+    - Core는 사용자별 quota/rate limit을 소유한다. Compute Backtest는 ADR-044의
+      20개 active-job pool을 유지한다. Trading Review normalization/analytics는
+      ADR-064의 별도 bounded active-job pool을 공유하며 두 pool은 capacity를
+      서로 차감하지 않는다.
 
 servers:
   - url: http://compute.internal:8000
@@ -130,7 +132,11 @@ paths:
       operationId: createTradingNormalizationJob
       tags: [trading-review-jobs]
       summary: normalization/reconciliation job 생성
-      description: same Idempotency-Key/request fingerprint는 같은 Compute job을 반환한다.
+      description: |
+        계산 pin과 최초 attemptToken을 포함하고 accessUri/expiresAt을 제외한 canonical
+        fingerprint를 사용한다. same key/fingerprint는 최초 202/jobId를 재반환하고
+        grant/token은 교체하지 않는다. 최초 grant가 만료된 뒤의 응답 유실 replay도
+        기존 job을 반환한다. 같은 key와 다른 token/계산 입력은 409다(ADR-064).
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
       requestBody:
         required: true
@@ -143,6 +149,43 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/UnprocessableEntity' }
+        '503':
+          description: |
+            Trading Review 전용 active-job pool이 가득 찬 신규 접수는
+            TRADING_REVIEW_CAPACITY_EXCEEDED. job/idempotency record를 만들지 않는다.
+            기존 생성 replay는 capacity보다 먼저 처리한다. 다른 일시적 의존성 장애도 503이다.
+          headers:
+            Retry-After:
+              description: capacity 거절 시 필수인 초 단위 재시도 대기 시간.
+              schema: { type: integer, minimum: 1 }
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+
+  /trading-review/normalization-jobs/{jobId}/grant-updates:
+    post:
+      operationId: updateTradingNormalizationJobGrants
+      tags: [trading-review-jobs]
+      summary: normalization job의 조건부 grant 교체 또는 새 attempt 등록
+      description: |
+        생성 POST replay와 독립된 Idempotency-Key 및 current attemptToken/grantRevision CAS.
+        PENDING에서 claim 전 grant 교체는 같은 token, RUNNING에서 닫힌 worker attempt 뒤
+        재시도는 새 token을 사용한다. live lease, terminal/cancelled, stale CAS,
+        input/version/generation 변경과 consumed grant 재사용은 거절한다.
+        exact key/body replay는 최초 receipt를 반환하며 grant를 다시 적용하지 않는다.
+      parameters:
+        - $ref: '#/components/parameters/TradingComputeJobId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/UpdateTradingNormalizationJobGrantsRequest' } } }
+      responses:
+        '200':
+          description: 조건부 갱신 receipt 또는 같은 key/body의 최초 receipt replay.
+          content: { application/json: { schema: { $ref: '#/components/schemas/TradingNormalizationGrantUpdateReceipt' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /trading-review/normalization-jobs/{jobId}:
@@ -153,8 +196,10 @@ paths:
       parameters: [ { $ref: '#/components/parameters/TradingComputeJobId' } ]
       responses:
         '200':
-          description: terminal failure는 structured failure를 포함한다.
-          content: { application/json: { schema: { $ref: '#/components/schemas/TradingComputeJobStatusResponse' } } }
+          description: |
+            비terminal grantAction/current attempt/deadline과 terminal 최종 identity를 반환한다.
+            FAILED는 별도 terminal payload 없이 structured safe failure를 포함한다.
+          content: { application/json: { schema: { $ref: '#/components/schemas/TradingNormalizationJobStatusResponse' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
@@ -167,7 +212,7 @@ paths:
       responses:
         '200':
           description: opaque payload descriptor; records를 inline하지 않는다.
-          content: { application/json: { schema: { $ref: '#/components/schemas/ComputeTerminalResultDescriptor' } } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/NormalizationTerminalResultDescriptor' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/ResultUnavailable' }
@@ -183,7 +228,7 @@ paths:
       responses:
         '202':
           description: cancellation accepted 또는 existing terminal job.
-          content: { application/json: { schema: { $ref: '#/components/schemas/TradingComputeJobStatusResponse' } } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/TradingNormalizationJobStatusResponse' } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -195,6 +240,10 @@ paths:
       operationId: createTradingAnalyticsJob
       tags: [trading-review-jobs]
       summary: Behavior Analytics job 생성
+      description: |
+        Normalization과 별도 Backtest pool을 공유하지 않고 동일 Trading Review active-job
+        pool을 사용한다. 신규 접수의 capacity 거절은 503/TRADING_REVIEW_CAPACITY_EXCEEDED와
+        초 단위 Retry-After를 반환하며 job/idempotency record를 만들지 않는다.
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
       requestBody:
         required: true
@@ -207,7 +256,13 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/UnprocessableEntity' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+        '503':
+          description: Trading Review pool capacity 또는 일시적 의존성 장애.
+          headers:
+            Retry-After:
+              description: capacity 거절 시 필수인 초 단위 재시도 대기 시간.
+              schema: { type: integer, minimum: 1 }
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
 
   /trading-review/analytics-jobs/{jobId}:
     get:
@@ -281,7 +336,12 @@ paths:
       operationId: acknowledgeTradingReviewJobResult
       tags: [trading-review-payloads]
       summary: Core 장기 저장 완료 acknowledgement
-      description: same acknowledgement는 idempotent no-op이며 ack 뒤 payload는 cleanup 가능하다.
+      description: |
+        same acknowledgement는 idempotent no-op이며 ack 뒤 payload는 cleanup 가능하다.
+        Normalization은 payload의 최종 attemptToken/deletionGeneration을 비교한다.
+        PERSISTED는 Core 장기 저장 후, DISCARDED_STALE은 deletion tombstone으로
+        Core가 저장하지 않은 completed payload를 폐기할 때만 사용한다.
+        다른 attempt/hash/job 조합은 409이며 FAILED에는 acknowledgement payload가 없다.
       parameters:
         - $ref: '#/components/parameters/TradingComputeJobId'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -419,7 +479,8 @@ components:
       required: true
       description: |
         Core가 logical request/dispatch마다 생성하는 1~128자 opaque key. 네트워크 재시도에는 동일 값을
-        사용한다. 동일 key와 canonical request는 최초 202 acceptance를 재반환하고, payload가 다르면 409다.
+        사용한다. 동일 key와 해당 operation의 canonical request는 최초 응답을 재반환하고,
+        payload가 다르면 409다. normalization 생성은 202, grant update는 200 receipt다.
       schema:
         type: string
         minLength: 1
@@ -450,7 +511,7 @@ components:
       description: job이 terminal completed가 아니거나 descriptor가 아직 없음.
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
     ServiceUnavailable:
-      description: temporary dependency 또는 global capacity failure; job은 생성되지 않을 수 있음.
+      description: temporary dependency 또는 해당 job pool의 capacity failure; job은 생성되지 않을 수 있음.
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
   securitySchemes:
     InternalApiKey:
@@ -554,6 +615,7 @@ components:
         - RESULT_HASH_MISMATCH
         - STALE_RESULT_AFTER_DELETION
         - JOB_CANCELLED
+        - GRANT_REFRESH_DEADLINE_EXCEEDED
         - TEMPORARY_DEPENDENCY_FAILURE
         - INTERNAL_ERROR
     TradingComputeJobKind:
@@ -628,6 +690,65 @@ components:
           COMPLETED: '#/components/schemas/TradingComputeJobCompleted'
           FAILED: '#/components/schemas/TradingComputeJobFailed'
           CANCELLED: '#/components/schemas/TradingComputeJobCancelled'
+    TradingNormalizationRuntimeIdentity:
+      type: object
+      required: [attemptToken, deletionGeneration, grantRevision, expectedInputHash, versionSetHash]
+      properties:
+        attemptToken: { type: string, minLength: 1, description: 현재 또는 terminal에 도달한 최종 Core attempt token. }
+        deletionGeneration: { type: integer, format: int64, minimum: 0 }
+        grantRevision: { type: integer, format: int64, minimum: 0 }
+        expectedInputHash: { $ref: '#/components/schemas/TradingSha256' }
+        versionSetHash: { $ref: '#/components/schemas/TradingSha256' }
+    TradingNormalizationGrantAction:
+      type: string
+      enum: [NONE, REPLACE_QUEUED_GRANTS, START_RETRY_ATTEMPT]
+      description: |
+        NONE은 Core 조치 없음. REPLACE_QUEUED_GRANTS는 PENDING/claim 전 같은 token의
+        grant 교체. START_RETRY_ATTEMPT는 RUNNING/닫힌 worker attempt 뒤 새 token과
+        두 fresh grant 필요. live lease가 있으면 NONE이다.
+    TradingNormalizationJobNonTerminal:
+      allOf:
+        - $ref: '#/components/schemas/TradingComputeJobNonTerminal'
+        - $ref: '#/components/schemas/TradingNormalizationRuntimeIdentity'
+        - type: object
+          required: [grantAction, grantRefreshDeadlineAt]
+          properties:
+            grantAction: { $ref: '#/components/schemas/TradingNormalizationGrantAction' }
+            grantRefreshDeadlineAt:
+              type: string
+              format: date-time
+              nullable: true
+              description: |
+                grantAction=NONE이면 null. 그렇지 않으면 처음 갱신이 필요해진 DB 시각에
+                고정된 deadline. admission의 grantRenewalCutoffAt을 넘지 않고 같은 대기의
+                replay/중복 갱신으로 연장되지 않으며 초과 시 safe FAILED.
+    TradingNormalizationJobCompleted:
+      allOf:
+        - $ref: '#/components/schemas/TradingComputeJobCompleted'
+        - $ref: '#/components/schemas/TradingNormalizationRuntimeIdentity'
+    TradingNormalizationJobFailed:
+      allOf:
+        - $ref: '#/components/schemas/TradingComputeJobFailed'
+        - $ref: '#/components/schemas/TradingNormalizationRuntimeIdentity'
+      description: FAILED에는 별도 terminal payload가 없고 safe structured failure가 status에 있다.
+    TradingNormalizationJobCancelled:
+      allOf:
+        - $ref: '#/components/schemas/TradingComputeJobCancelled'
+        - $ref: '#/components/schemas/TradingNormalizationRuntimeIdentity'
+    TradingNormalizationJobStatusResponse:
+      oneOf:
+        - $ref: '#/components/schemas/TradingNormalizationJobNonTerminal'
+        - $ref: '#/components/schemas/TradingNormalizationJobCompleted'
+        - $ref: '#/components/schemas/TradingNormalizationJobFailed'
+        - $ref: '#/components/schemas/TradingNormalizationJobCancelled'
+      discriminator:
+        propertyName: status
+        mapping:
+          PENDING: '#/components/schemas/TradingNormalizationJobNonTerminal'
+          RUNNING: '#/components/schemas/TradingNormalizationJobNonTerminal'
+          COMPLETED: '#/components/schemas/TradingNormalizationJobCompleted'
+          FAILED: '#/components/schemas/TradingNormalizationJobFailed'
+          CANCELLED: '#/components/schemas/TradingNormalizationJobCancelled'
     ComputeTerminalResultDescriptor:
       type: object
       required: [jobId, coreLogicalJobId, payloadId, mediaType, byteSize, payloadSha256, inputHash, versionSetHash, resultHash, createdAt, expiresAt]
@@ -645,7 +766,18 @@ components:
         resultHash: { $ref: '#/components/schemas/TradingSha256' }
         createdAt: { type: string, format: date-time }
         expiresAt: { type: string, format: date-time, description: terminalAt + 최대 PT24H 이내. }
-    AcknowledgeTradingReviewJobResultRequest:
+    NormalizationTerminalResultDescriptor:
+      allOf:
+        - $ref: '#/components/schemas/ComputeTerminalResultDescriptor'
+        - type: object
+          required: [attemptToken, deletionGeneration]
+          properties:
+            attemptToken: { type: string, minLength: 1 }
+            deletionGeneration: { type: integer, format: int64, minimum: 0 }
+      description: |
+        최종 attempt identity는 Core publication과 acknowledgement에서 payload와 함께 검증한다.
+        resultHash는 deterministic engine hash이고 payloadSha256은 실제 전송 bytes의 hash다.
+    AcknowledgeTradingAnalyticsJobResultRequest:
       type: object
       required: [coreAggregateId, payloadId, payloadSha256, terminalResultHash, persistedAt]
       additionalProperties: false
@@ -655,6 +787,45 @@ components:
         payloadSha256: { $ref: '#/components/schemas/TradingSha256' }
         terminalResultHash: { $ref: '#/components/schemas/TradingSha256' }
         persistedAt: { type: string, format: date-time }
+    AcknowledgeTradingNormalizationPersistedRequest:
+      type: object
+      required: [coreAggregateId, payloadId, payloadSha256, terminalResultHash, attemptToken, deletionGeneration, disposition, persistedAt]
+      additionalProperties: false
+      properties:
+        coreAggregateId: { type: string }
+        payloadId: { type: string }
+        payloadSha256: { $ref: '#/components/schemas/TradingSha256' }
+        terminalResultHash: { $ref: '#/components/schemas/TradingSha256' }
+        attemptToken: { type: string, minLength: 1 }
+        deletionGeneration: { type: integer, format: int64, minimum: 0 }
+        disposition: { type: string, enum: [PERSISTED] }
+        persistedAt: { type: string, format: date-time }
+    AcknowledgeTradingNormalizationDiscardedRequest:
+      type: object
+      required: [coreAggregateId, payloadId, payloadSha256, terminalResultHash, attemptToken, deletionGeneration, disposition, discardedAt, currentDeletionGeneration]
+      additionalProperties: false
+      properties:
+        coreAggregateId: { type: string }
+        payloadId: { type: string }
+        payloadSha256: { $ref: '#/components/schemas/TradingSha256' }
+        terminalResultHash: { $ref: '#/components/schemas/TradingSha256' }
+        attemptToken: { type: string, minLength: 1 }
+        deletionGeneration: { type: integer, format: int64, minimum: 0 }
+        disposition: { type: string, enum: [DISCARDED_STALE] }
+        discardedAt: { type: string, format: date-time }
+        currentDeletionGeneration:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Core tombstone generation. deletionGeneration보다 커야 하며 Core가 검증한다.
+    AcknowledgeTradingReviewJobResultRequest:
+      oneOf:
+        - $ref: '#/components/schemas/AcknowledgeTradingAnalyticsJobResultRequest'
+        - $ref: '#/components/schemas/AcknowledgeTradingNormalizationPersistedRequest'
+        - $ref: '#/components/schemas/AcknowledgeTradingNormalizationDiscardedRequest'
+      description: |
+        Existing analytics acknowledgement는 그대로 유지한다. Normalization은 terminal
+        payload의 최종 attemptToken/deletionGeneration과 job/payload/hash를 모두 비교한다.
 
     ArtifactRole:
       type: string
@@ -675,13 +846,21 @@ components:
     ArtifactReadGrant:
       type: object
       required: [coreArtifactId, role, rawSha256, byteSize, contentType, accessUri, expiresAt]
+      additionalProperties: false
       properties:
         coreArtifactId: { type: string }
         role: { $ref: '#/components/schemas/ArtifactRole' }
         rawSha256: { $ref: '#/components/schemas/TradingSha256' }
         byteSize: { type: integer, format: int64, minimum: 1, maximum: 52428800 }
         contentType: { type: string, enum: [text/csv, application/vnd.ms-excel] }
-        accessUri: { type: string, format: uri, description: 최대 5분 single-read job-bound signed internal URI; log 금지. }
+        accessUri:
+          type: string
+          format: uri
+          description: |
+            최대 5분 single-read internal URI. Core는 생성 전에도 아는
+            coreLogicalJobId/coreImportSessionId/coreArtifactId/role/rawSha256/
+            attemptToken/deletionGeneration에 서명·검증한다. Compute jobId는 필수 claim이 아니다.
+            URI/path와 서명값은 log/metric/error 금지.
         expiresAt: { type: string, format: date-time }
     TradingBookProduct:
       type: object
@@ -726,6 +905,16 @@ components:
       type: object
       required: [coreLogicalJobId, coreImportSessionId, bookProduct, artifacts, sourceTimezone, reviewTimezone, targetVersionSet, pinnedInstrumentTerms, expectedInputHash, deletionGeneration, attemptToken]
       additionalProperties: false
+      description: |
+        canonical 생성 fingerprint에는 이 요청의 모든 immutable 계산 입력, Core ID와 최초
+        attemptToken/deletionGeneration을 포함하고 artifacts[].accessUri/expiresAt만 제외한다.
+        artifacts 배열은 role 순, pinnedInstrumentTerms 배열은 instrumentId 순,
+        object key는 Unicode code point 순으로 정렬해 canonicalize한다. 문자열 값은
+        trim/case/Unicode normalization 없이 보존한다. 인증/멱등 header, runtime UUID/시각은
+        포함하지 않는다.
+        생성 replay에서는 먼저 기존 key/fingerprint를 조회해 최초 grant가 만료됐더라도
+        최초 202/jobId를 반환하고 저장된 grant/token을 교체하지 않는다.
+        신규 접수일 때만 fresh grant 유효기간을 검사한다.
       properties:
         coreLogicalJobId: { type: string }
         coreImportSessionId: { type: string }
@@ -743,6 +932,55 @@ components:
         expectedInputHash: { $ref: '#/components/schemas/TradingSha256' }
         deletionGeneration: { type: integer, format: int64, minimum: 0 }
         attemptToken: { type: string }
+    UpdateTradingNormalizationJobGrantsRequest:
+      type: object
+      required: [mode, expectedGrantRevision, expectedAttemptToken, nextAttemptToken, expectedInputHash, versionSetHash, deletionGeneration, artifacts]
+      additionalProperties: false
+      description: |
+        별도 Idempotency-Key의 canonical update fingerprint는 이 body 전체를 포함한다.
+        accessUri/expiresAt도 포함하되 idempotency record에는 fingerprint hash만 보존한다.
+        현재 grant locator 원문은 암호화된 짧은 runtime field에만 보관하고 log/metric은 금지다.
+        같은 key/body는 최초 receipt를 재반환하고 다른 body는 409다. 신규 적용은
+        revision/token CAS와 두 role의 atomic replacement다. live lease/terminal/
+        cancelled/deletion generation/input/version mismatch는 409다.
+      properties:
+        mode:
+          type: string
+          enum: [REPLACE_QUEUED_GRANTS, START_RETRY_ATTEMPT]
+        expectedGrantRevision: { type: integer, format: int64, minimum: 0 }
+        expectedAttemptToken: { type: string, minLength: 1 }
+        nextAttemptToken:
+          type: string
+          minLength: 1
+          description: |
+            REPLACE_QUEUED_GRANTS에서는 expectedAttemptToken과 같고 PENDING/claim 전만 허용.
+            START_RETRY_ATTEMPT에서는 이전에 사용하지 않은 새 token이며
+            RUNNING/닫힌 worker attempt/남은 retry budget에서만 허용.
+        expectedInputHash: { $ref: '#/components/schemas/TradingSha256' }
+        versionSetHash: { $ref: '#/components/schemas/TradingSha256' }
+        deletionGeneration: { type: integer, format: int64, minimum: 0 }
+        artifacts:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: { $ref: '#/components/schemas/ArtifactReadGrant' }
+          description: |
+            TRADE_HISTORY/POSITION_HISTORY 각 하나. coreArtifactId/role/rawSha256/
+            byteSize/contentType은 생성 pin과 정확히 같고 accessUri/expiresAt만 교체한다.
+            두 grant 모두 새 발급, 미소비, 요청 시점부터 최대 5분이다.
+    TradingNormalizationGrantUpdateReceipt:
+      type: object
+      required: [jobId, mode, grantRevision, attemptToken, status, updatedAt]
+      additionalProperties: false
+      properties:
+        jobId: { type: string }
+        mode: { type: string, enum: [REPLACE_QUEUED_GRANTS, START_RETRY_ATTEMPT] }
+        grantRevision: { type: integer, format: int64, minimum: 1 }
+        attemptToken: { type: string, minLength: 1 }
+        status: { type: string, enum: [PENDING, RUNNING] }
+        updatedAt: { type: string, format: date-time }
+      description: |
+        멱등 update replay는 최초 receipt를 반환한다. 이후의 현재 상태는 status polling이 정본이다.
     CorePayloadReference:
       type: object
       required: [coreReferenceId, mediaType, byteSize, sha256, accessUri, expiresAt]
@@ -1011,11 +1249,13 @@ components:
           additionalProperties: { type: integer, format: int64, minimum: 0 }
     NormalizationTerminalPayload:
       type: object
-      required: [jobId, coreLogicalJobId, coreImportSessionId, status, versionSet, inputHash, artifactCoverages, canonicalRecords, sourceEvidenceSnapshots, reconciliationManifest, capability, qualityReport, ledgerContentHash, resultHash, createdAt, terminalAt]
+      required: [jobId, coreLogicalJobId, coreImportSessionId, attemptToken, deletionGeneration, status, versionSet, inputHash, artifactCoverages, canonicalRecords, sourceEvidenceSnapshots, reconciliationManifest, capability, qualityReport, ledgerContentHash, resultHash, createdAt, terminalAt]
       properties:
         jobId: { type: string }
         coreLogicalJobId: { type: string }
         coreImportSessionId: { type: string }
+        attemptToken: { type: string, minLength: 1, description: 최종 성공한 Core attempt token; deterministic resultHash 계산에는 제외. }
+        deletionGeneration: { type: integer, format: int64, minimum: 0, description: Core publication 검증용 pinned generation; deterministic resultHash 계산에는 제외. }
         status: { type: string, enum: [COMPLETED] }
         versionSet: { $ref: '#/components/schemas/InternalNormalizerVersionSet' }
         inputHash: { $ref: '#/components/schemas/TradingSha256' }

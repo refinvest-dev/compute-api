@@ -71,6 +71,8 @@ class TerminalPayloadDescriptor:
     result_hash: str
     created_at: datetime
     expires_at: datetime
+    attempt_token: str = ""
+    deletion_generation: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +94,11 @@ class TradingReviewJobStatusView:
     terminal_payload_id: str | None = None
     result_hash: str | None = None
     cancellation_requested: bool = False
+    grant_revision: int = 0
+    expected_input_hash: str = ""
+    version_set_hash: str = ""
+    grant_action: str = "NONE"
+    grant_refresh_deadline_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +115,7 @@ class ClaimedTradingReviewJob:
     lease_owner: str
     created_at: datetime
     reclaimed_stale_lease: bool
+    grant_revision: int = 0
 
 
 class TradingReviewIdempotencyConflict(ValueError):
@@ -118,12 +126,34 @@ class TradingReviewJobStateConflict(ValueError):
     """A command does not match the persisted job/payload state."""
 
 
+class TradingReviewCapacityExceeded(ValueError):
+    """The dedicated Trading Review active-job pool is full."""
+
+
+class TradingReviewGrantInvalid(ValueError):
+    """A newly supplied artifact grant is expired or otherwise unusable."""
+
+
+@dataclass(frozen=True, slots=True)
+class GrantUpdateReceipt:
+    job_id: str
+    mode: str
+    grant_revision: int
+    attempt_token: str
+    status: str
+    updated_at: datetime
+
+
 class TradingReviewJobRepository(Protocol):
     def create_idempotently(
         self, job: TradingReviewJob, idempotency_key_hash: str
     ) -> TradingReviewJobSubmission: ...
 
     def get(self, job_id: str) -> TradingReviewJobStatusView | None: ...
+
+    def update_grants(
+        self, job_id: str, idempotency_key_hash: str, payload: dict[str, object]
+    ) -> GrantUpdateReceipt | None: ...
 
     def request_cancellation(
         self, job_id: str, idempotency_key_hash: str
@@ -142,7 +172,11 @@ class TradingReviewJobRepository(Protocol):
         payload_id: str,
         payload_sha256: str,
         terminal_result_hash: str,
-        persisted_at: datetime,
+        attempt_token: str,
+        deletion_generation: int,
+        disposition: str,
+        recorded_at: datetime,
+        current_deletion_generation: int | None,
     ) -> bool: ...
 
 

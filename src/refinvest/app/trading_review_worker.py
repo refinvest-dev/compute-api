@@ -14,7 +14,6 @@ from refinvest.app.config import Settings, get_settings, trading_review_payload_
 from refinvest.app.trading_review_normalization import (
     CompletedNormalization,
     ProcessIsolatedNormalizationExecutor,
-    retry_delay,
 )
 from refinvest.application.trading_review_jobs import SafeTradingReviewFailure
 from refinvest.observability.metrics import TradingReviewWorkerMetrics, safe_record, serve_metrics
@@ -33,6 +32,7 @@ class TradingReviewWorkerHost:
         lease_duration: timedelta,
         heartbeat_interval: timedelta,
         retention: timedelta,
+        max_attempts: int = 3,
         metrics: TradingReviewWorkerMetrics | None = None,
     ) -> None:
         if heartbeat_interval <= timedelta(0) or heartbeat_interval >= lease_duration:
@@ -43,6 +43,9 @@ class TradingReviewWorkerHost:
         self.lease_duration = lease_duration
         self.heartbeat_interval = heartbeat_interval
         self.retention = retention
+        if max_attempts <= 0:
+            raise ValueError("Attempt budget must be positive.")
+        self.max_attempts = max_attempts
         self.metrics = metrics
 
     def run_once(self) -> bool:
@@ -50,7 +53,7 @@ class TradingReviewWorkerHost:
         if claim is None:
             return False
         if self.metrics is not None:
-            safe_record(self.metrics.claimed, claim.reclaimed_stale_lease)
+            safe_record(self.metrics.claimed)
             safe_record(
                 self.metrics.queue_wait,
                 max(0.0, (datetime.now(UTC) - claim.created_at).total_seconds()),
@@ -95,7 +98,20 @@ class TradingReviewWorkerHost:
                 if committed and self.metrics is not None:
                     safe_record(self.metrics.terminal, "CANCELLED", monotonic() - began)
             else:
-                delay = retry_delay(claim.attempt_number) if outcome.retryable else None
+                grant_consumed_or_unavailable = (
+                    outcome.failure.stage == "ARTIFACT_FETCH"
+                    and outcome.failure.code
+                    in {
+                        "ARTIFACT_REFERENCE_EXPIRED",
+                        "ARTIFACT_ACCESS_DENIED",
+                    }
+                )
+                delay = (
+                    timedelta(seconds=1)
+                    if (outcome.retryable or grant_consumed_or_unavailable)
+                    and claim.attempt_number < self.max_attempts
+                    else None
+                )
                 if delay is not None:
                     committed = self.repository.schedule_retry(claim, delay, outcome.failure)
                     if committed and self.metrics is not None:
@@ -113,7 +129,7 @@ class TradingReviewWorkerHost:
                 True,
                 "EXECUTION",
             )
-            delay = retry_delay(claim.attempt_number)
+            delay = timedelta(seconds=1) if claim.attempt_number < self.max_attempts else None
             if delay is not None:
                 self.repository.schedule_retry(claim, delay, failure)
             else:
@@ -131,6 +147,8 @@ def create_trading_review_worker(
 ) -> TradingReviewWorkerHost:
     if settings.database_url is None:
         raise ValueError("REFINVEST_DATABASE_URL is required.")
+    if settings.trading_review_active_job_limit is None:
+        raise ValueError("REFINVEST_TRADING_REVIEW_ACTIVE_JOB_LIMIT is required.")
     if not settings.trading_review_timezone_database_version:
         raise ValueError("REFINVEST_TRADING_REVIEW_TZDB_VERSION is required.")
     if not settings.trading_review_identity_key or len(settings.trading_review_identity_key) < 32:
@@ -141,7 +159,18 @@ def create_trading_review_worker(
         raise ValueError("REFINVEST_TRADING_REVIEW_ARTIFACT_HOSTS is required.")
     payload_key = trading_review_payload_key(settings)
     return TradingReviewWorkerHost(
-        PostgresTradingReviewJobRepository(settings.database_url, payload_key),
+        PostgresTradingReviewJobRepository(
+            settings.database_url,
+            payload_key,
+            active_job_limit=settings.trading_review_active_job_limit,
+            grant_renewal_cutoff=timedelta(
+                seconds=settings.trading_review_grant_renewal_cutoff_seconds
+            ),
+            grant_refresh_wait=timedelta(
+                seconds=settings.trading_review_grant_refresh_wait_seconds
+            ),
+            max_attempts=settings.trading_review_max_attempts,
+        ),
         ProcessIsolatedNormalizationExecutor(
             settings, timedelta(seconds=settings.trading_review_execution_timeout_seconds)
         ),
@@ -149,6 +178,7 @@ def create_trading_review_worker(
         lease_duration=timedelta(seconds=settings.worker_lease_seconds),
         heartbeat_interval=timedelta(seconds=settings.worker_heartbeat_seconds),
         retention=timedelta(hours=24),
+        max_attempts=settings.trading_review_max_attempts,
         metrics=metrics,
     )
 

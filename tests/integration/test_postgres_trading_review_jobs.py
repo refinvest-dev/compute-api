@@ -1,6 +1,6 @@
 """PostgreSQL concurrency and terminal transaction checks.
 
-Set REFINVEST_TEST_DATABASE_URL to an isolated database with migration 0010 applied.
+Set REFINVEST_TEST_DATABASE_URL to an isolated database with migration 0011 applied.
 """
 
 import hashlib
@@ -14,9 +14,11 @@ from psycopg import connect
 
 from refinvest.application.trading_review_jobs import (
     SafeTradingReviewFailure,
+    TradingReviewCapacityExceeded,
     TradingReviewIdempotencyConflict,
     TradingReviewJob,
     TradingReviewJobKind,
+    TradingReviewJobStateConflict,
     TradingReviewJobStatus,
 )
 from refinvest.persistence.postgres.trading_review_jobs import PostgresTradingReviewJobRepository
@@ -39,6 +41,7 @@ def _job(logical_id: str) -> TradingReviewJob:
                     "role": role,
                     "coreArtifactId": f"{logical_id}-{role}",
                     "rawSha256": "e" * 64,
+                    "accessUri": f"https://internal.example/{uuid4()}",
                     "expiresAt": (datetime.now(UTC) + timedelta(minutes=4)).isoformat(),
                 }
                 for role in ("TRADE_HISTORY", "POSITION_HISTORY")
@@ -67,6 +70,37 @@ def _artifact_lease_statuses(job_id: str, attempt: int) -> list[str]:
             (job_id, attempt),
         )
         return [str(row[0]) for row in cursor.fetchall()]
+
+
+def _renew(
+    repository: PostgresTradingReviewJobRepository, job: TradingReviewJob, mode: str
+) -> None:
+    view = repository.get(job.job_id)
+    assert view is not None and view.grant_action == mode
+    next_token = view.attempt_token if mode == "REPLACE_QUEUED_GRANTS" else str(uuid4())
+    grants = [
+        {
+            **grant,
+            "accessUri": f"https://internal.example/{uuid4()}",
+            "expiresAt": (datetime.now(UTC) + timedelta(minutes=4)).isoformat(),
+        }
+        for grant in job.request_payload["artifacts"]  # type: ignore[union-attr]
+    ]
+    receipt = repository.update_grants(
+        job.job_id,
+        hashlib.sha256(str(uuid4()).encode()).hexdigest(),
+        {
+            "mode": mode,
+            "expectedGrantRevision": view.grant_revision,
+            "expectedAttemptToken": view.attempt_token,
+            "nextAttemptToken": next_token,
+            "expectedInputHash": job.expected_input_hash,
+            "versionSetHash": job.version_set_hash,
+            "deletionGeneration": job.deletion_generation,
+            "artifacts": grants,
+        },
+    )
+    assert receipt is not None and receipt.attempt_token == next_token
 
 
 def test_concurrent_admission_one_job_and_fingerprint_conflict() -> None:
@@ -128,6 +162,10 @@ def test_claim_reclaim_stale_write_and_atomic_terminal_ack_cleanup() -> None:
                    WHERE job_id = %s""",
                 (job.job_id,),
             )
+        assert repository.claim_next("worker-c", timedelta(seconds=30)) is None
+        waiting = repository.get(job.job_id)
+        assert waiting is not None and waiting.grant_action == "START_RETRY_ATTEMPT"
+        _renew(repository, job, "START_RETRY_ATTEMPT")
         reclaimed = repository.claim_next("worker-c", timedelta(seconds=30))
         assert reclaimed is not None
         assert reclaimed.job_id == job.job_id
@@ -178,12 +216,17 @@ def test_claim_reclaim_stale_write_and_atomic_terminal_ack_cleanup() -> None:
             payload_id=descriptor.payload_id,
             payload_sha256=payload_hash,
             terminal_result_hash="e" * 64,
-            persisted_at=datetime.now(UTC),
+            attempt_token=descriptor.attempt_token,
+            deletion_generation=descriptor.deletion_generation,
+            disposition="PERSISTED",
+            recorded_at=datetime.now(UTC),
+            current_deletion_generation=None,
         )
         assert repository.acknowledge(job.job_id, **ack)
         assert repository.acknowledge(job.job_id, **ack)
-        assert repository.delete_cleanup_candidates(1) >= 1
-        assert repository.get(job.job_id) is None
+        assert repository.delete_cleanup_candidates(1) == 0
+        assert repository.get(job.job_id) is not None
+        assert repository.get_terminal_payload(descriptor.payload_id) is None
         assert repository.acknowledge(job.job_id, **ack)
     finally:
         _delete(job.job_id)
@@ -283,13 +326,8 @@ def test_expired_third_attempt_becomes_safe_terminal_failure() -> None:
             claim = repository.claim_next(f"worker-{number}", timedelta(seconds=30))
             assert claim is not None and claim.job_id == job.job_id
             assert repository.schedule_retry(claim, timedelta(seconds=30), failure)
-            with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
-                cursor.execute(
-                    """UPDATE trading_review_jobs
-                       SET next_attempt_at = CURRENT_TIMESTAMP - INTERVAL '1 second'
-                       WHERE job_id = %s""",
-                    (job.job_id,),
-                )
+            assert repository.claim_next("stale-worker", timedelta(seconds=30)) is None
+            _renew(repository, job, "START_RETRY_ATTEMPT")
         third = repository.claim_next("worker-3", timedelta(seconds=30))
         assert third is not None and third.attempt_number == 3
         with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
@@ -303,7 +341,7 @@ def test_expired_third_attempt_becomes_safe_terminal_failure() -> None:
         terminal = repository.get(job.job_id)
         assert terminal is not None and terminal.status is TradingReviewJobStatus.FAILED
         assert terminal.failure is not None
-        assert terminal.failure.code == "TEMPORARY_DEPENDENCY_FAILURE"
+        assert terminal.failure.code == "GRANT_REFRESH_DEADLINE_EXCEEDED"
     finally:
         _delete(job.job_id)
 
@@ -343,5 +381,211 @@ def test_unacknowledged_terminal_payload_expires_after_24_hours() -> None:
         assert repository.get_result_descriptor(job.job_id) is None
         assert repository.delete_cleanup_candidates(1) >= 1
         assert repository.get(job.job_id) is None
+    finally:
+        _delete(job.job_id)
+
+
+def test_queued_expiry_requires_explicit_grant_update_and_replay_does_not_replace() -> None:
+    assert DATABASE_URL is not None
+    repository = PostgresTradingReviewJobRepository(DATABASE_URL, PAYLOAD_KEY)
+    job = _job(str(uuid4()))
+    key = hashlib.sha256(job.job_id.encode()).hexdigest()
+    repository.create_idempotently(job, key)
+    try:
+        with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """UPDATE trading_review_grant_revisions
+                   SET grant_expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second'
+                   WHERE job_id = %s""",
+                (job.job_id,),
+            )
+        first = repository.get(job.job_id)
+        assert first is not None and first.status is TradingReviewJobStatus.PENDING
+        assert first.grant_action == "REPLACE_QUEUED_GRANTS"
+        assert first.grant_refresh_deadline_at is not None
+        assert repository.claim_next("worker", timedelta(seconds=30)) is None
+        replay = repository.create_idempotently(_job(job.core_logical_job_id), key)
+        assert replay.job_id == job.job_id and not replay.newly_created
+        again = repository.get(job.job_id)
+        assert (
+            again is not None and again.grant_refresh_deadline_at == first.grant_refresh_deadline_at
+        )
+        _renew(repository, job, "REPLACE_QUEUED_GRANTS")
+        ready = repository.get(job.job_id)
+        assert ready is not None and ready.grant_revision == 1
+        assert ready.attempt_token == job.attempt_token
+        assert ready.grant_action == "NONE"
+        claim = repository.claim_next("worker", timedelta(seconds=30))
+        assert claim is not None and claim.grant_revision == 1
+    finally:
+        _delete(job.job_id)
+
+
+def test_grant_update_receipt_replay_conflict_and_live_lease_rejection() -> None:
+    assert DATABASE_URL is not None
+    repository = PostgresTradingReviewJobRepository(DATABASE_URL, PAYLOAD_KEY)
+    job = _job(str(uuid4()))
+    repository.create_idempotently(job, hashlib.sha256(job.job_id.encode()).hexdigest())
+    try:
+        claim = repository.claim_next("worker", timedelta(seconds=30))
+        assert claim is not None
+        update_key = hashlib.sha256(str(uuid4()).encode()).hexdigest()
+        body = {
+            "mode": "START_RETRY_ATTEMPT",
+            "expectedGrantRevision": 0,
+            "expectedAttemptToken": job.attempt_token,
+            "nextAttemptToken": str(uuid4()),
+            "expectedInputHash": job.expected_input_hash,
+            "versionSetHash": job.version_set_hash,
+            "deletionGeneration": 0,
+            "artifacts": [
+                {**grant, "accessUri": f"https://internal.example/{uuid4()}"}
+                for grant in job.request_payload["artifacts"]  # type: ignore[union-attr]
+            ],
+        }
+        with pytest.raises(TradingReviewJobStateConflict):
+            repository.update_grants(job.job_id, update_key, body)
+        assert repository.schedule_retry(
+            claim,
+            timedelta(seconds=1),
+            SafeTradingReviewFailure(
+                "TEMPORARY_DEPENDENCY_FAILURE", "Retry.", True, "ARTIFACT_FETCH"
+            ),
+        )
+        receipt = repository.update_grants(job.job_id, update_key, body)
+        assert receipt is not None and receipt.grant_revision == 1
+        assert repository.update_grants(job.job_id, update_key, body) == receipt
+        with pytest.raises(TradingReviewIdempotencyConflict):
+            repository.update_grants(
+                job.job_id, update_key, {**body, "nextAttemptToken": str(uuid4())}
+            )
+        with pytest.raises(TradingReviewJobStateConflict):
+            repository.update_grants(
+                job.job_id, hashlib.sha256(str(uuid4()).encode()).hexdigest(), body
+            )
+    finally:
+        _delete(job.job_id)
+
+
+def test_dedicated_capacity_rejects_new_job_without_idempotency_row() -> None:
+    assert DATABASE_URL is not None
+    repository = PostgresTradingReviewJobRepository(DATABASE_URL, PAYLOAD_KEY, active_job_limit=1)
+    first = _job(str(uuid4()))
+    second = _job(str(uuid4()))
+    first_key = hashlib.sha256(first.job_id.encode()).hexdigest()
+    second_key = hashlib.sha256(second.job_id.encode()).hexdigest()
+    repository.create_idempotently(first, first_key)
+    try:
+        with pytest.raises(TradingReviewCapacityExceeded):
+            repository.create_idempotently(second, second_key)
+        assert not repository.create_idempotently(first, first_key).newly_created
+        with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """SELECT COUNT(*) FROM trading_review_job_idempotency
+                   WHERE idempotency_key_hash = %s""",
+                (second_key,),
+            )
+            assert cursor.fetchone()[0] == 0
+        repository.request_cancellation(
+            first.job_id, hashlib.sha256(str(uuid4()).encode()).hexdigest()
+        )
+        assert repository.create_idempotently(second, second_key).newly_created
+    finally:
+        _delete(first.job_id)
+        _delete(second.job_id)
+
+
+def test_grant_wait_deadline_is_fixed_and_terminal_failure_cannot_be_revived() -> None:
+    assert DATABASE_URL is not None
+    repository = PostgresTradingReviewJobRepository(DATABASE_URL, PAYLOAD_KEY)
+    job = _job(str(uuid4()))
+    repository.create_idempotently(job, hashlib.sha256(job.job_id.encode()).hexdigest())
+    try:
+        with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """UPDATE trading_review_grant_revisions
+                   SET grant_expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second'
+                   WHERE job_id = %s""",
+                (job.job_id,),
+            )
+        waiting = repository.get(job.job_id)
+        assert waiting is not None and waiting.grant_action == "REPLACE_QUEUED_GRANTS"
+        first_deadline = waiting.grant_refresh_deadline_at
+        assert first_deadline is not None
+        again = repository.get(job.job_id)
+        assert again is not None and again.grant_refresh_deadline_at == first_deadline
+        with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """UPDATE trading_review_jobs
+                   SET grant_refresh_deadline_at = CURRENT_TIMESTAMP - INTERVAL '1 second'
+                   WHERE job_id = %s""",
+                (job.job_id,),
+            )
+        terminal = repository.get(job.job_id)
+        assert terminal is not None and terminal.status is TradingReviewJobStatus.FAILED
+        assert terminal.failure is not None
+        assert terminal.failure.code == "GRANT_REFRESH_DEADLINE_EXCEEDED"
+        assert repository.claim_next("worker", timedelta(seconds=30)) is None
+        with pytest.raises(TradingReviewJobStateConflict):
+            repository.update_grants(
+                job.job_id,
+                hashlib.sha256(str(uuid4()).encode()).hexdigest(),
+                {
+                    "mode": "REPLACE_QUEUED_GRANTS",
+                    "expectedGrantRevision": 0,
+                    "expectedAttemptToken": job.attempt_token,
+                    "nextAttemptToken": job.attempt_token,
+                    "expectedInputHash": job.expected_input_hash,
+                    "versionSetHash": job.version_set_hash,
+                    "deletionGeneration": 0,
+                    "artifacts": job.request_payload["artifacts"],
+                },
+            )
+    finally:
+        _delete(job.job_id)
+
+
+def test_acknowledgement_requires_final_token_and_stale_discard_generation() -> None:
+    assert DATABASE_URL is not None
+    repository = PostgresTradingReviewJobRepository(DATABASE_URL, PAYLOAD_KEY)
+    job = _job(str(uuid4()))
+    repository.create_idempotently(job, hashlib.sha256(job.job_id.encode()).hexdigest())
+    try:
+        claim = repository.claim_next("worker", timedelta(seconds=30))
+        assert claim is not None
+        payload = b'{"status":"COMPLETED"}'
+        payload_hash = hashlib.sha256(payload).hexdigest()
+        assert repository.publish_completed(
+            claim,
+            payload=payload,
+            media_type="application/vnd.refinvest.trading-normalization+json",
+            payload_sha256=payload_hash,
+            input_hash=job.expected_input_hash,
+            result_hash="f" * 64,
+            retention=timedelta(hours=24),
+        )
+        descriptor = repository.get_result_descriptor(job.job_id)
+        assert descriptor is not None
+        ack = dict(
+            idempotency_key_hash=hashlib.sha256(str(uuid4()).encode()).hexdigest(),
+            core_aggregate_id=job.core_import_session_id,
+            payload_id=descriptor.payload_id,
+            payload_sha256=payload_hash,
+            terminal_result_hash="f" * 64,
+            attempt_token=descriptor.attempt_token,
+            deletion_generation=descriptor.deletion_generation,
+            disposition="DISCARDED_STALE",
+            recorded_at=datetime.now(UTC),
+            current_deletion_generation=1,
+        )
+        with pytest.raises(TradingReviewJobStateConflict):
+            repository.acknowledge(job.job_id, **{**ack, "attempt_token": "stale"})
+        with pytest.raises(TradingReviewJobStateConflict):
+            repository.acknowledge(job.job_id, **{**ack, "current_deletion_generation": 0})
+        assert repository.acknowledge(job.job_id, **ack)
+        assert repository.acknowledge(job.job_id, **ack)
+        repository.delete_cleanup_candidates(10)
+        assert repository.get_terminal_payload(descriptor.payload_id) is None
+        assert repository.get(job.job_id) is not None
     finally:
         _delete(job.job_id)

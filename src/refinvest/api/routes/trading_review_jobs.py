@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Annotated
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -15,10 +15,13 @@ from refinvest.api.schemas.trading_review_jobs import (
     AcknowledgeTradingReviewJobTransport,
     CreateTradingNormalizationJobTransport,
     TradingComputeJobAcceptedTransport,
+    UpdateTradingNormalizationJobGrantsTransport,
 )
 from refinvest.app.config import Settings, get_settings, trading_review_payload_key
 from refinvest.app.security import require_internal_api_key
 from refinvest.application.trading_review_jobs import (
+    TradingReviewCapacityExceeded,
+    TradingReviewGrantInvalid,
     TradingReviewIdempotencyConflict,
     TradingReviewJobStateConflict,
     TradingReviewJobStatus,
@@ -42,13 +45,24 @@ def get_trading_review_repository(
 ) -> PostgresTradingReviewJobRepository:
     if settings.database_url is None:
         raise HTTPException(status_code=503, detail="Job store is unavailable.")
+    if settings.trading_review_active_job_limit is None:
+        raise HTTPException(status_code=503, detail="Trading Review capacity is unavailable.")
     try:
         key = trading_review_payload_key(settings)
     except ValueError as error:
         raise HTTPException(
             status_code=503, detail="Terminal payload key is unavailable."
         ) from error
-    return PostgresTradingReviewJobRepository(settings.database_url, key)
+    return PostgresTradingReviewJobRepository(
+        settings.database_url,
+        key,
+        active_job_limit=settings.trading_review_active_job_limit,
+        grant_renewal_cutoff=timedelta(
+            seconds=settings.trading_review_grant_renewal_cutoff_seconds
+        ),
+        grant_refresh_wait=timedelta(seconds=settings.trading_review_grant_refresh_wait_seconds),
+        max_attempts=settings.trading_review_max_attempts,
+    )
 
 
 def _http_error(code: int, reason: str, message: str, retryable: bool = False) -> JSONResponse:
@@ -97,14 +111,7 @@ def _semantic_request_error(body: CreateTradingNormalizationJobTransport) -> JSO
         return _http_error(422, "FILE_FORMAT_INVALID", "Exactly one artifact per role is required.")
     if len({item.core_artifact_id for item in body.artifacts}) != 2:
         return _http_error(422, "FILE_FORMAT_INVALID", "Artifact identities must be distinct.")
-    now = datetime.now(UTC)
     for artifact in body.artifacts:
-        if artifact.expires_at.tzinfo is None or not now < artifact.expires_at <= now + timedelta(
-            minutes=5
-        ):
-            return _http_error(
-                422, "ARTIFACT_REFERENCE_EXPIRED", "Artifact grant expiry is invalid."
-            )
         if (
             artifact.access_uri.username
             or artifact.access_uri.password
@@ -151,9 +158,19 @@ def _status(view: TradingReviewJobStatusView) -> dict[str, object]:
         "updatedAt": view.updated_at.isoformat(),
         "startedAt": view.started_at.isoformat() if view.started_at else None,
         "status": view.status.value,
+        "attemptToken": view.attempt_token,
+        "deletionGeneration": view.deletion_generation,
+        "grantRevision": view.grant_revision,
+        "expectedInputHash": view.expected_input_hash,
+        "versionSetHash": view.version_set_hash,
     }
     if view.terminal_at is not None:
         result["terminalAt"] = view.terminal_at.isoformat()
+    else:
+        result["grantAction"] = view.grant_action
+        result["grantRefreshDeadlineAt"] = (
+            view.grant_refresh_deadline_at.isoformat() if view.grant_refresh_deadline_at else None
+        )
     if view.status is TradingReviewJobStatus.COMPLETED:
         result["terminalPayloadId"] = view.terminal_payload_id
         result["resultHash"] = view.result_hash
@@ -176,6 +193,7 @@ def _status(view: TradingReviewJobStatusView) -> dict[str, object]:
 def create_trading_normalization_job(
     body: CreateTradingNormalizationJobTransport,
     http_request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
     repository: Annotated[
         PostgresTradingReviewJobRepository, Depends(get_trading_review_repository)
     ],
@@ -198,6 +216,15 @@ def create_trading_normalization_job(
         return _http_error(
             409, "IDEMPOTENCY_CONFLICT", "Idempotency-Key conflicts with an existing request."
         )
+    except TradingReviewCapacityExceeded:
+        _record_submission(http_request, "capacity")
+        response = _http_error(
+            503, "TRADING_REVIEW_CAPACITY_EXCEEDED", "Trading Review capacity is full.", True
+        )
+        response.headers["Retry-After"] = str(settings.trading_review_capacity_retry_after_seconds)
+        return response
+    except TradingReviewGrantInvalid:
+        return _http_error(422, "ARTIFACT_REFERENCE_EXPIRED", "Artifact grant is invalid.")
     _record_submission(http_request, "accepted" if accepted.newly_created else "replay")
     return TradingComputeJobAcceptedTransport(
         jobId=accepted.job_id,
@@ -206,6 +233,55 @@ def create_trading_normalization_job(
         status="PENDING",
         createdAt=accepted.created_at,
     )
+
+
+@router.post(
+    "/trading-review/normalization-jobs/{jobId}/grant-updates",
+    operation_id="updateTradingNormalizationJobGrants",
+    response_model=None,
+)
+def update_trading_normalization_job_grants(
+    jobId: str,
+    body: UpdateTradingNormalizationJobGrantsTransport,
+    http_request: Request,
+    repository: Annotated[
+        PostgresTradingReviewJobRepository, Depends(get_trading_review_repository)
+    ],
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> dict[str, object] | JSONResponse:
+    key = _key(idempotency_key)
+    if key is None:
+        return _http_error(400, "REQUEST_INVALID", "Invalid Idempotency-Key.")
+    for artifact in body.artifacts:
+        if (
+            artifact.access_uri.username
+            or artifact.access_uri.password
+            or artifact.access_uri.fragment
+        ):
+            return _http_error(422, "ARTIFACT_ACCESS_DENIED", "Artifact grant URI is invalid.")
+    try:
+        receipt = repository.update_grants(
+            jobId, hash_idempotency_key(key), body.model_dump(mode="json", by_alias=True)
+        )
+    except TradingReviewIdempotencyConflict:
+        _record_grant_update(http_request, "conflict")
+        return _http_error(409, "IDEMPOTENCY_CONFLICT", "Grant update key conflicts.")
+    except TradingReviewGrantInvalid:
+        return _http_error(422, "ARTIFACT_REFERENCE_EXPIRED", "Artifact grant is invalid.")
+    except TradingReviewJobStateConflict:
+        _record_grant_update(http_request, "conflict")
+        return _http_error(409, "GRANT_UPDATE_CONFLICT", "Grant update conflicts with job state.")
+    if receipt is None:
+        return _http_error(404, "JOB_NOT_FOUND", "Job was not found.")
+    _record_grant_update(http_request, "accepted")
+    return {
+        "jobId": receipt.job_id,
+        "mode": receipt.mode,
+        "grantRevision": receipt.grant_revision,
+        "attemptToken": receipt.attempt_token,
+        "status": receipt.status,
+        "updatedAt": receipt.updated_at.isoformat(),
+    }
 
 
 @router.get(
@@ -258,6 +334,8 @@ def get_trading_normalization_job_result(
         "resultHash": descriptor.result_hash,
         "createdAt": descriptor.created_at.isoformat(),
         "expiresAt": descriptor.expires_at.isoformat(),
+        "attemptToken": descriptor.attempt_token,
+        "deletionGeneration": descriptor.deletion_generation,
     }
 
 
@@ -326,6 +404,19 @@ def acknowledge_trading_review_job_result(
     key = _key(idempotency_key)
     if key is None:
         return _http_error(400, "REQUEST_INVALID", "Invalid Idempotency-Key.")
+    recorded_at = body.persisted_at if body.disposition == "PERSISTED" else body.discarded_at
+    if (
+        recorded_at is None
+        or (
+            body.disposition == "PERSISTED"
+            and (body.discarded_at is not None or body.current_deletion_generation is not None)
+        )
+        or (
+            body.disposition == "DISCARDED_STALE"
+            and (body.persisted_at is not None or body.current_deletion_generation is None)
+        )
+    ):
+        return _http_error(422, "REQUEST_INVALID", "Acknowledgement shape is invalid.")
     try:
         accepted = repository.acknowledge(
             jobId,
@@ -334,7 +425,11 @@ def acknowledge_trading_review_job_result(
             payload_id=body.payload_id,
             payload_sha256=body.payload_sha256,
             terminal_result_hash=body.terminal_result_hash,
-            persisted_at=body.persisted_at,
+            attempt_token=body.attempt_token,
+            deletion_generation=body.deletion_generation,
+            disposition=body.disposition,
+            recorded_at=recorded_at,
+            current_deletion_generation=body.current_deletion_generation,
         )
     except (TradingReviewIdempotencyConflict, TradingReviewJobStateConflict):
         return _http_error(
@@ -349,3 +444,9 @@ def _record_submission(request: Request, outcome: str) -> None:
     metrics = getattr(request.app.state, "metrics", None)
     if isinstance(metrics, ApiMetrics):
         safe_record(metrics.trading_review_submissions.labels(outcome).inc)
+
+
+def _record_grant_update(request: Request, outcome: str) -> None:
+    metrics = getattr(request.app.state, "metrics", None)
+    if isinstance(metrics, ApiMetrics):
+        safe_record(metrics.trading_review_grant_updates.labels(outcome).inc)

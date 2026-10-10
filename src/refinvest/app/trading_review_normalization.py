@@ -36,8 +36,6 @@ from refinvest.trading_review.service import normalize_and_reconstruct
 
 _LOGGER = logging.getLogger(__name__)
 _MAX_ARTIFACT_BYTES = 52_428_800
-_MAX_ATTEMPTS = 3
-_RETRY_DELAYS = (timedelta(seconds=30), timedelta(minutes=2))
 _PAYLOAD_LIMIT_BYTES = 512 * 1024 * 1024
 
 
@@ -165,6 +163,8 @@ def execute_normalization_child(
             job_id=claim.job_id,
             core_logical_job_id=claim.core_logical_job_id,
             core_import_session_id=claim.core_import_session_id,
+            attempt_token=claim.attempt_token,
+            deletion_generation=claim.deletion_generation,
             artifacts=tuple(artifacts),
             masking_key=masking_key,
             created_at=terminal_at,
@@ -311,12 +311,6 @@ class _SafeExecutionError(Exception):
     def __init__(self, failure: SafeTradingReviewFailure, retryable: bool) -> None:
         self.failure = failure
         self.retryable = retryable
-
-
-def retry_delay(attempt_number: int) -> timedelta | None:
-    if attempt_number < 1 or attempt_number >= _MAX_ATTEMPTS:
-        return None
-    return _RETRY_DELAYS[attempt_number - 1]
 
 
 def _download_artifact(grant: dict[str, object], allowed_hosts: tuple[str, ...]) -> bytes:
