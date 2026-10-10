@@ -69,6 +69,17 @@ class CreateTradingNormalizationJobTransport(StrictTransport):
     attempt_token: str = Field(alias="attemptToken", min_length=1)
 
 
+class UpdateTradingNormalizationJobGrantsTransport(StrictTransport):
+    mode: Literal["REPLACE_QUEUED_GRANTS", "START_RETRY_ATTEMPT"]
+    expected_grant_revision: int = Field(alias="expectedGrantRevision", ge=0)
+    expected_attempt_token: str = Field(alias="expectedAttemptToken", min_length=1)
+    next_attempt_token: str = Field(alias="nextAttemptToken", min_length=1)
+    expected_input_hash: str = Field(alias="expectedInputHash", pattern=r"^[a-f0-9]{64}$")
+    version_set_hash: str = Field(alias="versionSetHash", pattern=r"^[a-f0-9]{64}$")
+    deletion_generation: int = Field(alias="deletionGeneration", ge=0)
+    artifacts: list[ArtifactReadGrantTransport] = Field(min_length=2, max_length=2)
+
+
 class TradingComputeJobAcceptedTransport(StrictTransport):
     job_id: str = Field(alias="jobId")
     core_logical_job_id: str = Field(alias="coreLogicalJobId")
@@ -114,6 +125,8 @@ class ComputeTerminalResultDescriptorTransport(StrictTransport):
     result_hash: str = Field(alias="resultHash", pattern=r"^[a-f0-9]{64}$")
     created_at: datetime = Field(alias="createdAt")
     expires_at: datetime = Field(alias="expiresAt")
+    attempt_token: str = Field(alias="attemptToken", min_length=1)
+    deletion_generation: int = Field(alias="deletionGeneration", ge=0)
 
 
 class AcknowledgeTradingReviewJobTransport(StrictTransport):
@@ -121,4 +134,9 @@ class AcknowledgeTradingReviewJobTransport(StrictTransport):
     payload_id: str = Field(alias="payloadId", min_length=1)
     payload_sha256: str = Field(alias="payloadSha256", pattern=r"^[a-f0-9]{64}$")
     terminal_result_hash: str = Field(alias="terminalResultHash", pattern=r"^[a-f0-9]{64}$")
-    persisted_at: datetime = Field(alias="persistedAt")
+    attempt_token: str = Field(alias="attemptToken", min_length=1)
+    deletion_generation: int = Field(alias="deletionGeneration", ge=0)
+    disposition: Literal["PERSISTED", "DISCARDED_STALE"]
+    persisted_at: datetime | None = Field(default=None, alias="persistedAt")
+    discarded_at: datetime | None = Field(default=None, alias="discardedAt")
+    current_deletion_generation: int | None = Field(default=None, alias="currentDeletionGeneration")

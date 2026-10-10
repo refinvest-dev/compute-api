@@ -50,6 +50,9 @@ def test_admission_fingerprint_ignores_grant_refresh_and_object_order() -> None:
     assert normalization_request_fingerprint(first) == normalization_request_fingerprint(second)
     second["expectedInputHash"] = "d" * 64
     assert normalization_request_fingerprint(first) != normalization_request_fingerprint(second)
+    second["expectedInputHash"] = "a" * 64
+    second["attemptToken"] = "new-attempt"
+    assert normalization_request_fingerprint(first) != normalization_request_fingerprint(second)
 
 
 def test_production_result_payload_is_complete_and_masks_raw_identifiers() -> None:
@@ -61,6 +64,8 @@ def test_production_result_payload_is_complete_and_masks_raw_identifiers() -> No
         job_id="job-1",
         core_logical_job_id="logical-1",
         core_import_session_id="session-1",
+        attempt_token="attempt-1",
+        deletion_generation=0,
         artifacts=request.artifacts,
         masking_key=b"synthetic-test-masking-key-32chars",
         created_at=terminal_at,
@@ -70,6 +75,8 @@ def test_production_result_payload_is_complete_and_masks_raw_identifiers() -> No
     assert payload["status"] == "COMPLETED"
     assert payload["inputHash"] == result.input_hash
     assert payload["resultHash"] == result.result_hash
+    assert payload["attemptToken"] == "attempt-1"
+    assert payload["deletionGeneration"] == 0
     assert len(payload["artifactCoverages"]) == 2  # type: ignore[arg-type]
     assert len(payload["canonicalRecords"]) == len(result.canonical_records)  # type: ignore[arg-type]
     snapshots = payload["sourceEvidenceSnapshots"]
