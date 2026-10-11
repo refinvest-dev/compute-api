@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: compute API
-  version: "0.4.0"
+  version: "0.5.0"
   description: |
     Core(`core-api`) → Compute(`compute-api`) 내부 계약.
 
@@ -137,6 +137,8 @@ paths:
         fingerprint를 사용한다. same key/fingerprint는 최초 202/jobId를 재반환하고
         grant/token은 교체하지 않는다. 최초 grant가 만료된 뒤의 응답 유실 replay도
         기존 job을 반환한다. 같은 key와 다른 token/계산 입력은 409다(ADR-064).
+        같은 coreArtifactId에 다른 rawSha256이면 ARTIFACT_IDENTITY_CONFLICT가
+        일반 IDEMPOTENCY_PAYLOAD_CONFLICT보다 우선한다.
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
       requestBody:
         required: true
@@ -170,6 +172,7 @@ paths:
         PENDING에서 claim 전 grant 교체는 같은 token, RUNNING에서 닫힌 worker attempt 뒤
         재시도는 새 token을 사용한다. live lease, terminal/cancelled, stale CAS,
         input/version/generation 변경과 consumed grant 재사용은 거절한다.
+        같은 coreArtifactId의 rawSha256 변경은 ARTIFACT_IDENTITY_CONFLICT(409)다.
         exact key/body replay는 최초 receipt를 반환하며 grant를 다시 적용하지 않는다.
       parameters:
         - $ref: '#/components/parameters/TradingComputeJobId'
@@ -341,6 +344,8 @@ paths:
         Normalization은 payload의 최종 attemptToken/deletionGeneration을 비교한다.
         PERSISTED는 Core 장기 저장 후, DISCARDED_STALE은 deletion tombstone으로
         Core가 저장하지 않은 completed payload를 폐기할 때만 사용한다.
+        Normalization PERSISTED는 Core LedgerRevision/Session ACCEPTED의 원자적 publication
+        commit 이후에만 전송한다. ACK 실패는 같은 payload로 재전송하고 Revision을 다시 만들지 않는다.
         다른 attempt/hash/job 조합은 409이며 FAILED에는 acknowledgement payload가 없다.
       parameters:
         - $ref: '#/components/parameters/TradingComputeJobId'
@@ -519,6 +524,7 @@ components:
       in: header
       name: X-Internal-Api-Key
       description: |
+        Core↔Compute의 단일 REFINVEST_INTERNAL_API_KEY를 이 헤더로 보낸다.
         core-api→compute-api 호출 시 필수(`docs/DECISIONS.md` ADR-017). 배포 인프라의 네트워크 격리(VPC/보안
         그룹, k8s NetworkPolicy 등)와 함께 2중 방어로 사용한다. Key는 코드에 하드코딩하지 않으며,
         배포 인프라가 정해지면 그 인프라의 시크릿 관리 방식을 따른다. 전송 구간 TLS는 이 인증과 별개로
@@ -604,6 +610,10 @@ components:
         - UNSUPPORTED_POSITION_MODE
         - RECORD_CONFLICT
         - ARTIFACT_REFERENCE_EXPIRED
+        - SOURCE_ARTIFACT_EXPIRED
+        - SOURCE_CONTENT_LENGTH_MISMATCH
+        - SOURCE_CONTENT_HASH_MISMATCH
+        - ARTIFACT_IDENTITY_CONFLICT
         - ARTIFACT_ACCESS_DENIED
         - VERSION_UNAVAILABLE
         - VERSION_INCOMPATIBLE
@@ -692,8 +702,9 @@ components:
           CANCELLED: '#/components/schemas/TradingComputeJobCancelled'
     TradingNormalizationRuntimeIdentity:
       type: object
-      required: [attemptToken, deletionGeneration, grantRevision, expectedInputHash, versionSetHash]
+      required: [coreNormalizationRunId, attemptToken, deletionGeneration, grantRevision, expectedInputHash, versionSetHash]
       properties:
+        coreNormalizationRunId: { type: string, description: Core NormalizationRun의 opaque ID; 공개 Session 상태와 별개. }
         attemptToken: { type: string, minLength: 1, description: 현재 또는 terminal에 도달한 최종 Core attempt token. }
         deletionGeneration: { type: integer, format: int64, minimum: 0 }
         grantRevision: { type: integer, format: int64, minimum: 0 }
@@ -847,6 +858,13 @@ components:
       type: object
       required: [coreArtifactId, role, rawSha256, byteSize, contentType, accessUri, expiresAt]
       additionalProperties: false
+      description: |
+        ADR-065 ArtifactAccessGrant의 wire schema. coreArtifactId=artifactId,
+        rawSha256=sha256, byteSize=contentLength, contentType=mediaType,
+        accessUri=locator. 한 artifact에 대한 read-only single-read 권한이다.
+        Compute는 byteSize/rawSha256 검증 전 normalize하지 않고 완료/취소 후
+        staging bytes를 삭제한다. 늦어도 runtime TTL에 purge한다.
+        영구 저장 위치/credential은 전달하지 않는다.
       properties:
         coreArtifactId: { type: string }
         role: { $ref: '#/components/schemas/ArtifactRole' }
@@ -860,7 +878,8 @@ components:
             최대 5분 single-read internal URI. Core는 생성 전에도 아는
             coreLogicalJobId/coreImportSessionId/coreArtifactId/role/rawSha256/
             attemptToken/deletionGeneration에 서명·검증한다. Compute jobId는 필수 claim이 아니다.
-            URI/path와 서명값은 log/metric/error 금지.
+            URI/path/query에는 filename, UID, Symbol, 거래값이 없어야 한다.
+            URI와 query는 application log/metric/error 및 LedgerRevision/result 저장 금지.
         expiresAt: { type: string, format: date-time }
     TradingBookProduct:
       type: object
@@ -903,13 +922,16 @@ components:
         versionSetHash: { $ref: '#/components/schemas/TradingSha256' }
     CreateTradingNormalizationJobRequest:
       type: object
-      required: [coreLogicalJobId, coreImportSessionId, bookProduct, artifacts, sourceTimezone, reviewTimezone, targetVersionSet, pinnedInstrumentTerms, expectedInputHash, deletionGeneration, attemptToken]
+      required: [coreLogicalJobId, coreNormalizationRunId, coreImportSessionId, bookProduct, artifacts, sourceTimezone, reviewTimezone, targetVersionSet, pinnedInstrumentTerms, expectedInputHash, retryPolicyVersion, deletionGeneration, attemptToken]
       additionalProperties: false
       description: |
-        canonical 생성 fingerprint에는 이 요청의 모든 immutable 계산 입력, Core ID와 최초
+        expectedInputHash는 ADR-065 inputSetHash다. Logical normalization fingerprint는
+        Book/Session/role별 artifact ID·hash/VersionSet/timezone/product/mode의 canonical hash이며
+        grant URI/expiry, attempt token, dispatch/job ID와 retryPolicyVersion을 제외한다.
+        Compute 생성 fingerprint에는 이 요청의 모든 immutable 계산 입력, Core ID와 최초
         attemptToken/deletionGeneration을 포함하고 artifacts[].accessUri/expiresAt만 제외한다.
         artifacts 배열은 role 순, pinnedInstrumentTerms 배열은 instrumentId 순,
-        object key는 Unicode code point 순으로 정렬해 canonicalize한다. 문자열 값은
+        JSON object의 key는 Unicode code point 순으로 정렬해 canonicalize한다. 문자열 값은
         trim/case/Unicode normalization 없이 보존한다. 인증/멱등 header, runtime UUID/시각은
         포함하지 않는다.
         생성 replay에서는 먼저 기존 key/fingerprint를 조회해 최초 grant가 만료됐더라도
@@ -917,6 +939,7 @@ components:
         신규 접수일 때만 fresh grant 유효기간을 검사한다.
       properties:
         coreLogicalJobId: { type: string }
+        coreNormalizationRunId: { type: string }
         coreImportSessionId: { type: string }
         bookProduct: { $ref: '#/components/schemas/TradingBookProduct' }
         artifacts:
@@ -930,6 +953,7 @@ components:
         targetVersionSet: { $ref: '#/components/schemas/InternalNormalizerVersionSet' }
         pinnedInstrumentTerms: { type: array, items: { $ref: '#/components/schemas/PinnedInstrumentTerms' } }
         expectedInputHash: { $ref: '#/components/schemas/TradingSha256' }
+        retryPolicyVersion: { type: string, description: Core가 admission에 pin한 configurable RetryPolicy version. }
         deletionGeneration: { type: integer, format: int64, minimum: 0 }
         attemptToken: { type: string }
     UpdateTradingNormalizationJobGrantsRequest:
@@ -939,6 +963,8 @@ components:
       description: |
         별도 Idempotency-Key의 canonical update fingerprint는 이 body 전체를 포함한다.
         accessUri/expiresAt도 포함하되 idempotency record에는 fingerprint hash만 보존한다.
+        이것은 grant-update transport fingerprint이며 normalization inputSetHash와
+        deterministic resultHash에는 accessUri/expiresAt을 넣지 않는다.
         현재 grant locator 원문은 암호화된 짧은 runtime field에만 보관하고 log/metric은 금지다.
         같은 key/body는 최초 receipt를 재반환하고 다른 body는 409다. 신규 적용은
         revision/token CAS와 두 role의 atomic replacement다. live lease/terminal/
@@ -1249,16 +1275,17 @@ components:
           additionalProperties: { type: integer, format: int64, minimum: 0 }
     NormalizationTerminalPayload:
       type: object
-      required: [jobId, coreLogicalJobId, coreImportSessionId, attemptToken, deletionGeneration, status, versionSet, inputHash, artifactCoverages, canonicalRecords, sourceEvidenceSnapshots, reconciliationManifest, capability, qualityReport, ledgerContentHash, resultHash, createdAt, terminalAt]
+      required: [jobId, coreLogicalJobId, coreNormalizationRunId, coreImportSessionId, attemptToken, deletionGeneration, status, versionSet, inputHash, artifactCoverages, canonicalRecords, sourceEvidenceSnapshots, reconciliationManifest, capability, qualityReport, ledgerContentHash, resultHash, createdAt, terminalAt]
       properties:
         jobId: { type: string }
         coreLogicalJobId: { type: string }
+        coreNormalizationRunId: { type: string }
         coreImportSessionId: { type: string }
         attemptToken: { type: string, minLength: 1, description: 최종 성공한 Core attempt token; deterministic resultHash 계산에는 제외. }
         deletionGeneration: { type: integer, format: int64, minimum: 0, description: Core publication 검증용 pinned generation; deterministic resultHash 계산에는 제외. }
         status: { type: string, enum: [COMPLETED] }
         versionSet: { $ref: '#/components/schemas/InternalNormalizerVersionSet' }
-        inputHash: { $ref: '#/components/schemas/TradingSha256' }
+        inputHash: { $ref: '#/components/schemas/TradingSha256', description: 요청 expectedInputHash/inputSetHash와 반드시 일치. }
         artifactCoverages:
           type: array
           minItems: 2
