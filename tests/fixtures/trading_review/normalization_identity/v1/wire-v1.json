@@ -1,0 +1,172 @@
+{
+  "request": {
+    "coreLogicalJobId": "logical-example",
+    "coreNormalizationRunId": "run-example",
+    "coreImportSessionId": "session-example",
+    "inputIdentity": {
+      "hashSpecificationVersion": "TRADING_INPUT_SET_HASH_V1",
+      "tradingBookId": "book-example",
+      "sourceImportSessionIds": [
+        "session-example"
+      ],
+      "artifactsByRole": {
+        "TRADE_HISTORY": {
+          "artifactId": "artifact-trade-example",
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "POSITION_HISTORY": {
+          "artifactId": "artifact-position-example",
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "sourceTimezone": "Asia/Seoul",
+      "reviewTimezone": "UTC",
+      "declaredProduct": {
+        "venue": "BINANCE",
+        "productFamily": "LINEAR_PERPETUAL",
+        "settlementAsset": "USDT"
+      },
+      "declaredPositionMode": "ONE_WAY",
+      "targetVersionSet": {
+        "normalizer": {
+          "sourceDialectVersionsByArtifactRole": {
+            "TRADE_HISTORY": "TRADE_V1",
+            "POSITION_HISTORY": "POSITION_V1"
+          },
+          "adapterVersion": "ADAPTER_V1",
+          "normalizerVersion": "NORMALIZER_V1",
+          "canonicalSchemaVersion": "CANONICAL_V1",
+          "implementationDigest": "digest-normalizer-example",
+          "versionSetHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "reconstruction": {
+          "instrumentTermsVersionByInstrument": {
+            "instrument-example": "TERMS_V1"
+          },
+          "reconstructionPolicyVersion": "RECONSTRUCTION_V1",
+          "reconciliationVersion": "RECONCILIATION_V1",
+          "reviewUnitSchemaVersion": "REVIEW_UNIT_V1",
+          "evidenceSchemaVersion": "EVIDENCE_V1",
+          "implementationDigest": "digest-reconstruction-example",
+          "versionSetHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        "versionSetHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      }
+    },
+    "expectedInputSetHash": "1122481b2c208afc1cae751f952f1b9a670f446f404d42c1e581a3b83f25552e",
+    "artifactAccessGrants": [
+      {
+        "coreArtifactId": "artifact-trade-example",
+        "role": "TRADE_HISTORY",
+        "rawSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "byteSize": 100,
+        "contentType": "text/csv",
+        "accessUri": "https://example.invalid/grants/trade",
+        "expiresAt": "2026-01-01T00:05:00Z"
+      },
+      {
+        "coreArtifactId": "artifact-position-example",
+        "role": "POSITION_HISTORY",
+        "rawSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "byteSize": 101,
+        "contentType": "text/csv",
+        "accessUri": "https://example.invalid/grants/position",
+        "expiresAt": "2026-01-01T00:05:00Z"
+      }
+    ],
+    "pinnedInstrumentTerms": [],
+    "retryPolicyVersion": "POLICY_V1",
+    "deletionGeneration": 1,
+    "attemptToken": "attempt-example"
+  },
+  "completedDescriptor": {
+    "jobId": "job-example",
+    "coreLogicalJobId": "logical-example",
+    "coreNormalizationRunId": "run-example",
+    "payloadId": "payload-example",
+    "mediaType": "application/vnd.refinvest.trading-normalization+json",
+    "byteSize": 100,
+    "payloadSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "attemptToken": "attempt-example",
+    "deletionGeneration": 1,
+    "inputSetHash": "1122481b2c208afc1cae751f952f1b9a670f446f404d42c1e581a3b83f25552e",
+    "hashSpecificationVersion": "TRADING_INPUT_SET_HASH_V1",
+    "targetVersionSet": {
+      "normalizer": {
+        "sourceDialectVersionsByArtifactRole": {
+          "TRADE_HISTORY": "TRADE_V1",
+          "POSITION_HISTORY": "POSITION_V1"
+        },
+        "adapterVersion": "ADAPTER_V1",
+        "normalizerVersion": "NORMALIZER_V1",
+        "canonicalSchemaVersion": "CANONICAL_V1",
+        "implementationDigest": "digest-normalizer-example",
+        "versionSetHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "reconstruction": {
+        "instrumentTermsVersionByInstrument": {
+          "instrument-example": "TERMS_V1"
+        },
+        "reconstructionPolicyVersion": "RECONSTRUCTION_V1",
+        "reconciliationVersion": "RECONCILIATION_V1",
+        "reviewUnitSchemaVersion": "REVIEW_UNIT_V1",
+        "evidenceSchemaVersion": "EVIDENCE_V1",
+        "implementationDigest": "digest-reconstruction-example",
+        "versionSetHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "versionSetHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    "reconciliationManifestHash": "1111111111111111111111111111111111111111111111111111111111111111",
+    "resultHash": "2222222222222222222222222222222222222222222222222222222222222222",
+    "createdAt": "2026-01-01T00:00:00Z",
+    "expiresAt": "2026-01-02T00:00:00Z"
+  },
+  "failedStatus": {
+    "jobId": "job-example",
+    "coreLogicalJobId": "logical-example",
+    "kind": "NORMALIZATION_RECONCILIATION",
+    "progressStage": "VALIDATION",
+    "attempt": 1,
+    "createdAt": "2026-01-01T00:00:00Z",
+    "updatedAt": "2026-01-01T00:00:01Z",
+    "status": "FAILED",
+    "failure": {
+      "code": "INPUT_SET_HASH_MISMATCH",
+      "message": "Input identity verification failed.",
+      "retryable": false
+    },
+    "terminalAt": "2026-01-01T00:00:01Z",
+    "coreNormalizationRunId": "run-example",
+    "attemptToken": "attempt-example",
+    "deletionGeneration": 1,
+    "grantRevision": 0,
+    "expectedInputSetHash": "1122481b2c208afc1cae751f952f1b9a670f446f404d42c1e581a3b83f25552e",
+    "inputSetHash": "3333333333333333333333333333333333333333333333333333333333333333",
+    "hashSpecificationVersion": "TRADING_INPUT_SET_HASH_V1",
+    "targetVersionSet": {
+      "normalizer": {
+        "sourceDialectVersionsByArtifactRole": {
+          "TRADE_HISTORY": "TRADE_V1",
+          "POSITION_HISTORY": "POSITION_V1"
+        },
+        "adapterVersion": "ADAPTER_V1",
+        "normalizerVersion": "NORMALIZER_V1",
+        "canonicalSchemaVersion": "CANONICAL_V1",
+        "implementationDigest": "digest-normalizer-example",
+        "versionSetHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "reconstruction": {
+        "instrumentTermsVersionByInstrument": {
+          "instrument-example": "TERMS_V1"
+        },
+        "reconstructionPolicyVersion": "RECONSTRUCTION_V1",
+        "reconciliationVersion": "RECONCILIATION_V1",
+        "reviewUnitSchemaVersion": "REVIEW_UNIT_V1",
+        "evidenceSchemaVersion": "EVIDENCE_V1",
+        "implementationDigest": "digest-reconstruction-example",
+        "versionSetHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "versionSetHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    }
+  }
+}

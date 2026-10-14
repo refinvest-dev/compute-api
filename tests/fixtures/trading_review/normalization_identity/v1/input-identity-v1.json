@@ -1,0 +1,56 @@
+{
+  "specificationVersion": "TRADING_INPUT_SET_HASH_V1",
+  "inputIdentity": {
+    "hashSpecificationVersion": "TRADING_INPUT_SET_HASH_V1",
+    "tradingBookId": "book-example",
+    "sourceImportSessionIds": [
+      "session-example"
+    ],
+    "artifactsByRole": {
+      "TRADE_HISTORY": {
+        "artifactId": "artifact-trade-example",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "POSITION_HISTORY": {
+        "artifactId": "artifact-position-example",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    },
+    "sourceTimezone": "Asia/Seoul",
+    "reviewTimezone": "UTC",
+    "declaredProduct": {
+      "venue": "BINANCE",
+      "productFamily": "LINEAR_PERPETUAL",
+      "settlementAsset": "USDT"
+    },
+    "declaredPositionMode": "ONE_WAY",
+    "targetVersionSet": {
+      "normalizer": {
+        "sourceDialectVersionsByArtifactRole": {
+          "TRADE_HISTORY": "TRADE_V1",
+          "POSITION_HISTORY": "POSITION_V1"
+        },
+        "adapterVersion": "ADAPTER_V1",
+        "normalizerVersion": "NORMALIZER_V1",
+        "canonicalSchemaVersion": "CANONICAL_V1",
+        "implementationDigest": "digest-normalizer-example",
+        "versionSetHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "reconstruction": {
+        "instrumentTermsVersionByInstrument": {
+          "instrument-example": "TERMS_V1"
+        },
+        "reconstructionPolicyVersion": "RECONSTRUCTION_V1",
+        "reconciliationVersion": "RECONCILIATION_V1",
+        "reviewUnitSchemaVersion": "REVIEW_UNIT_V1",
+        "evidenceSchemaVersion": "EVIDENCE_V1",
+        "implementationDigest": "digest-reconstruction-example",
+        "versionSetHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "versionSetHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    }
+  },
+  "canonicalJson": "{\"artifactsByRole\":{\"POSITION_HISTORY\":{\"artifactId\":\"artifact-position-example\",\"sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},\"TRADE_HISTORY\":{\"artifactId\":\"artifact-trade-example\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}},\"declaredPositionMode\":\"ONE_WAY\",\"declaredProduct\":{\"productFamily\":\"LINEAR_PERPETUAL\",\"settlementAsset\":\"USDT\",\"venue\":\"BINANCE\"},\"hashSpecificationVersion\":\"TRADING_INPUT_SET_HASH_V1\",\"reviewTimezone\":\"UTC\",\"sourceImportSessionIds\":[\"session-example\"],\"sourceTimezone\":\"Asia/Seoul\",\"targetVersionSet\":{\"normalizer\":{\"adapterVersion\":\"ADAPTER_V1\",\"canonicalSchemaVersion\":\"CANONICAL_V1\",\"implementationDigest\":\"digest-normalizer-example\",\"normalizerVersion\":\"NORMALIZER_V1\",\"sourceDialectVersionsByArtifactRole\":{\"POSITION_HISTORY\":\"POSITION_V1\",\"TRADE_HISTORY\":\"TRADE_V1\"},\"versionSetHash\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"},\"reconstruction\":{\"evidenceSchemaVersion\":\"EVIDENCE_V1\",\"implementationDigest\":\"digest-reconstruction-example\",\"instrumentTermsVersionByInstrument\":{\"instrument-example\":\"TERMS_V1\"},\"reconciliationVersion\":\"RECONCILIATION_V1\",\"reconstructionPolicyVersion\":\"RECONSTRUCTION_V1\",\"reviewUnitSchemaVersion\":\"REVIEW_UNIT_V1\",\"versionSetHash\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\"},\"versionSetHash\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"},\"tradingBookId\":\"book-example\"}",
+  "canonicalUtf8Hex": "7b226172746966616374734279526f6c65223a7b22504f534954494f4e5f484953544f5259223a7b2261727469666163744964223a2261727469666163742d706f736974696f6e2d6578616d706c65222c22736861323536223a2262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262227d2c2254524144455f484953544f5259223a7b2261727469666163744964223a2261727469666163742d74726164652d6578616d706c65222c22736861323536223a2261616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161227d7d2c226465636c61726564506f736974696f6e4d6f6465223a224f4e455f574159222c226465636c6172656450726f64756374223a7b2270726f6475637446616d696c79223a224c494e4541525f50455250455455414c222c22736574746c656d656e744173736574223a2255534454222c2276656e7565223a2242494e414e4345227d2c226861736853706563696669636174696f6e56657273696f6e223a2254524144494e475f494e5055545f5345545f484153485f5631222c2272657669657754696d657a6f6e65223a22555443222c22736f75726365496d706f727453657373696f6e496473223a5b2273657373696f6e2d6578616d706c65225d2c22736f7572636554696d657a6f6e65223a22417369612f53656f756c222c2274617267657456657273696f6e536574223a7b226e6f726d616c697a6572223a7b226164617074657256657273696f6e223a22414441505445525f5631222c2263616e6f6e6963616c536368656d6156657273696f6e223a2243414e4f4e4943414c5f5631222c22696d706c656d656e746174696f6e446967657374223a226469676573742d6e6f726d616c697a65722d6578616d706c65222c226e6f726d616c697a657256657273696f6e223a224e4f524d414c495a45525f5631222c22736f757263654469616c65637456657273696f6e7342794172746966616374526f6c65223a7b22504f534954494f4e5f484953544f5259223a22504f534954494f4e5f5631222c2254524144455f484953544f5259223a2254524144455f5631227d2c2276657273696f6e53657448617368223a2263636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363227d2c227265636f6e737472756374696f6e223a7b2265766964656e6365536368656d6156657273696f6e223a2245564944454e43455f5631222c22696d706c656d656e746174696f6e446967657374223a226469676573742d7265636f6e737472756374696f6e2d6578616d706c65222c22696e737472756d656e745465726d7356657273696f6e4279496e737472756d656e74223a7b22696e737472756d656e742d6578616d706c65223a225445524d535f5631227d2c227265636f6e63696c696174696f6e56657273696f6e223a225245434f4e43494c494154494f4e5f5631222c227265636f6e737472756374696f6e506f6c69637956657273696f6e223a225245434f4e535452554354494f4e5f5631222c22726576696577556e6974536368656d6156657273696f6e223a225245564945575f554e49545f5631222c2276657273696f6e53657448617368223a2264646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464227d2c2276657273696f6e53657448617368223a2265656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565656565227d2c2274726164696e67426f6f6b4964223a22626f6f6b2d6578616d706c65227d",
+  "expectedSha256": "1122481b2c208afc1cae751f952f1b9a670f446f404d42c1e581a3b83f25552e"
+}

@@ -613,6 +613,8 @@ components:
         - SOURCE_ARTIFACT_EXPIRED
         - SOURCE_CONTENT_LENGTH_MISMATCH
         - SOURCE_CONTENT_HASH_MISMATCH
+        - INPUT_SET_HASH_MISMATCH
+        - INPUT_HASH_SPECIFICATION_UNSUPPORTED
         - ARTIFACT_IDENTITY_CONFLICT
         - ARTIFACT_ACCESS_DENIED
         - VERSION_UNAVAILABLE
@@ -702,14 +704,16 @@ components:
           CANCELLED: '#/components/schemas/TradingComputeJobCancelled'
     TradingNormalizationRuntimeIdentity:
       type: object
-      required: [coreNormalizationRunId, attemptToken, deletionGeneration, grantRevision, expectedInputHash, versionSetHash]
+      required: [coreNormalizationRunId, attemptToken, deletionGeneration, grantRevision, expectedInputSetHash, hashSpecificationVersion, targetVersionSet]
       properties:
         coreNormalizationRunId: { type: string, description: Core NormalizationRun의 opaque ID; 공개 Session 상태와 별개. }
         attemptToken: { type: string, minLength: 1, description: 현재 또는 terminal에 도달한 최종 Core attempt token. }
         deletionGeneration: { type: integer, format: int64, minimum: 0 }
         grantRevision: { type: integer, format: int64, minimum: 0 }
-        expectedInputHash: { $ref: '#/components/schemas/TradingSha256' }
-        versionSetHash: { $ref: '#/components/schemas/TradingSha256' }
+        expectedInputSetHash: { $ref: '#/components/schemas/TradingSha256', description: Core 요청의 선언값; 실패 상태에서도 보존. }
+        inputSetHash: { $ref: '#/components/schemas/TradingSha256', description: Compute 재계산값. 미지원 규격에서는 존재하지 않는다. COMPLETED에는 필수. }
+        hashSpecificationVersion: { type: string, minLength: 1, description: V1 지원값은 TRADING_INPUT_SET_HASH_V1; 알 수 없는 값은 INPUT_HASH_SPECIFICATION_UNSUPPORTED terminal failure. }
+        targetVersionSet: { $ref: '#/components/schemas/NormalizationTargetVersionSet' }
     TradingNormalizationGrantAction:
       type: string
       enum: [NONE, REPLACE_QUEUED_GRANTS, START_RETRY_ATTEMPT]
@@ -737,6 +741,8 @@ components:
       allOf:
         - $ref: '#/components/schemas/TradingComputeJobCompleted'
         - $ref: '#/components/schemas/TradingNormalizationRuntimeIdentity'
+        - type: object
+          required: [inputSetHash]
     TradingNormalizationJobFailed:
       allOf:
         - $ref: '#/components/schemas/TradingComputeJobFailed'
@@ -778,13 +784,26 @@ components:
         createdAt: { type: string, format: date-time }
         expiresAt: { type: string, format: date-time, description: terminalAt + 최대 PT24H 이내. }
     NormalizationTerminalResultDescriptor:
-      allOf:
-        - $ref: '#/components/schemas/ComputeTerminalResultDescriptor'
-        - type: object
-          required: [attemptToken, deletionGeneration]
-          properties:
-            attemptToken: { type: string, minLength: 1 }
-            deletionGeneration: { type: integer, format: int64, minimum: 0 }
+      type: object
+      additionalProperties: false
+      required: [jobId, coreLogicalJobId, coreNormalizationRunId, payloadId, mediaType, byteSize, payloadSha256, attemptToken, deletionGeneration, inputSetHash, hashSpecificationVersion, targetVersionSet, reconciliationManifestHash, resultHash, createdAt, expiresAt]
+      properties:
+        jobId: { type: string }
+        coreLogicalJobId: { type: string }
+        coreNormalizationRunId: { type: string, minLength: 1 }
+        payloadId: { type: string }
+        mediaType: { type: string, enum: [application/vnd.refinvest.trading-normalization+json] }
+        byteSize: { type: integer, format: int64, minimum: 1 }
+        payloadSha256: { $ref: '#/components/schemas/TradingSha256' }
+        attemptToken: { type: string, minLength: 1 }
+        deletionGeneration: { type: integer, format: int64, minimum: 0 }
+        inputSetHash: { $ref: '#/components/schemas/TradingSha256' }
+        hashSpecificationVersion: { type: string, enum: [TRADING_INPUT_SET_HASH_V1] }
+        targetVersionSet: { $ref: '#/components/schemas/NormalizationTargetVersionSet' }
+        reconciliationManifestHash: { $ref: '#/components/schemas/TradingSha256' }
+        resultHash: { $ref: '#/components/schemas/TradingSha256' }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
       description: |
         최종 attempt identity는 Core publication과 acknowledgement에서 payload와 함께 검증한다.
         resultHash는 deterministic engine hash이고 payloadSha256은 실제 전송 bytes의 hash다.
@@ -901,64 +920,127 @@ components:
         contractMultiplier: { $ref: '#/components/schemas/TradingDecimalString' }
         settlementPrecision: { type: integer, minimum: 0 }
         instrumentTermsVersion: { type: string }
-    InternalNormalizerVersionSet:
+    NormalizerVersionSet:
       type: object
-      required: [sourceDialectVersionsByArtifactRole, adapterVersion, normalizerVersion, canonicalSchemaVersion, reconstructionPolicyVersion, reconciliationVersion, reviewUnitSchemaVersion, evidenceSchemaVersion, implementationDigest, versionSetHash]
+      additionalProperties: false
+      required: [sourceDialectVersionsByArtifactRole, adapterVersion, normalizerVersion, canonicalSchemaVersion, implementationDigest, versionSetHash]
       properties:
         sourceDialectVersionsByArtifactRole:
           type: object
           required: [TRADE_HISTORY, POSITION_HISTORY]
+          additionalProperties: false
           properties:
-            TRADE_HISTORY: { type: string }
-            POSITION_HISTORY: { type: string }
-        adapterVersion: { type: string }
-        normalizerVersion: { type: string }
-        canonicalSchemaVersion: { type: string }
-        reconstructionPolicyVersion: { type: string }
-        reconciliationVersion: { type: string }
-        reviewUnitSchemaVersion: { type: string }
-        evidenceSchemaVersion: { type: string }
+            TRADE_HISTORY: { type: string, minLength: 1, maxLength: 200 }
+            POSITION_HISTORY: { type: string, minLength: 1, maxLength: 200 }
+        adapterVersion: { type: string, minLength: 1, maxLength: 200 }
+        normalizerVersion: { type: string, minLength: 1, maxLength: 200 }
+        canonicalSchemaVersion: { type: string, minLength: 1, maxLength: 200 }
         implementationDigest: { type: string }
         versionSetHash: { $ref: '#/components/schemas/TradingSha256' }
+    ReconstructionVersionSet:
+      type: object
+      additionalProperties: false
+      required: [instrumentTermsVersionByInstrument, reconstructionPolicyVersion, reconciliationVersion, reviewUnitSchemaVersion, evidenceSchemaVersion, implementationDigest, versionSetHash]
+      properties:
+        instrumentTermsVersionByInstrument:
+          type: object
+          additionalProperties: { type: string, minLength: 1, maxLength: 200 }
+        reconstructionPolicyVersion: { type: string, minLength: 1, maxLength: 200 }
+        reconciliationVersion: { type: string, minLength: 1, maxLength: 200 }
+        reviewUnitSchemaVersion: { type: string, minLength: 1, maxLength: 200 }
+        evidenceSchemaVersion: { type: string, minLength: 1, maxLength: 200 }
+        implementationDigest: { type: string }
+        versionSetHash: { $ref: '#/components/schemas/TradingSha256' }
+    NormalizationTargetVersionSet:
+      type: object
+      additionalProperties: false
+      required: [normalizer, reconstruction, versionSetHash]
+      description: Core TargetTradingVersionSet의 normalization 적용 부분 전체. analytics는 생략.
+      properties:
+        normalizer: { $ref: '#/components/schemas/NormalizerVersionSet' }
+        reconstruction: { $ref: '#/components/schemas/ReconstructionVersionSet' }
+        versionSetHash: { $ref: '#/components/schemas/TradingSha256' }
+    NormalizationDeclaredProduct:
+      type: object
+      additionalProperties: false
+      required: [venue, productFamily, settlementAsset]
+      properties:
+        venue: { type: string, enum: [BINANCE] }
+        productFamily: { type: string, enum: [LINEAR_PERPETUAL] }
+        settlementAsset: { type: string, enum: [USDT] }
+    NormalizationInputArtifactIdentity:
+      type: object
+      additionalProperties: false
+      required: [artifactId, sha256]
+      properties:
+        artifactId: { type: string, minLength: 1 }
+        sha256: { $ref: '#/components/schemas/TradingSha256' }
+    NormalizationInputIdentity:
+      type: object
+      additionalProperties: false
+      additionalProperties: false
+      required: [hashSpecificationVersion, tradingBookId, sourceImportSessionIds, artifactsByRole, sourceTimezone, reviewTimezone, declaredProduct, declaredPositionMode, targetVersionSet]
+      description: ADR-065 및 docs/TRADING_NORMALIZATION_IDENTITY.md의 RFC 8785 V1 canonical root. 이 object만 inputSetHash 대상이다.
+      properties:
+        hashSpecificationVersion: { type: string, minLength: 1, description: V1 지원값은 TRADING_INPUT_SET_HASH_V1. 미지원 값은 INPUT_HASH_SPECIFICATION_UNSUPPORTED로 FAILED. }
+        tradingBookId: { type: string, minLength: 1 }
+        sourceImportSessionIds:
+          type: array
+          minItems: 1
+          maxItems: 1
+          uniqueItems: true
+          items: { type: string, minLength: 1 }
+          description: V1은 한 Session. UTF-16 code unit 순 정렬.
+        artifactsByRole:
+          type: object
+          additionalProperties: false
+          required: [TRADE_HISTORY, POSITION_HISTORY]
+          properties:
+            TRADE_HISTORY: { $ref: '#/components/schemas/NormalizationInputArtifactIdentity' }
+            POSITION_HISTORY: { $ref: '#/components/schemas/NormalizationInputArtifactIdentity' }
+        sourceTimezone: { type: string, minLength: 1 }
+        reviewTimezone: { type: string, minLength: 1 }
+        declaredProduct: { $ref: '#/components/schemas/NormalizationDeclaredProduct' }
+        declaredPositionMode: { type: string, enum: [ONE_WAY] }
+        targetVersionSet: { $ref: '#/components/schemas/NormalizationTargetVersionSet' }
     CreateTradingNormalizationJobRequest:
       type: object
-      required: [coreLogicalJobId, coreNormalizationRunId, coreImportSessionId, bookProduct, artifacts, sourceTimezone, reviewTimezone, targetVersionSet, pinnedInstrumentTerms, expectedInputHash, retryPolicyVersion, deletionGeneration, attemptToken]
+      required: [coreLogicalJobId, coreNormalizationRunId, coreImportSessionId, inputIdentity, expectedInputSetHash, artifactAccessGrants, pinnedInstrumentTerms, retryPolicyVersion, deletionGeneration, attemptToken]
       additionalProperties: false
       description: |
-        expectedInputHash는 ADR-065 inputSetHash다. Logical normalization fingerprint는
-        Book/Session/role별 artifact ID·hash/VersionSet/timezone/product/mode의 canonical hash이며
-        grant URI/expiry, attempt token, dispatch/job ID와 retryPolicyVersion을 제외한다.
-        Compute 생성 fingerprint에는 이 요청의 모든 immutable 계산 입력, Core ID와 최초
-        attemptToken/deletionGeneration을 포함하고 artifacts[].accessUri/expiresAt만 제외한다.
-        artifacts 배열은 role 순, pinnedInstrumentTerms 배열은 instrumentId 순,
-        JSON object의 key는 Unicode code point 순으로 정렬해 canonicalize한다. 문자열 값은
-        trim/case/Unicode normalization 없이 보존한다. 인증/멱등 header, runtime UUID/시각은
-        포함하지 않는다.
+        inputIdentity만 ADR-065 inputSetHash의 RFC 8785 hash 대상이다. Compute는
+        job을 접수한 뒤 normalization 시작 전에 독립 재계산값과 expectedInputSetHash를
+        비교한다. 불일치 또는 미지원 규격은 safe FAILED status이며 성공 payload는 없다.
+        coreImportSessionId는 inputIdentity.sourceImportSessionIds[0]와 같아야 한다.
+        artifactAccessGrants의 두 role/ID/SHA-256은 inputIdentity.artifactsByRole과
+        정확히 같아야 한다. byteSize/contentType은 별도 pin/다운로드 검증 descriptor다.
+        pinnedInstrumentTerms는 실행 입력/result provenance이며 inputSetHash 대상이 아니다.
+        Compute 생성 fingerprint는 immutable 계산 입력, Core IDs, 최초 attemptToken과
+        deletionGeneration을 포함하되 grant accessUri/expiresAt은 제외한다. 같은 key에
+        다른 coreNormalizationRunId는 409. 갱신된 URI/expiry만 있는 replay는 기존 job.
         생성 replay에서는 먼저 기존 key/fingerprint를 조회해 최초 grant가 만료됐더라도
         최초 202/jobId를 반환하고 저장된 grant/token을 교체하지 않는다.
-        신규 접수일 때만 fresh grant 유효기간을 검사한다.
+        신규 접수일 때만 fresh grant 유효기간을 검사한다. OpenAPI required property를
+        runtime DTO의 extra=forbid가 거부하면 계약 미준수다.
       properties:
         coreLogicalJobId: { type: string }
-        coreNormalizationRunId: { type: string }
+        coreNormalizationRunId: { type: string, minLength: 1 }
         coreImportSessionId: { type: string }
-        bookProduct: { $ref: '#/components/schemas/TradingBookProduct' }
-        artifacts:
+        inputIdentity: { $ref: '#/components/schemas/NormalizationInputIdentity' }
+        expectedInputSetHash: { $ref: '#/components/schemas/TradingSha256' }
+        artifactAccessGrants:
           type: array
           minItems: 2
           maxItems: 2
           items: { $ref: '#/components/schemas/ArtifactReadGrant' }
           description: role별 정확히 하나.
-        sourceTimezone: { type: string }
-        reviewTimezone: { type: string }
-        targetVersionSet: { $ref: '#/components/schemas/InternalNormalizerVersionSet' }
         pinnedInstrumentTerms: { type: array, items: { $ref: '#/components/schemas/PinnedInstrumentTerms' } }
-        expectedInputHash: { $ref: '#/components/schemas/TradingSha256' }
         retryPolicyVersion: { type: string, description: Core가 admission에 pin한 configurable RetryPolicy version. }
         deletionGeneration: { type: integer, format: int64, minimum: 0 }
         attemptToken: { type: string }
     UpdateTradingNormalizationJobGrantsRequest:
       type: object
-      required: [mode, expectedGrantRevision, expectedAttemptToken, nextAttemptToken, expectedInputHash, versionSetHash, deletionGeneration, artifacts]
+      required: [mode, expectedGrantRevision, expectedAttemptToken, nextAttemptToken, expectedInputSetHash, versionSetHash, deletionGeneration, artifactAccessGrants]
       additionalProperties: false
       description: |
         별도 Idempotency-Key의 canonical update fingerprint는 이 body 전체를 포함한다.
@@ -982,10 +1064,10 @@ components:
             REPLACE_QUEUED_GRANTS에서는 expectedAttemptToken과 같고 PENDING/claim 전만 허용.
             START_RETRY_ATTEMPT에서는 이전에 사용하지 않은 새 token이며
             RUNNING/닫힌 worker attempt/남은 retry budget에서만 허용.
-        expectedInputHash: { $ref: '#/components/schemas/TradingSha256' }
+        expectedInputSetHash: { $ref: '#/components/schemas/TradingSha256' }
         versionSetHash: { $ref: '#/components/schemas/TradingSha256' }
         deletionGeneration: { type: integer, format: int64, minimum: 0 }
-        artifacts:
+        artifactAccessGrants:
           type: array
           minItems: 2
           maxItems: 2
@@ -1234,10 +1316,10 @@ components:
         exclusionReasons: { type: array, items: { type: string } }
     ReconciliationManifestPayload:
       type: object
-      required: [manifestVersion, inputHash, manifestHash, reconstructionPolicyVersion, reconciliationVersion, reviewUnits, capability, quantityConservationPassed, cashFlowConservationPassed]
+      required: [manifestVersion, executionInputHash, manifestHash, reconstructionPolicyVersion, reconciliationVersion, reviewUnits, capability, quantityConservationPassed, cashFlowConservationPassed]
       properties:
         manifestVersion: { type: string }
-        inputHash: { $ref: '#/components/schemas/TradingSha256' }
+        executionInputHash: { $ref: '#/components/schemas/TradingSha256', description: Compute 계산 입력과 탐지된 dialect/terms 등을 식별하는 execution provenance hash. ADR-065 inputSetHash와 별개. }
         manifestHash: { $ref: '#/components/schemas/TradingSha256' }
         reconstructionPolicyVersion: { type: string }
         reconciliationVersion: { type: string }
@@ -1275,17 +1357,19 @@ components:
           additionalProperties: { type: integer, format: int64, minimum: 0 }
     NormalizationTerminalPayload:
       type: object
-      required: [jobId, coreLogicalJobId, coreNormalizationRunId, coreImportSessionId, attemptToken, deletionGeneration, status, versionSet, inputHash, artifactCoverages, canonicalRecords, sourceEvidenceSnapshots, reconciliationManifest, capability, qualityReport, ledgerContentHash, resultHash, createdAt, terminalAt]
+      required: [jobId, coreLogicalJobId, coreNormalizationRunId, coreImportSessionId, attemptToken, deletionGeneration, status, targetVersionSet, inputSetHash, hashSpecificationVersion, artifactCoverages, canonicalRecords, sourceEvidenceSnapshots, reconciliationManifest, capability, qualityReport, ledgerContentHash, resultHash, createdAt, terminalAt]
+      additionalProperties: false
       properties:
         jobId: { type: string }
         coreLogicalJobId: { type: string }
-        coreNormalizationRunId: { type: string }
+        coreNormalizationRunId: { type: string, minLength: 1, description: 요청 Core Run ID 그대로; persistence와 worker 재시작 및 재조회에서 유지. }
         coreImportSessionId: { type: string }
         attemptToken: { type: string, minLength: 1, description: 최종 성공한 Core attempt token; deterministic resultHash 계산에는 제외. }
         deletionGeneration: { type: integer, format: int64, minimum: 0, description: Core publication 검증용 pinned generation; deterministic resultHash 계산에는 제외. }
         status: { type: string, enum: [COMPLETED] }
-        versionSet: { $ref: '#/components/schemas/InternalNormalizerVersionSet' }
-        inputHash: { $ref: '#/components/schemas/TradingSha256', description: 요청 expectedInputHash/inputSetHash와 반드시 일치. }
+        targetVersionSet: { $ref: '#/components/schemas/NormalizationTargetVersionSet' }
+        inputSetHash: { $ref: '#/components/schemas/TradingSha256', description: 요청 inputIdentity에서 Compute가 독립 재계산한 값; expectedInputSetHash와 일치. }
+        hashSpecificationVersion: { type: string, enum: [TRADING_INPUT_SET_HASH_V1] }
         artifactCoverages:
           type: array
           minItems: 2
