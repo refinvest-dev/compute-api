@@ -2,6 +2,7 @@
 
 import copy
 import hashlib
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import replace
@@ -225,6 +226,15 @@ def test_normalization_routes_auth_admission_status_result_cancel_and_ack() -> N
         _validate("CreateTradingNormalizationJobRequest", body)
         job_id = accepted.json()["jobId"]
         assert client.post(base, json=body, headers=headers).json()["jobId"] == job_id
+        duplicate_json = json.dumps(body).replace(
+            '"tradingBookId":', '"tradingBookId": "forged", "tradingBookId":', 1
+        )
+        duplicate_headers = {**headers, "Content-Type": "application/json"}
+        assert (
+            client.post(base, content=duplicate_json, headers=duplicate_headers).json()["code"]
+            == "REQUEST_INVALID"
+        )
+        assert client.post(base, content=duplicate_json).status_code == 401
         changed = dict(body, expectedInputSetHash="b" * 64)
         assert client.post(base, json=changed, headers=headers).status_code == 409
         version_changed = copy.deepcopy(body)

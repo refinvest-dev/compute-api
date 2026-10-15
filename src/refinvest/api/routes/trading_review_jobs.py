@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import re
+from collections.abc import Callable, Coroutine
 from datetime import timedelta
-from typing import Annotated
+from hmac import compare_digest
+from typing import Annotated, Any, cast
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import JSONResponse, Response
+from fastapi.routing import APIRoute
 
 from refinvest.api.schemas.trading_review_jobs import (
     AcknowledgeTradingReviewJobTransport,
@@ -39,7 +43,49 @@ from refinvest.persistence.postgres.trading_review_jobs import PostgresTradingRe
 from refinvest.trading_review.decimal import ScaledDecimal
 from refinvest.trading_review.errors import TradingReviewError
 
-router = APIRouter(tags=["trading-review-jobs"], dependencies=[Depends(require_internal_api_key)])
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    values: dict[str, object] = {}
+    for key, value in pairs:
+        if key in values:
+            raise ValueError("Duplicate JSON key.")
+        values[key] = value
+    return values
+
+
+class _UniqueIdentityKeysRoute(APIRoute):
+    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+        handler = super().get_route_handler()
+
+        async def reject_duplicate_keys(request: Request) -> Response:
+            if request.method == "POST" and request.url.path.endswith(
+                "/trading-review/normalization-jobs"
+            ):
+                settings_provider = cast(
+                    Callable[[], Settings],
+                    request.app.dependency_overrides.get(get_settings, get_settings),
+                )
+                configured_key = settings_provider().internal_api_key
+                supplied_key = request.headers.get("X-Internal-Api-Key")
+                if (
+                    configured_key is not None
+                    and supplied_key is not None
+                    and compare_digest(configured_key, supplied_key)
+                ):
+                    try:
+                        json.loads(await request.body(), object_pairs_hook=_unique_json_object)
+                    except (ValueError, UnicodeDecodeError):
+                        return _http_error(422, "REQUEST_INVALID", "Malformed request body.")
+            return await handler(request)
+
+        return reject_duplicate_keys
+
+
+router = APIRouter(
+    tags=["trading-review-jobs"],
+    dependencies=[Depends(require_internal_api_key)],
+    route_class=_UniqueIdentityKeysRoute,
+)
 _KEY = re.compile(r"^[A-Za-z0-9._~-]{1,128}$")
 
 
