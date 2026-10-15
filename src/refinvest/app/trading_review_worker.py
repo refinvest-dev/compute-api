@@ -87,7 +87,8 @@ class TradingReviewWorkerHost:
                     payload=outcome.payload,
                     media_type=outcome.media_type,
                     payload_sha256=outcome.payload_sha256,
-                    input_hash=outcome.input_hash,
+                    input_set_hash=outcome.input_set_hash,
+                    reconciliation_manifest_hash=outcome.reconciliation_manifest_hash,
                     result_hash=outcome.result_hash,
                     retention=self.retention,
                 )

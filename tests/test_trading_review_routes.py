@@ -1,12 +1,16 @@
 """Contract-facing normalization route checks using synthetic descriptors."""
 
+import copy
 import hashlib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import uuid4
 
+import yaml
+from jsonschema import Draft202012Validator, FormatChecker
 from starlette.testclient import TestClient
 
 from refinvest.api.routes.trading_review_jobs import get_trading_review_repository
@@ -24,8 +28,34 @@ from refinvest.application.trading_review_jobs import (
     TradingReviewJobStatusView,
     TradingReviewJobSubmission,
 )
-from refinvest.trading_review.versions import SUPPORTED_VERSION_SET
-from tests.trading_review_support import simple_long_request
+from tests.trading_review_support import (
+    input_set_hash_for,
+    normalization_identity_for,
+    simple_long_request,
+)
+
+OPENAPI = yaml.safe_load(
+    (Path(__file__).parents[1] / "openapi/compute-api.yaml").read_text(encoding="utf-8")
+)
+
+
+def _validate(name: str, document: dict[str, object]) -> None:
+    def openapi_nullable(node: object) -> object:
+        if isinstance(node, list):
+            return [openapi_nullable(item) for item in node]
+        if isinstance(node, dict):
+            result = {key: openapi_nullable(value) for key, value in node.items()}
+            if result.get("nullable") is True and isinstance(result.get("type"), str):
+                result["type"] = [result["type"], "null"]
+            return result
+        return node
+
+    Draft202012Validator(
+        openapi_nullable(
+            {"$ref": f"#/components/schemas/{name}", "components": OPENAPI["components"]}
+        ),
+        format_checker=FormatChecker(),
+    ).validate(document)
 
 
 class MemoryJobs:
@@ -56,6 +86,7 @@ class MemoryJobs:
             job_id=job.job_id,
             core_logical_job_id=job.core_logical_job_id,
             core_import_session_id=job.core_import_session_id,
+            core_normalization_run_id=job.core_normalization_run_id,
             kind=TradingReviewJobKind.NORMALIZATION_RECONCILIATION,
             status=TradingReviewJobStatus.PENDING,
             progress_stage="QUEUED",
@@ -64,7 +95,11 @@ class MemoryJobs:
             deletion_generation=job.deletion_generation,
             created_at=now,
             updated_at=now,
-            expected_input_hash=job.expected_input_hash,
+            expected_input_set_hash=job.expected_input_set_hash,
+            computed_input_set_hash=job.computed_input_set_hash,
+            hash_specification_version=job.hash_specification_version,
+            target_version_set=job.request_payload["inputIdentity"]["targetVersionSet"],
+            retry_policy_version=job.retry_policy_version,
             version_set_hash=job.version_set_hash,
         )
         return TradingReviewJobSubmission(job.job_id, job.core_logical_job_id, job.kind, now)
@@ -124,17 +159,14 @@ class MemoryJobs:
 
 def _body() -> dict[str, object]:
     request = simple_long_request()
-    version = SUPPORTED_VERSION_SET
+    identity = normalization_identity_for(request)
     return {
         "coreLogicalJobId": "logical-1",
+        "coreNormalizationRunId": "run-1",
         "coreImportSessionId": "session-1",
-        "bookProduct": {
-            "venue": "BINANCE",
-            "productFamily": "LINEAR_PERPETUAL",
-            "positionMode": "ONE_WAY",
-            "settlementAsset": "USDT",
-        },
-        "artifacts": [
+        "inputIdentity": identity,
+        "expectedInputSetHash": input_set_hash_for(identity),
+        "artifactAccessGrants": [
             {
                 "coreArtifactId": artifact.artifact_id,
                 "role": artifact.role.value,
@@ -146,23 +178,6 @@ def _body() -> dict[str, object]:
             }
             for artifact in request.artifacts
         ],
-        "sourceTimezone": request.source_timezone,
-        "reviewTimezone": "UTC",
-        "targetVersionSet": {
-            "sourceDialectVersionsByArtifactRole": {
-                role.value: value
-                for role, value in version.source_dialect_versions_by_artifact_role
-            },
-            "adapterVersion": version.adapter_version,
-            "normalizerVersion": version.normalizer_version,
-            "canonicalSchemaVersion": version.canonical_schema_version,
-            "reconstructionPolicyVersion": version.reconstruction_policy_version,
-            "reconciliationVersion": version.reconciliation_version,
-            "reviewUnitSchemaVersion": version.review_unit_schema_version,
-            "evidenceSchemaVersion": version.evidence_schema_version,
-            "implementationDigest": version.implementation_digest,
-            "versionSetHash": version.version_set_hash,
-        },
         "pinnedInstrumentTerms": [
             {
                 "instrumentId": term.instrument_id,
@@ -176,7 +191,7 @@ def _body() -> dict[str, object]:
             }
             for term in request.instruments
         ],
-        "expectedInputHash": "a" * 64,
+        "retryPolicyVersion": "POLICY_V1",
         "deletionGeneration": 0,
         "attemptToken": "attempt-1",
     }
@@ -207,14 +222,15 @@ def test_normalization_routes_auth_admission_status_result_cancel_and_ack() -> N
         headers = {"X-Internal-Api-Key": "test-internal-key", "Idempotency-Key": "dispatch-1"}
         accepted = client.post(base, json=body, headers=headers)
         assert accepted.status_code == 202
+        _validate("CreateTradingNormalizationJobRequest", body)
         job_id = accepted.json()["jobId"]
         assert client.post(base, json=body, headers=headers).json()["jobId"] == job_id
-        changed = dict(body, expectedInputHash="b" * 64)
+        changed = dict(body, expectedInputSetHash="b" * 64)
         assert client.post(base, json=changed, headers=headers).status_code == 409
-        version_changed = dict(body)
-        version_changed["targetVersionSet"] = dict(
-            body["targetVersionSet"], normalizerVersion="latest"
-        )  # type: ignore[arg-type]
+        version_changed = copy.deepcopy(body)
+        version_changed["inputIdentity"]["targetVersionSet"]["normalizer"]["normalizerVersion"] = (
+            "latest"
+        )
         assert client.post(base, json=version_changed, headers=headers).status_code == 422
         invalid_terms = dict(body)
         invalid_terms["pinnedInstrumentTerms"] = [
@@ -222,12 +238,14 @@ def test_normalization_routes_auth_admission_status_result_cancel_and_ack() -> N
         ]
         assert client.post(base, json=invalid_terms, headers=headers).status_code == 422
         expired = dict(body)
-        expired["artifacts"] = [
+        expired["artifactAccessGrants"] = [
             dict(artifact, expiresAt="2020-01-01T00:00:00Z")
-            for artifact in body["artifacts"]  # type: ignore[union-attr]
+            for artifact in body["artifactAccessGrants"]  # type: ignore[union-attr]
         ]
         assert client.post(base, json=expired, headers=headers).json()["jobId"] == job_id
-        assert client.get(f"{base}/{job_id}", headers=headers).json()["status"] == "PENDING"
+        pending = client.get(f"{base}/{job_id}", headers=headers).json()
+        assert pending["status"] == "PENDING"
+        _validate("TradingNormalizationJobStatusResponse", pending)
         assert client.get(f"{base}/{job_id}/result", headers=headers).status_code == 409
         assert (
             client.get("/trading-review/terminal-payloads/missing", headers=headers).status_code
@@ -273,8 +291,11 @@ def test_completed_descriptor_download_ack_and_failed_status() -> None:
             media_type="application/vnd.refinvest.trading-normalization+json",
             byte_size=len(payload),
             payload_sha256=payload_hash,
-            input_hash="a" * 64,
-            version_set_hash=SUPPORTED_VERSION_SET.version_set_hash,
+            core_normalization_run_id="run-1",
+            input_set_hash=repository.job.computed_input_set_hash,
+            hash_specification_version="TRADING_INPUT_SET_HASH_V1",
+            target_version_set=repository.job.request_payload["inputIdentity"]["targetVersionSet"],
+            reconciliation_manifest_hash="d" * 64,
             result_hash="b" * 64,
             created_at=now,
             expires_at=now + timedelta(hours=24),
@@ -292,6 +313,7 @@ def test_completed_descriptor_download_ack_and_failed_status() -> None:
         )
         result = client.get(f"{base}/{job_id}/result", headers=headers)
         assert result.status_code == 200
+        _validate("NormalizationTerminalResultDescriptor", result.json())
         assert result.json()["payloadSha256"] == payload_hash
         download = client.get(f"/trading-review/terminal-payloads/{payload_id}", headers=headers)
         assert download.status_code == 200 and download.content == payload
@@ -320,6 +342,7 @@ def test_completed_descriptor_download_ack_and_failed_status() -> None:
         )
         failed = client.get(f"{base}/{job_id}", headers=headers)
         assert failed.status_code == 200
+        _validate("TradingNormalizationJobStatusResponse", failed.json())
         assert failed.json()["failure"]["code"] == "FILE_FORMAT_INVALID"
         assert client.get(f"{base}/{job_id}/result", headers=headers).status_code == 409
 
@@ -342,10 +365,10 @@ def test_grant_update_route_auth_receipt_and_capacity_header() -> None:
             "expectedGrantRevision": 0,
             "expectedAttemptToken": "attempt-1",
             "nextAttemptToken": "attempt-1",
-            "expectedInputHash": body["expectedInputHash"],
-            "versionSetHash": body["targetVersionSet"]["versionSetHash"],  # type: ignore[index]
+            "expectedInputSetHash": body["expectedInputSetHash"],
+            "versionSetHash": body["inputIdentity"]["targetVersionSet"]["versionSetHash"],  # type: ignore[index]
             "deletionGeneration": 0,
-            "artifacts": body["artifacts"],
+            "artifactAccessGrants": body["artifactAccessGrants"],
         }
         path = f"/trading-review/normalization-jobs/{job_id}/grant-updates"
         assert client.post(path, json=update).status_code == 401

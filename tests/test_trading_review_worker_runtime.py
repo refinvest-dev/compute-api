@@ -22,7 +22,11 @@ from refinvest.application.trading_review_jobs import (
     SafeTradingReviewFailure,
 )
 from refinvest.trading_review import normalize_and_reconstruct
-from tests.trading_review_support import simple_long_request
+from tests.trading_review_support import (
+    input_set_hash_for,
+    normalization_identity_for,
+    simple_long_request,
+)
 
 
 def _claim(attempt: int = 1) -> ClaimedTradingReviewJob:
@@ -30,8 +34,12 @@ def _claim(attempt: int = 1) -> ClaimedTradingReviewJob:
         job_id="job-1",
         core_logical_job_id="logical-1",
         core_import_session_id="session-1",
+        core_normalization_run_id="run-1",
         request_payload={},
-        expected_input_hash="a" * 64,
+        expected_input_set_hash="a" * 64,
+        computed_input_set_hash="a" * 64,
+        hash_specification_version="TRADING_INPUT_SET_HASH_V1",
+        retry_policy_version="POLICY_V1",
         version_set_hash="b" * 64,
         deletion_generation=0,
         attempt_token="attempt-token",
@@ -91,6 +99,7 @@ class Executor:
                 "application/vnd.refinvest.trading-normalization+json",
                 hashlib.sha256(b"{}").hexdigest(),
                 "a" * 64,
+                "d" * 64,
                 "c" * 64,
             ),
             1,
@@ -170,7 +179,7 @@ def test_artifact_hash_mismatch_is_rejected_before_engine(monkeypatch: pytest.Mo
     }
     with pytest.raises(_SafeExecutionError) as raised:
         _download_artifact(grant, ("internal.example",))
-    assert raised.value.failure.code == "FILE_FORMAT_INVALID"
+    assert raised.value.failure.code == "SOURCE_CONTENT_HASH_MISMATCH"
     with pytest.raises(_SafeExecutionError) as untrusted:
         _download_artifact(dict(grant, accessUri="file:///private/raw.csv"), ("internal.example",))
     assert untrusted.value.failure.code == "ARTIFACT_ACCESS_DENIED"
@@ -205,14 +214,17 @@ def test_child_reads_verified_artifacts_and_invokes_production_engine(
     class Opener:
         def open(self, request: object, **_: object) -> Response:
             role = str(request.full_url).rsplit("/", 1)[-1]
+            opened.append(role)
             return Response(content_by_role[role])
 
     normalization = importlib.import_module("refinvest.app.trading_review_normalization")
+    opened: list[str] = []
     monkeypatch.setattr(normalization, "build_opener", lambda *_: Opener())
-    version = engine_request.version_set
+    identity = normalization_identity_for(engine_request)
+    input_set_hash = input_set_hash_for(identity)
     request_payload: dict[str, object] = {
-        "sourceTimezone": engine_request.source_timezone,
-        "artifacts": [
+        "inputIdentity": identity,
+        "artifactAccessGrants": [
             {
                 "coreArtifactId": artifact.artifact_id,
                 "role": artifact.role.value,
@@ -236,24 +248,13 @@ def test_child_reads_verified_artifacts_and_invokes_production_engine(
             }
             for term in engine_request.instruments
         ],
-        "targetVersionSet": {
-            "sourceDialectVersionsByArtifactRole": {
-                role.value: value
-                for role, value in version.source_dialect_versions_by_artifact_role
-            },
-            "adapterVersion": version.adapter_version,
-            "normalizerVersion": version.normalizer_version,
-            "canonicalSchemaVersion": version.canonical_schema_version,
-            "reconstructionPolicyVersion": version.reconstruction_policy_version,
-            "reconciliationVersion": version.reconciliation_version,
-            "reviewUnitSchemaVersion": version.review_unit_schema_version,
-            "evidenceSchemaVersion": version.evidence_schema_version,
-            "implementationDigest": version.implementation_digest,
-            "versionSetHash": version.version_set_hash,
-        },
     }
     claim = replace(
-        _claim(), request_payload=request_payload, expected_input_hash=expected.input_hash
+        _claim(),
+        request_payload=request_payload,
+        expected_input_set_hash=input_set_hash,
+        computed_input_set_hash=input_set_hash,
+        version_set_hash=identity["targetVersionSet"]["versionSetHash"],
     )
     settings = Settings(
         internal_api_key=None,
@@ -282,17 +283,55 @@ def test_child_reads_verified_artifacts_and_invokes_production_engine(
         payload["reconciliationManifest"]["manifestHash"]
         == expected.reconciliation_manifest.manifest_hash
     )
+    assert payload["coreNormalizationRunId"] == claim.core_normalization_run_id
+    assert payload["inputSetHash"] == input_set_hash
+    assert payload["reconciliationManifest"]["executionInputHash"] == expected.input_hash
+
+    before = len(opened)
+    mismatch = replace(claim, expected_input_set_hash="0" * 64)
+    failed_sender = Sender()
+    execute_normalization_child(settings, mismatch, failed_sender)  # type: ignore[arg-type]
+    assert isinstance(failed_sender.outcome, FailedNormalization)
+    assert failed_sender.outcome.failure.code == "INPUT_SET_HASH_MISMATCH"
+    assert len(opened) == before
+
+    unsupported_identity = {**identity, "hashSpecificationVersion": "FUTURE_SPEC"}
+    unsupported = replace(
+        claim,
+        request_payload={**request_payload, "inputIdentity": unsupported_identity},
+        computed_input_set_hash=None,
+        hash_specification_version="FUTURE_SPEC",
+    )
+    failed_sender = Sender()
+    execute_normalization_child(settings, unsupported, failed_sender)  # type: ignore[arg-type]
+    assert isinstance(failed_sender.outcome, FailedNormalization)
+    assert failed_sender.outcome.failure.code == "INPUT_HASH_SPECIFICATION_UNSUPPORTED"
+    assert len(opened) == before
+
+    monkeypatch.setattr(
+        normalization,
+        "normalize_and_reconstruct",
+        lambda _: replace(expected, result_hash="0" * 64),
+    )
+    failed_sender = Sender()
+    execute_normalization_child(settings, claim, failed_sender)  # type: ignore[arg-type]
+    assert isinstance(failed_sender.outcome, FailedNormalization)
+    assert failed_sender.outcome.failure.code == "RESULT_HASH_MISMATCH"
+    monkeypatch.setattr(normalization, "normalize_and_reconstruct", normalize_and_reconstruct)
+
+    original = content_by_role["TRADE_HISTORY"]
+    content_by_role["TRADE_HISTORY"] = original[::-1]
+    failed_sender = Sender()
+    execute_normalization_child(settings, claim, failed_sender)  # type: ignore[arg-type]
+    assert isinstance(failed_sender.outcome, FailedNormalization)
+    assert failed_sender.outcome.failure.code == "SOURCE_CONTENT_HASH_MISMATCH"
+    content_by_role["TRADE_HISTORY"] = original
     invalid_bytes = b"Uid,Trade ID\r\nsensitive-user,sensitive-trade\r\n"
     content_by_role["TRADE_HISTORY"] = invalid_bytes
-    grants = request_payload["artifacts"]
-    assert isinstance(grants, list)
-    trade_grant = next(item for item in grants if item["role"] == "TRADE_HISTORY")
-    trade_grant["byteSize"] = len(invalid_bytes)
-    trade_grant["rawSha256"] = hashlib.sha256(invalid_bytes).hexdigest()
     failed_sender = Sender()
     execute_normalization_child(settings, claim, failed_sender)  # type: ignore[arg-type]
     failure = failed_sender.outcome
     assert isinstance(failure, FailedNormalization)
-    assert failure.failure.code == "REQUIRED_COLUMN_MISSING"
+    assert failure.failure.code == "SOURCE_CONTENT_LENGTH_MISMATCH"
     assert "sensitive-user" not in str(failure)
     assert "sensitive-trade" not in str(failure)

@@ -1,13 +1,17 @@
 """OpenAPI-shaped transport models for normalization jobs."""
 
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
+
+from refinvest.app.trading_review_identity import NormalizationInputIdentity, TargetVersionSet
 
 
 class StrictTransport(BaseModel):
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    model_config = ConfigDict(populate_by_name=False, extra="forbid")
 
 
 class ArtifactReadGrantTransport(StrictTransport):
@@ -18,13 +22,6 @@ class ArtifactReadGrantTransport(StrictTransport):
     content_type: Literal["text/csv", "application/vnd.ms-excel"] = Field(alias="contentType")
     access_uri: HttpUrl = Field(alias="accessUri")
     expires_at: datetime = Field(alias="expiresAt")
-
-
-class TradingBookProductTransport(StrictTransport):
-    venue: Literal["BINANCE"]
-    product_family: Literal["LINEAR_PERPETUAL"] = Field(alias="productFamily")
-    position_mode: Literal["ONE_WAY"] = Field(alias="positionMode")
-    settlement_asset: Literal["USDT"] = Field(alias="settlementAsset")
 
 
 class PinnedInstrumentTermsTransport(StrictTransport):
@@ -38,35 +35,37 @@ class PinnedInstrumentTermsTransport(StrictTransport):
     instrument_terms_version: str = Field(alias="instrumentTermsVersion", min_length=1)
 
 
-class NormalizerVersionSetTransport(StrictTransport):
-    source_dialect_versions_by_artifact_role: dict[str, str] = Field(
-        alias="sourceDialectVersionsByArtifactRole"
-    )
-    adapter_version: str = Field(alias="adapterVersion", min_length=1)
-    normalizer_version: str = Field(alias="normalizerVersion", min_length=1)
-    canonical_schema_version: str = Field(alias="canonicalSchemaVersion", min_length=1)
-    reconstruction_policy_version: str = Field(alias="reconstructionPolicyVersion", min_length=1)
-    reconciliation_version: str = Field(alias="reconciliationVersion", min_length=1)
-    review_unit_schema_version: str = Field(alias="reviewUnitSchemaVersion", min_length=1)
-    evidence_schema_version: str = Field(alias="evidenceSchemaVersion", min_length=1)
-    implementation_digest: str = Field(alias="implementationDigest", min_length=1)
-    version_set_hash: str = Field(alias="versionSetHash", pattern=r"^[a-f0-9]{64}$")
-
-
 class CreateTradingNormalizationJobTransport(StrictTransport):
     core_logical_job_id: str = Field(alias="coreLogicalJobId", min_length=1)
+    core_normalization_run_id: str = Field(alias="coreNormalizationRunId", min_length=1)
     core_import_session_id: str = Field(alias="coreImportSessionId", min_length=1)
-    book_product: TradingBookProductTransport = Field(alias="bookProduct")
-    artifacts: list[ArtifactReadGrantTransport] = Field(min_length=2, max_length=2)
-    source_timezone: str = Field(alias="sourceTimezone", min_length=1)
-    review_timezone: str = Field(alias="reviewTimezone", min_length=1)
-    target_version_set: NormalizerVersionSetTransport = Field(alias="targetVersionSet")
+    input_identity: NormalizationInputIdentity = Field(alias="inputIdentity")
+    expected_input_set_hash: str = Field(alias="expectedInputSetHash", pattern=r"^[a-f0-9]{64}$")
+    artifact_access_grants: list[ArtifactReadGrantTransport] = Field(
+        alias="artifactAccessGrants", min_length=2, max_length=2
+    )
     pinned_instrument_terms: list[PinnedInstrumentTermsTransport] = Field(
         alias="pinnedInstrumentTerms"
     )
-    expected_input_hash: str = Field(alias="expectedInputHash", pattern=r"^[a-f0-9]{64}$")
+    retry_policy_version: str = Field(alias="retryPolicyVersion", min_length=1)
     deletion_generation: int = Field(alias="deletionGeneration", ge=0)
     attempt_token: str = Field(alias="attemptToken", min_length=1)
+
+    @model_validator(mode="after")
+    def matching_artifact_identity(self) -> CreateTradingNormalizationJobTransport:
+        identity = self.input_identity
+        if self.core_import_session_id != identity.source_import_session_ids[0]:
+            raise ValueError("Core Import Session identity differs from input identity.")
+        if {grant.role for grant in self.artifact_access_grants} != set(identity.artifacts_by_role):
+            raise ValueError("Artifact grants require exactly one grant per role.")
+        for grant in self.artifact_access_grants:
+            artifact = identity.artifacts_by_role[grant.role]
+            if (
+                grant.core_artifact_id != artifact.artifact_id
+                or grant.raw_sha256 != artifact.sha256
+            ):
+                raise ValueError("Artifact grant identity differs from input identity.")
+        return self
 
 
 class UpdateTradingNormalizationJobGrantsTransport(StrictTransport):
@@ -74,10 +73,12 @@ class UpdateTradingNormalizationJobGrantsTransport(StrictTransport):
     expected_grant_revision: int = Field(alias="expectedGrantRevision", ge=0)
     expected_attempt_token: str = Field(alias="expectedAttemptToken", min_length=1)
     next_attempt_token: str = Field(alias="nextAttemptToken", min_length=1)
-    expected_input_hash: str = Field(alias="expectedInputHash", pattern=r"^[a-f0-9]{64}$")
+    expected_input_set_hash: str = Field(alias="expectedInputSetHash", pattern=r"^[a-f0-9]{64}$")
     version_set_hash: str = Field(alias="versionSetHash", pattern=r"^[a-f0-9]{64}$")
     deletion_generation: int = Field(alias="deletionGeneration", ge=0)
-    artifacts: list[ArtifactReadGrantTransport] = Field(min_length=2, max_length=2)
+    artifact_access_grants: list[ArtifactReadGrantTransport] = Field(
+        alias="artifactAccessGrants", min_length=2, max_length=2
+    )
 
 
 class TradingComputeJobAcceptedTransport(StrictTransport):
@@ -109,19 +110,34 @@ class TradingComputeJobStatusTransport(StrictTransport):
     result_hash: str | None = Field(default=None, alias="resultHash")
     terminal_at: datetime | None = Field(default=None, alias="terminalAt")
     failure: TradingStructuredFailureTransport | None = None
+    core_normalization_run_id: str = Field(alias="coreNormalizationRunId", min_length=1)
+    expected_input_set_hash: str = Field(alias="expectedInputSetHash", pattern=r"^[a-f0-9]{64}$")
+    input_set_hash: str | None = Field(
+        default=None, alias="inputSetHash", pattern=r"^[a-f0-9]{64}$"
+    )
+    hash_specification_version: str = Field(alias="hashSpecificationVersion", min_length=1)
+    target_version_set: TargetVersionSet = Field(alias="targetVersionSet")
+    grant_revision: int = Field(alias="grantRevision", ge=0)
 
 
 class ComputeTerminalResultDescriptorTransport(StrictTransport):
     job_id: str = Field(alias="jobId")
     core_logical_job_id: str = Field(alias="coreLogicalJobId")
+    core_normalization_run_id: str = Field(alias="coreNormalizationRunId", min_length=1)
     payload_id: str = Field(alias="payloadId")
     media_type: Literal["application/vnd.refinvest.trading-normalization+json"] = Field(
         alias="mediaType"
     )
     byte_size: int = Field(alias="byteSize", ge=1)
     payload_sha256: str = Field(alias="payloadSha256", pattern=r"^[a-f0-9]{64}$")
-    input_hash: str = Field(alias="inputHash", pattern=r"^[a-f0-9]{64}$")
-    version_set_hash: str = Field(alias="versionSetHash", pattern=r"^[a-f0-9]{64}$")
+    input_set_hash: str = Field(alias="inputSetHash", pattern=r"^[a-f0-9]{64}$")
+    hash_specification_version: Literal["TRADING_INPUT_SET_HASH_V1"] = Field(
+        alias="hashSpecificationVersion"
+    )
+    target_version_set: TargetVersionSet = Field(alias="targetVersionSet")
+    reconciliation_manifest_hash: str = Field(
+        alias="reconciliationManifestHash", pattern=r"^[a-f0-9]{64}$"
+    )
     result_hash: str = Field(alias="resultHash", pattern=r"^[a-f0-9]{64}$")
     created_at: datetime = Field(alias="createdAt")
     expires_at: datetime = Field(alias="expiresAt")

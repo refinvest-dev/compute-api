@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 from decimal import Decimal
 
+from refinvest.app.trading_review_identity import (
+    NormalizationInputIdentity,
+    calculate_input_set_hash,
+)
 from refinvest.trading_review.decimal import ScaledDecimal
 from refinvest.trading_review.model import (
     FeeValuation,
@@ -182,3 +187,59 @@ def simple_long_request(**kwargs: object) -> NormalizationRequest:
     ]
     positions = [position_row("Long", "10.00", "11.00", "2", "2", "2.00")]
     return request_for(trades, positions, **kwargs)  # type: ignore[arg-type]
+
+
+def normalization_identity_for(
+    request: NormalizationRequest, *, book_id: str = "book-1", session_id: str = "session-1"
+) -> dict[str, object]:
+    version = request.version_set
+    return {
+        "hashSpecificationVersion": "TRADING_INPUT_SET_HASH_V1",
+        "tradingBookId": book_id,
+        "sourceImportSessionIds": [session_id],
+        "artifactsByRole": {
+            artifact.role.value: {
+                "artifactId": artifact.artifact_id,
+                "sha256": hashlib.sha256(artifact.content).hexdigest(),
+            }
+            for artifact in request.artifacts
+        },
+        "sourceTimezone": request.source_timezone,
+        "reviewTimezone": "UTC",
+        "declaredProduct": {
+            "venue": "BINANCE",
+            "productFamily": "LINEAR_PERPETUAL",
+            "settlementAsset": "USDT",
+        },
+        "declaredPositionMode": "ONE_WAY",
+        "targetVersionSet": {
+            "normalizer": {
+                "sourceDialectVersionsByArtifactRole": {
+                    role.value: value
+                    for role, value in version.source_dialect_versions_by_artifact_role
+                },
+                "adapterVersion": version.adapter_version,
+                "normalizerVersion": version.normalizer_version,
+                "canonicalSchemaVersion": version.canonical_schema_version,
+                "implementationDigest": version.implementation_digest,
+                "versionSetHash": "a" * 64,
+            },
+            "reconstruction": {
+                "instrumentTermsVersionByInstrument": {
+                    term.instrument_id: term.instrument_terms_version
+                    for term in request.instruments
+                },
+                "reconstructionPolicyVersion": version.reconstruction_policy_version,
+                "reconciliationVersion": version.reconciliation_version,
+                "reviewUnitSchemaVersion": version.review_unit_schema_version,
+                "evidenceSchemaVersion": version.evidence_schema_version,
+                "implementationDigest": version.implementation_digest,
+                "versionSetHash": "b" * 64,
+            },
+            "versionSetHash": "c" * 64,
+        },
+    }
+
+
+def input_set_hash_for(identity: dict[str, object]) -> str:
+    return calculate_input_set_hash(NormalizationInputIdentity.model_validate(identity))

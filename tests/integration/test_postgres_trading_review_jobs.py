@@ -1,10 +1,12 @@
 """PostgreSQL concurrency and terminal transaction checks.
 
-Set REFINVEST_TEST_DATABASE_URL to an isolated database with migration 0011 applied.
+Set REFINVEST_TEST_DATABASE_URL to an isolated database with migration 0012 applied.
 """
 
 import hashlib
+import json
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from os import getenv
 from uuid import uuid4
@@ -13,6 +15,7 @@ import pytest
 from psycopg import connect
 
 from refinvest.application.trading_review_jobs import (
+    ClaimedTradingReviewJob,
     SafeTradingReviewFailure,
     TradingReviewCapacityExceeded,
     TradingReviewIdempotencyConflict,
@@ -22,6 +25,11 @@ from refinvest.application.trading_review_jobs import (
     TradingReviewJobStatus,
 )
 from refinvest.persistence.postgres.trading_review_jobs import PostgresTradingReviewJobRepository
+from tests.trading_review_support import (
+    input_set_hash_for,
+    normalization_identity_for,
+    simple_long_request,
+)
 
 DATABASE_URL = getenv("REFINVEST_TEST_DATABASE_URL")
 PAYLOAD_KEY = b"K" * 32
@@ -29,30 +37,68 @@ pytestmark = pytest.mark.skipif(DATABASE_URL is None, reason="Isolated PostgreSQ
 
 
 def _job(logical_id: str) -> TradingReviewJob:
+    identity = normalization_identity_for(
+        simple_long_request(), book_id=f"book-{logical_id}", session_id=f"session-{logical_id}"
+    )
+    artifacts = identity["artifactsByRole"]
+    assert isinstance(artifacts, dict)
+    for role in ("TRADE_HISTORY", "POSITION_HISTORY"):
+        artifacts[role] = {"artifactId": f"{logical_id}-{role}", "sha256": "e" * 64}
+    input_set_hash = input_set_hash_for(identity)
+    request_payload: dict[str, object] = {
+        "coreLogicalJobId": logical_id,
+        "coreNormalizationRunId": f"run-{logical_id}",
+        "coreImportSessionId": f"session-{logical_id}",
+        "inputIdentity": identity,
+        "expectedInputSetHash": input_set_hash,
+        "retryPolicyVersion": "POLICY_V1",
+        "artifactAccessGrants": [
+            {
+                "role": role,
+                "coreArtifactId": f"{logical_id}-{role}",
+                "rawSha256": "e" * 64,
+                "byteSize": 100,
+                "contentType": "text/csv",
+                "accessUri": f"https://internal.example/{uuid4()}",
+                "expiresAt": (datetime.now(UTC) + timedelta(minutes=4)).isoformat(),
+            }
+            for role in ("TRADE_HISTORY", "POSITION_HISTORY")
+        ],
+    }
     return TradingReviewJob(
         job_id=str(uuid4()),
         core_logical_job_id=logical_id,
         core_import_session_id=f"session-{logical_id}",
+        core_normalization_run_id=f"run-{logical_id}",
         kind=TradingReviewJobKind.NORMALIZATION_RECONCILIATION,
-        request_payload={
-            "coreLogicalJobId": logical_id,
-            "artifacts": [
-                {
-                    "role": role,
-                    "coreArtifactId": f"{logical_id}-{role}",
-                    "rawSha256": "e" * 64,
-                    "accessUri": f"https://internal.example/{uuid4()}",
-                    "expiresAt": (datetime.now(UTC) + timedelta(minutes=4)).isoformat(),
-                }
-                for role in ("TRADE_HISTORY", "POSITION_HISTORY")
-            ],
-        },
+        request_payload=request_payload,
         request_fingerprint="a" * 64,
-        expected_input_hash="b" * 64,
+        expected_input_set_hash=input_set_hash,
+        computed_input_set_hash=input_set_hash,
+        hash_specification_version="TRADING_INPUT_SET_HASH_V1",
+        retry_policy_version="POLICY_V1",
         version_set_hash="c" * 64,
         deletion_generation=0,
         attempt_token="core-attempt-1",
     )
+
+
+def _terminal_payload(
+    claim: ClaimedTradingReviewJob, *, result_hash: str, manifest_hash: str = "d" * 64
+) -> bytes:
+    return json.dumps(
+        {
+            "jobId": claim.job_id,
+            "coreNormalizationRunId": claim.core_normalization_run_id,
+            "attemptToken": claim.attempt_token,
+            "deletionGeneration": claim.deletion_generation,
+            "inputSetHash": claim.computed_input_set_hash,
+            "hashSpecificationVersion": claim.hash_specification_version,
+            "reconciliationManifest": {"manifestHash": manifest_hash},
+            "resultHash": result_hash,
+        },
+        separators=(",", ":"),
+    ).encode()
 
 
 def _delete(job_id: str) -> None:
@@ -84,7 +130,7 @@ def _renew(
             "accessUri": f"https://internal.example/{uuid4()}",
             "expiresAt": (datetime.now(UTC) + timedelta(minutes=4)).isoformat(),
         }
-        for grant in job.request_payload["artifacts"]  # type: ignore[union-attr]
+        for grant in job.request_payload["artifactAccessGrants"]  # type: ignore[union-attr]
     ]
     receipt = repository.update_grants(
         job.job_id,
@@ -94,10 +140,10 @@ def _renew(
             "expectedGrantRevision": view.grant_revision,
             "expectedAttemptToken": view.attempt_token,
             "nextAttemptToken": next_token,
-            "expectedInputHash": job.expected_input_hash,
+            "expectedInputSetHash": job.expected_input_set_hash,
             "versionSetHash": job.version_set_hash,
             "deletionGeneration": job.deletion_generation,
-            "artifacts": grants,
+            "artifactAccessGrants": grants,
         },
     )
     assert receipt is not None and receipt.attempt_token == next_token
@@ -119,18 +165,7 @@ def test_concurrent_admission_one_job_and_fingerprint_conflict() -> None:
         assert sum(item.newly_created for item in accepted) == 1
         accepted_id = accepted[0].job_id
         conflicting = _job(logical_id)
-        conflicting = TradingReviewJob(
-            conflicting.job_id,
-            conflicting.core_logical_job_id,
-            conflicting.core_import_session_id,
-            conflicting.kind,
-            conflicting.request_payload,
-            "d" * 64,
-            conflicting.expected_input_hash,
-            conflicting.version_set_hash,
-            conflicting.deletion_generation,
-            conflicting.attempt_token,
-        )
+        conflicting = replace(conflicting, request_fingerprint="d" * 64)
         with pytest.raises(TradingReviewIdempotencyConflict):
             repository.create_idempotently(conflicting, key_hash)
     finally:
@@ -154,6 +189,10 @@ def test_claim_reclaim_stale_write_and_atomic_terminal_ack_cleanup() -> None:
             )
         first = next(claim for claim in claims if claim is not None)
         assert sum(claim is not None for claim in claims) == 1
+        assert first.core_normalization_run_id == job.core_normalization_run_id
+        assert first.request_payload["inputIdentity"] == job.request_payload["inputIdentity"]
+        assert first.computed_input_set_hash == job.computed_input_set_hash
+        assert first.retry_policy_version == job.retry_policy_version
         assert _artifact_lease_statuses(job.job_id, 1) == ["ACTIVE", "ACTIVE"]
         with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
             cursor.execute(
@@ -173,14 +212,17 @@ def test_claim_reclaim_stale_write_and_atomic_terminal_ack_cleanup() -> None:
         assert reclaimed.lease_owner != first.lease_owner
         assert _artifact_lease_statuses(job.job_id, 1) == ["EXPIRED", "EXPIRED"]
         assert _artifact_lease_statuses(job.job_id, 2) == ["ACTIVE", "ACTIVE"]
-        payload = b'{"status":"COMPLETED"}'
+        first_payload = _terminal_payload(first, result_hash="e" * 64)
+        payload = _terminal_payload(reclaimed, result_hash="e" * 64)
+        first_payload_hash = hashlib.sha256(first_payload).hexdigest()
         payload_hash = hashlib.sha256(payload).hexdigest()
         assert not repository.publish_completed(
             first,
-            payload=payload,
+            payload=first_payload,
             media_type="application/vnd.refinvest.trading-normalization+json",
-            payload_sha256=payload_hash,
-            input_hash=job.expected_input_hash,
+            payload_sha256=first_payload_hash,
+            input_set_hash=job.expected_input_set_hash,
+            reconciliation_manifest_hash="d" * 64,
             result_hash="e" * 64,
             retention=timedelta(hours=24),
         )
@@ -189,7 +231,8 @@ def test_claim_reclaim_stale_write_and_atomic_terminal_ack_cleanup() -> None:
             payload=payload,
             media_type="application/vnd.refinvest.trading-normalization+json",
             payload_sha256=payload_hash,
-            input_hash=job.expected_input_hash,
+            input_set_hash=job.expected_input_set_hash,
+            reconciliation_manifest_hash="d" * 64,
             result_hash="e" * 64,
             retention=timedelta(hours=24),
         )
@@ -198,6 +241,13 @@ def test_claim_reclaim_stale_write_and_atomic_terminal_ack_cleanup() -> None:
         assert view is not None and view.status is TradingReviewJobStatus.COMPLETED
         descriptor = repository.get_result_descriptor(job.job_id)
         assert descriptor is not None
+        assert descriptor.core_normalization_run_id == job.core_normalization_run_id
+        assert descriptor.input_set_hash == job.computed_input_set_hash
+        assert (
+            descriptor.target_version_set
+            == job.request_payload["inputIdentity"]["targetVersionSet"]
+        )
+        assert descriptor.reconciliation_manifest_hash == "d" * 64
         with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
             cursor.execute(
                 """SELECT payload_bytes, encryption_version
@@ -260,13 +310,14 @@ def test_running_cancellation_blocks_publication_and_expires_safely() -> None:
             job.job_id, hashlib.sha256(f"cancel-{job.job_id}".encode()).hexdigest()
         )
         assert requested is not None and requested.cancellation_requested
-        payload = b"{}"
+        payload = _terminal_payload(claim, result_hash="f" * 64)
         assert not repository.publish_completed(
             claim,
             payload=payload,
             media_type="application/vnd.refinvest.trading-normalization+json",
             payload_sha256=hashlib.sha256(payload).hexdigest(),
-            input_hash=job.expected_input_hash,
+            input_set_hash=job.expected_input_set_hash,
+            reconciliation_manifest_hash="d" * 64,
             result_hash="f" * 64,
             retention=timedelta(hours=24),
         )
@@ -298,13 +349,14 @@ def test_one_active_logical_job_and_expired_lease_never_publishes() -> None:
                    WHERE job_id = %s""",
                 (first.job_id,),
             )
-        payload = b"{}"
+        payload = _terminal_payload(claim, result_hash="f" * 64)
         assert not repository.publish_completed(
             claim,
             payload=payload,
             media_type="application/vnd.refinvest.trading-normalization+json",
             payload_sha256=hashlib.sha256(payload).hexdigest(),
-            input_hash=first.expected_input_hash,
+            input_set_hash=first.expected_input_set_hash,
+            reconciliation_manifest_hash="d" * 64,
             result_hash="f" * 64,
             retention=timedelta(hours=24),
         )
@@ -354,13 +406,14 @@ def test_unacknowledged_terminal_payload_expires_after_24_hours() -> None:
     try:
         claim = repository.claim_next("worker", timedelta(seconds=30))
         assert claim is not None
-        payload = b"{}"
+        payload = _terminal_payload(claim, result_hash="f" * 64)
         assert repository.publish_completed(
             claim,
             payload=payload,
             media_type="application/vnd.refinvest.trading-normalization+json",
             payload_sha256=hashlib.sha256(payload).hexdigest(),
-            input_hash=job.expected_input_hash,
+            input_set_hash=job.expected_input_set_hash,
+            reconciliation_manifest_hash="d" * 64,
             result_hash="f" * 64,
             retention=timedelta(hours=24),
         )
@@ -435,12 +488,12 @@ def test_grant_update_receipt_replay_conflict_and_live_lease_rejection() -> None
             "expectedGrantRevision": 0,
             "expectedAttemptToken": job.attempt_token,
             "nextAttemptToken": str(uuid4()),
-            "expectedInputHash": job.expected_input_hash,
+            "expectedInputSetHash": job.expected_input_set_hash,
             "versionSetHash": job.version_set_hash,
             "deletionGeneration": 0,
-            "artifacts": [
+            "artifactAccessGrants": [
                 {**grant, "accessUri": f"https://internal.example/{uuid4()}"}
-                for grant in job.request_payload["artifacts"]  # type: ignore[union-attr]
+                for grant in job.request_payload["artifactAccessGrants"]  # type: ignore[union-attr]
             ],
         }
         with pytest.raises(TradingReviewJobStateConflict):
@@ -535,10 +588,10 @@ def test_grant_wait_deadline_is_fixed_and_terminal_failure_cannot_be_revived() -
                     "expectedGrantRevision": 0,
                     "expectedAttemptToken": job.attempt_token,
                     "nextAttemptToken": job.attempt_token,
-                    "expectedInputHash": job.expected_input_hash,
+                    "expectedInputSetHash": job.expected_input_set_hash,
                     "versionSetHash": job.version_set_hash,
                     "deletionGeneration": 0,
-                    "artifacts": job.request_payload["artifacts"],
+                    "artifactAccessGrants": job.request_payload["artifactAccessGrants"],
                 },
             )
     finally:
@@ -553,14 +606,15 @@ def test_acknowledgement_requires_final_token_and_stale_discard_generation() -> 
     try:
         claim = repository.claim_next("worker", timedelta(seconds=30))
         assert claim is not None
-        payload = b'{"status":"COMPLETED"}'
+        payload = _terminal_payload(claim, result_hash="f" * 64)
         payload_hash = hashlib.sha256(payload).hexdigest()
         assert repository.publish_completed(
             claim,
             payload=payload,
             media_type="application/vnd.refinvest.trading-normalization+json",
             payload_sha256=payload_hash,
-            input_hash=job.expected_input_hash,
+            input_set_hash=job.expected_input_set_hash,
+            reconciliation_manifest_hash="d" * 64,
             result_hash="f" * 64,
             retention=timedelta(hours=24),
         )

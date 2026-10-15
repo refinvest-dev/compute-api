@@ -11,12 +11,18 @@ from datetime import UTC, datetime, timedelta
 from multiprocessing.connection import Connection
 from multiprocessing.process import BaseProcess
 from time import monotonic
-from typing import cast
+from typing import Literal, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from refinvest.app.config import Settings
+from refinvest.app.trading_review_identity import (
+    HASH_SPECIFICATION_V1,
+    NormalizationInputIdentity,
+    calculate_input_set_hash,
+    supports_target_version_set,
+)
 from refinvest.app.trading_review_payload import MEDIA_TYPE, build_normalization_payload
 from refinvest.application.trading_review_jobs import (
     ClaimedTradingReviewJob,
@@ -33,6 +39,7 @@ from refinvest.trading_review.model import (
     SourceArtifactRole,
 )
 from refinvest.trading_review.service import normalize_and_reconstruct
+from refinvest.trading_review.versions import SUPPORTED_VERSION_SET
 
 _LOGGER = logging.getLogger(__name__)
 _MAX_ARTIFACT_BYTES = 52_428_800
@@ -44,7 +51,8 @@ class CompletedNormalization:
     payload: bytes
     media_type: str
     payload_sha256: str
-    input_hash: str
+    input_set_hash: str
+    reconciliation_manifest_hash: str
     result_hash: str
 
 
@@ -71,6 +79,20 @@ def execute_normalization_child(
 ) -> None:
     """Child entrypoint: download grants, verify bytes, call production engine, serialize."""
     try:
+        request = claim.request_payload
+        identity = NormalizationInputIdentity.model_validate(request["inputIdentity"])
+        if identity.hash_specification_version != HASH_SPECIFICATION_V1:
+            raise _safe_failure(
+                "INPUT_HASH_SPECIFICATION_UNSUPPORTED",
+                "VALIDATION",
+                "HASH_SPECIFICATION_UNSUPPORTED",
+            )
+        input_set_hash = calculate_input_set_hash(identity)
+        if (
+            input_set_hash != claim.computed_input_set_hash
+            or input_set_hash != claim.expected_input_set_hash
+        ):
+            raise _safe_failure("INPUT_SET_HASH_MISMATCH", "VALIDATION", "INPUT_IDENTITY_MISMATCH")
         if not settings.trading_review_timezone_database_version:
             raise _configuration_error("REFINVEST_TRADING_REVIEW_TZDB_VERSION")
         identity_key = _secret_key(
@@ -79,8 +101,7 @@ def execute_normalization_child(
         masking_key = _secret_key(
             settings.trading_review_masking_key, "REFINVEST_TRADING_MASKING_KEY"
         )
-        request = claim.request_payload
-        artifacts_node = request.get("artifacts")
+        artifacts_node = request.get("artifactAccessGrants")
         if not isinstance(artifacts_node, list) or len(cast(list[object], artifacts_node)) != 2:
             sender.send(
                 FailedNormalization(
@@ -109,11 +130,21 @@ def execute_normalization_child(
             role = SourceArtifactRole(role_value)
             if role_value in downloaded_by_role:
                 raise _safe_failure("FILE_FORMAT_INVALID", "VALIDATION", "DUPLICATE_ARTIFACT_ROLE")
+            declared_artifact = identity.artifacts_by_role[
+                cast(Literal["TRADE_HISTORY", "POSITION_HISTORY"], role_value)
+            ]
+            if (
+                grant.get("coreArtifactId") != declared_artifact.artifact_id
+                or grant.get("rawSha256") != declared_artifact.sha256
+            ):
+                raise _safe_failure(
+                    "ARTIFACT_IDENTITY_CONFLICT", "VALIDATION", "ARTIFACT_GRANT_IDENTITY_MISMATCH"
+                )
             content = _download_artifact(grant, settings.trading_review_artifact_hosts)
             artifact = SourceArtifact(
                 artifact_id=str(grant["coreArtifactId"]),
                 role=role,
-                dialect=_dialect_for_role(request, role),
+                dialect=_dialect_for_role(identity, role),
                 content=content,
             )
             artifacts.append(artifact)
@@ -138,10 +169,10 @@ def execute_normalization_child(
             raise _safe_failure(
                 "INSTRUMENT_TERMS_UNAVAILABLE", "VALIDATION", "PINNED_TERMS_INVALID"
             )
-        version_set = _version_set(request)
+        version_set = _version_set(identity, instruments)
         engine_request = NormalizationRequest(
             artifacts=tuple(artifacts),
-            source_timezone=str(request["sourceTimezone"]),
+            source_timezone=identity.source_timezone,
             timezone_database_version=settings.trading_review_timezone_database_version,
             declared_position_mode="ONE_WAY",
             instruments=instruments,
@@ -153,18 +184,18 @@ def execute_normalization_child(
             raise _safe_failure(
                 "RESULT_HASH_MISMATCH", "PUBLICATION", "ENGINE_RESULT_HASH_MISMATCH"
             )
-        if result.input_hash != claim.expected_input_hash:
-            raise _safe_failure(
-                "RESULT_HASH_MISMATCH", "VALIDATION", "EXPECTED_INPUT_HASH_MISMATCH"
-            )
         terminal_at = datetime.now(UTC)
         payload_object = build_normalization_payload(
             result,
             job_id=claim.job_id,
             core_logical_job_id=claim.core_logical_job_id,
             core_import_session_id=claim.core_import_session_id,
+            core_normalization_run_id=claim.core_normalization_run_id,
             attempt_token=claim.attempt_token,
             deletion_generation=claim.deletion_generation,
+            input_set_hash=input_set_hash,
+            hash_specification_version=identity.hash_specification_version,
+            target_version_set=identity.target_version_set.model_dump(mode="json", by_alias=True),
             artifacts=tuple(artifacts),
             masking_key=masking_key,
             created_at=terminal_at,
@@ -179,7 +210,8 @@ def execute_normalization_child(
                 payload,
                 MEDIA_TYPE,
                 hashlib.sha256(payload).hexdigest(),
-                result.input_hash,
+                input_set_hash,
+                result.reconciliation_manifest.manifest_hash,
                 result.result_hash,
             )
         )
@@ -355,10 +387,8 @@ def _download_artifact(grant: dict[str, object], allowed_hosts: tuple[str, ...])
                 "ARTIFACT_ACCESS_DENIED", "ARTIFACT_FETCH", "GRANT_REDIRECT_REJECTED"
             ) from None
         if error.code in {401, 403, 404, 410}:
-            code = "ARTIFACT_REFERENCE_EXPIRED" if error.code == 410 else "ARTIFACT_ACCESS_DENIED"
-            raise _safe_failure(
-                code, "ARTIFACT_FETCH", "ARTIFACT_READ_DENIED", error.code == 410
-            ) from None
+            code = "SOURCE_ARTIFACT_EXPIRED" if error.code == 410 else "ARTIFACT_ACCESS_DENIED"
+            raise _safe_failure(code, "ARTIFACT_FETCH", "ARTIFACT_READ_DENIED") from None
         raise _safe_failure(
             "TEMPORARY_DEPENDENCY_FAILURE", "ARTIFACT_FETCH", "ARTIFACT_READ_FAILED", True
         ) from None
@@ -367,45 +397,23 @@ def _download_artifact(grant: dict[str, object], allowed_hosts: tuple[str, ...])
             "TEMPORARY_DEPENDENCY_FAILURE", "ARTIFACT_FETCH", "ARTIFACT_READ_FAILED", True
         ) from None
     if len(content) != expected_size or len(content) > _MAX_ARTIFACT_BYTES:
-        raise _safe_failure("FILE_FORMAT_INVALID", "ARTIFACT_FETCH", "ARTIFACT_SIZE_MISMATCH")
+        raise _safe_failure(
+            "SOURCE_CONTENT_LENGTH_MISMATCH", "ARTIFACT_FETCH", "ARTIFACT_SIZE_MISMATCH"
+        )
     if not isinstance(expected_hash, str) or hashlib.sha256(content).hexdigest() != expected_hash:
-        raise _safe_failure("FILE_FORMAT_INVALID", "ARTIFACT_FETCH", "ARTIFACT_HASH_MISMATCH")
+        raise _safe_failure(
+            "SOURCE_CONTENT_HASH_MISMATCH", "ARTIFACT_FETCH", "ARTIFACT_HASH_MISMATCH"
+        )
     return content
 
 
-def _version_set(request: dict[str, object]) -> NormalizationVersionSet:
-    raw_node = request.get("targetVersionSet")
-    if not isinstance(raw_node, dict):
+def _version_set(
+    identity: NormalizationInputIdentity, instruments: tuple[InstrumentDescriptor, ...]
+) -> NormalizationVersionSet:
+    terms = {item.instrument_id: item.instrument_terms_version for item in instruments}
+    if not supports_target_version_set(identity.target_version_set, terms):
         raise _safe_failure("VERSION_INCOMPATIBLE", "VALIDATION", "VERSION_SET_INVALID")
-    node = cast(dict[str, object], raw_node)
-    role_versions = node.get("sourceDialectVersionsByArtifactRole")
-    if not isinstance(role_versions, dict):
-        raise _safe_failure("VERSION_INCOMPATIBLE", "VALIDATION", "VERSION_SET_INVALID")
-    versions = cast(dict[str, object], role_versions)
-    try:
-        entries = tuple(
-            sorted(
-                (
-                    (SourceArtifactRole(str(role)), str(version))
-                    for role, version in versions.items()
-                ),
-                key=lambda item: item[0].value,
-            )
-        )
-        return NormalizationVersionSet(
-            source_dialect_versions_by_artifact_role=entries,
-            adapter_version=str(node["adapterVersion"]),
-            normalizer_version=str(node["normalizerVersion"]),
-            canonical_schema_version=str(node["canonicalSchemaVersion"]),
-            reconstruction_policy_version=str(node["reconstructionPolicyVersion"]),
-            reconciliation_version=str(node["reconciliationVersion"]),
-            review_unit_schema_version=str(node["reviewUnitSchemaVersion"]),
-            evidence_schema_version=str(node["evidenceSchemaVersion"]),
-            implementation_digest=str(node["implementationDigest"]),
-            version_set_hash=str(node["versionSetHash"]),
-        )
-    except (KeyError, ValueError, TypeError):
-        raise _safe_failure("VERSION_INCOMPATIBLE", "VALIDATION", "VERSION_SET_INVALID") from None
+    return SUPPORTED_VERSION_SET
 
 
 def _instrument(node: dict[str, object]) -> InstrumentDescriptor:
@@ -426,13 +434,11 @@ def _instrument(node: dict[str, object]) -> InstrumentDescriptor:
         ) from None
 
 
-def _dialect_for_role(request: dict[str, object], role: SourceArtifactRole) -> str:
-    versions = cast(
-        dict[str, object],
-        cast(dict[str, object], request["targetVersionSet"])["sourceDialectVersionsByArtifactRole"],
+def _dialect_for_role(identity: NormalizationInputIdentity, role: SourceArtifactRole) -> str:
+    value = identity.target_version_set.normalizer.source_dialect_versions_by_artifact_role.get(
+        role.value
     )
-    value = versions.get(role.value)
-    if not isinstance(value, str) or not value:
+    if not value:
         raise _safe_failure("VERSION_INCOMPATIBLE", "VALIDATION", "ROLE_DIALECT_VERSION_MISSING")
     return value
 

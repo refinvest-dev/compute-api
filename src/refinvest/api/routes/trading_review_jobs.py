@@ -19,6 +19,11 @@ from refinvest.api.schemas.trading_review_jobs import (
 )
 from refinvest.app.config import Settings, get_settings, trading_review_payload_key
 from refinvest.app.security import require_internal_api_key
+from refinvest.app.trading_review_identity import (
+    HASH_SPECIFICATION_V1,
+    calculate_input_set_hash,
+    supports_target_version_set,
+)
 from refinvest.application.trading_review_jobs import (
     TradingReviewCapacityExceeded,
     TradingReviewGrantInvalid,
@@ -33,8 +38,6 @@ from refinvest.observability.metrics import ApiMetrics, safe_record
 from refinvest.persistence.postgres.trading_review_jobs import PostgresTradingReviewJobRepository
 from refinvest.trading_review.decimal import ScaledDecimal
 from refinvest.trading_review.errors import TradingReviewError
-from refinvest.trading_review.model import NormalizationVersionSet, SourceArtifactRole
-from refinvest.trading_review.versions import SUPPORTED_VERSION_SET
 
 router = APIRouter(tags=["trading-review-jobs"], dependencies=[Depends(require_internal_api_key)])
 _KEY = re.compile(r"^[A-Za-z0-9._~-]{1,128}$")
@@ -82,43 +85,28 @@ def _key(value: str | None) -> str | None:
 
 
 def _supported(request: CreateTradingNormalizationJobTransport) -> bool:
-    node = request.target_version_set
-    roles = node.source_dialect_versions_by_artifact_role
-    if set(roles) != {role.value for role in SourceArtifactRole}:
-        return False
-    version_set = NormalizationVersionSet(
-        source_dialect_versions_by_artifact_role=tuple(
-            sorted(
-                ((SourceArtifactRole(role), value) for role, value in roles.items()),
-                key=lambda item: item[0].value,
-            )
-        ),
-        adapter_version=node.adapter_version,
-        normalizer_version=node.normalizer_version,
-        canonical_schema_version=node.canonical_schema_version,
-        reconstruction_policy_version=node.reconstruction_policy_version,
-        reconciliation_version=node.reconciliation_version,
-        review_unit_schema_version=node.review_unit_schema_version,
-        evidence_schema_version=node.evidence_schema_version,
-        implementation_digest=node.implementation_digest,
-        version_set_hash=node.version_set_hash,
+    return supports_target_version_set(
+        request.input_identity.target_version_set,
+        {
+            item.instrument_id: item.instrument_terms_version
+            for item in request.pinned_instrument_terms
+        },
     )
-    return version_set == SUPPORTED_VERSION_SET
 
 
 def _semantic_request_error(body: CreateTradingNormalizationJobTransport) -> JSONResponse | None:
-    if {item.role for item in body.artifacts} != {"TRADE_HISTORY", "POSITION_HISTORY"}:
+    if {item.role for item in body.artifact_access_grants} != {"TRADE_HISTORY", "POSITION_HISTORY"}:
         return _http_error(422, "FILE_FORMAT_INVALID", "Exactly one artifact per role is required.")
-    if len({item.core_artifact_id for item in body.artifacts}) != 2:
+    if len({item.core_artifact_id for item in body.artifact_access_grants}) != 2:
         return _http_error(422, "FILE_FORMAT_INVALID", "Artifact identities must be distinct.")
-    for artifact in body.artifacts:
+    for artifact in body.artifact_access_grants:
         if (
             artifact.access_uri.username
             or artifact.access_uri.password
             or artifact.access_uri.fragment
         ):
             return _http_error(422, "ARTIFACT_ACCESS_DENIED", "Artifact grant URI is invalid.")
-    for timezone_name in (body.source_timezone, body.review_timezone):
+    for timezone_name in (body.input_identity.source_timezone, body.input_identity.review_timezone):
         try:
             ZoneInfo(timezone_name)
         except (ZoneInfoNotFoundError, ValueError):
@@ -130,7 +118,7 @@ def _semantic_request_error(body: CreateTradingNormalizationJobTransport) -> JSO
             422, "INSTRUMENT_TERMS_UNAVAILABLE", "Pinned instrument terms are required."
         )
     for item in body.pinned_instrument_terms:
-        if item.settlement_asset != body.book_product.settlement_asset:
+        if item.settlement_asset != body.input_identity.declared_product.settlement_asset:
             return _http_error(
                 422, "INSTRUMENT_TERMS_UNAVAILABLE", "Instrument settlement asset is invalid."
             )
@@ -161,8 +149,10 @@ def _status(view: TradingReviewJobStatusView) -> dict[str, object]:
         "attemptToken": view.attempt_token,
         "deletionGeneration": view.deletion_generation,
         "grantRevision": view.grant_revision,
-        "expectedInputHash": view.expected_input_hash,
-        "versionSetHash": view.version_set_hash,
+        "coreNormalizationRunId": view.core_normalization_run_id,
+        "expectedInputSetHash": view.expected_input_set_hash,
+        "hashSpecificationVersion": view.hash_specification_version,
+        "targetVersionSet": view.target_version_set,
     }
     if view.terminal_at is not None:
         result["terminalAt"] = view.terminal_at.isoformat()
@@ -171,6 +161,8 @@ def _status(view: TradingReviewJobStatusView) -> dict[str, object]:
         result["grantRefreshDeadlineAt"] = (
             view.grant_refresh_deadline_at.isoformat() if view.grant_refresh_deadline_at else None
         )
+    if view.computed_input_set_hash is not None:
+        result["inputSetHash"] = view.computed_input_set_hash
     if view.status is TradingReviewJobStatus.COMPLETED:
         result["terminalPayloadId"] = view.terminal_payload_id
         result["resultHash"] = view.result_hash
@@ -202,14 +194,24 @@ def create_trading_normalization_job(
     key = _key(idempotency_key)
     if key is None:
         return _http_error(400, "REQUEST_INVALID", "Invalid Idempotency-Key.")
-    if not _supported(body):
+    if body.input_identity.hash_specification_version == HASH_SPECIFICATION_V1 and not _supported(
+        body
+    ):
         return _http_error(422, "VERSION_INCOMPATIBLE", "Normalizer VersionSet is unsupported.")
     request_error = _semantic_request_error(body)
     if request_error is not None:
         return request_error
     try:
+        computed_input_set_hash = (
+            calculate_input_set_hash(body.input_identity)
+            if body.input_identity.hash_specification_version == HASH_SPECIFICATION_V1
+            else None
+        )
         accepted = submit_trading_review_job(
-            body.model_dump(mode="json", by_alias=True), key, repository
+            body.model_dump(mode="json", by_alias=True),
+            key,
+            repository,
+            computed_input_set_hash,
         )
     except TradingReviewIdempotencyConflict:
         _record_submission(http_request, "conflict")
@@ -252,7 +254,7 @@ def update_trading_normalization_job_grants(
     key = _key(idempotency_key)
     if key is None:
         return _http_error(400, "REQUEST_INVALID", "Invalid Idempotency-Key.")
-    for artifact in body.artifacts:
+    for artifact in body.artifact_access_grants:
         if (
             artifact.access_uri.username
             or artifact.access_uri.password
@@ -295,7 +297,10 @@ def get_trading_normalization_job_status(
         PostgresTradingReviewJobRepository, Depends(get_trading_review_repository)
     ],
 ) -> dict[str, object] | JSONResponse:
-    view = repository.get(jobId)
+    try:
+        view = repository.get(jobId)
+    except TradingReviewJobStateConflict:
+        return _http_error(409, "VERSION_INCOMPATIBLE", "Job identity is unavailable.")
     return (
         _status(view)
         if view is not None
@@ -314,7 +319,10 @@ def get_trading_normalization_job_result(
         PostgresTradingReviewJobRepository, Depends(get_trading_review_repository)
     ],
 ) -> dict[str, object] | JSONResponse:
-    view = repository.get(jobId)
+    try:
+        view = repository.get(jobId)
+    except TradingReviewJobStateConflict:
+        return _http_error(409, "VERSION_INCOMPATIBLE", "Job identity is unavailable.")
     if view is None:
         return _http_error(404, "JOB_NOT_FOUND", "Job was not found.")
     if view.status is not TradingReviewJobStatus.COMPLETED:
@@ -329,8 +337,11 @@ def get_trading_normalization_job_result(
         "mediaType": descriptor.media_type,
         "byteSize": descriptor.byte_size,
         "payloadSha256": descriptor.payload_sha256,
-        "inputHash": descriptor.input_hash,
-        "versionSetHash": descriptor.version_set_hash,
+        "coreNormalizationRunId": descriptor.core_normalization_run_id,
+        "inputSetHash": descriptor.input_set_hash,
+        "hashSpecificationVersion": descriptor.hash_specification_version,
+        "targetVersionSet": descriptor.target_version_set,
+        "reconciliationManifestHash": descriptor.reconciliation_manifest_hash,
         "resultHash": descriptor.result_hash,
         "createdAt": descriptor.created_at.isoformat(),
         "expiresAt": descriptor.expires_at.isoformat(),
