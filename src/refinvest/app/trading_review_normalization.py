@@ -370,8 +370,11 @@ def _download_artifact(grant: dict[str, object], allowed_hosts: tuple[str, ...])
         raise _safe_failure("ARTIFACT_REFERENCE_EXPIRED", "ARTIFACT_FETCH", "GRANT_EXPIRED", True)
     expected_size = grant.get("byteSize")
     expected_hash = grant.get("rawSha256")
+    expected_content_type = grant.get("contentType")
     if not isinstance(expected_size, int) or not 1 <= expected_size <= _MAX_ARTIFACT_BYTES:
         raise _safe_failure("FILE_FORMAT_INVALID", "ARTIFACT_FETCH", "ARTIFACT_SIZE_INVALID")
+    if expected_content_type not in {"text/csv", "application/vnd.ms-excel"}:
+        raise _safe_failure("ARTIFACT_ACCESS_DENIED", "ARTIFACT_FETCH", "ARTIFACT_TYPE_INVALID")
     opener = build_opener(_NoRedirect())
     request = Request(uri, headers={"Accept": "text/csv, application/vnd.ms-excel"})
     try:
@@ -379,6 +382,13 @@ def _download_artifact(grant: dict[str, object], allowed_hosts: tuple[str, ...])
             if response.status != 200:
                 raise _safe_failure(
                     "ARTIFACT_ACCESS_DENIED", "ARTIFACT_FETCH", "ARTIFACT_READ_DENIED"
+                )
+            actual_content_type = (
+                response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            )
+            if actual_content_type != expected_content_type:
+                raise _safe_failure(
+                    "ARTIFACT_ACCESS_DENIED", "ARTIFACT_FETCH", "ARTIFACT_TYPE_MISMATCH"
                 )
             content = response.read(_MAX_ARTIFACT_BYTES + 1)
     except HTTPError as error:

@@ -155,6 +155,7 @@ def test_worker_commits_exactly_one_transition(
 def test_artifact_hash_mismatch_is_rejected_before_engine(monkeypatch: pytest.MonkeyPatch) -> None:
     class Response:
         status = 200
+        headers = {"Content-Type": "text/csv"}
 
         def __enter__(self) -> "Response":
             return self
@@ -175,11 +176,17 @@ def test_artifact_hash_mismatch_is_rejected_before_engine(monkeypatch: pytest.Mo
         "accessUri": "https://internal.example/artifact",
         "expiresAt": (datetime.now(UTC) + timedelta(minutes=1)).isoformat(),
         "byteSize": len(b"synthetic-artifact"),
+        "contentType": "text/csv",
         "rawSha256": "0" * 64,
     }
     with pytest.raises(_SafeExecutionError) as raised:
         _download_artifact(grant, ("internal.example",))
     assert raised.value.failure.code == "SOURCE_CONTENT_HASH_MISMATCH"
+    with pytest.raises(_SafeExecutionError) as wrong_type:
+        _download_artifact(
+            dict(grant, contentType="application/vnd.ms-excel"), ("internal.example",)
+        )
+    assert wrong_type.value.failure.code == "ARTIFACT_ACCESS_DENIED"
     with pytest.raises(_SafeExecutionError) as untrusted:
         _download_artifact(dict(grant, accessUri="file:///private/raw.csv"), ("internal.example",))
     assert untrusted.value.failure.code == "ARTIFACT_ACCESS_DENIED"
@@ -198,6 +205,7 @@ def test_child_reads_verified_artifacts_and_invokes_production_engine(
 
     class Response:
         status = 200
+        headers = {"Content-Type": "text/csv; charset=utf-8"}
 
         def __init__(self, content: bytes) -> None:
             self.content = content
@@ -230,6 +238,7 @@ def test_child_reads_verified_artifacts_and_invokes_production_engine(
                 "role": artifact.role.value,
                 "rawSha256": hashlib.sha256(artifact.content).hexdigest(),
                 "byteSize": len(artifact.content),
+                "contentType": "text/csv",
                 "accessUri": f"https://internal.example/{artifact.role.value}",
                 "expiresAt": (datetime.now(UTC) + timedelta(minutes=4)).isoformat(),
             }
