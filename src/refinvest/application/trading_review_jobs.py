@@ -40,10 +40,14 @@ class TradingReviewJob:
     job_id: str
     core_logical_job_id: str
     core_import_session_id: str
+    core_normalization_run_id: str
     kind: TradingReviewJobKind
     request_payload: dict[str, object]
     request_fingerprint: str
-    expected_input_hash: str
+    expected_input_set_hash: str
+    computed_input_set_hash: str | None
+    hash_specification_version: str
+    retry_policy_version: str
     version_set_hash: str
     deletion_generation: int
     attempt_token: str
@@ -62,12 +66,15 @@ class TradingReviewJobSubmission:
 class TerminalPayloadDescriptor:
     job_id: str
     core_logical_job_id: str
+    core_normalization_run_id: str
     payload_id: str
     media_type: str
     byte_size: int
     payload_sha256: str
-    input_hash: str
-    version_set_hash: str
+    input_set_hash: str
+    hash_specification_version: str
+    target_version_set: dict[str, object]
+    reconciliation_manifest_hash: str
     result_hash: str
     created_at: datetime
     expires_at: datetime
@@ -80,6 +87,7 @@ class TradingReviewJobStatusView:
     job_id: str
     core_logical_job_id: str
     core_import_session_id: str
+    core_normalization_run_id: str
     kind: TradingReviewJobKind
     status: TradingReviewJobStatus
     progress_stage: str
@@ -95,7 +103,11 @@ class TradingReviewJobStatusView:
     result_hash: str | None = None
     cancellation_requested: bool = False
     grant_revision: int = 0
-    expected_input_hash: str = ""
+    expected_input_set_hash: str = ""
+    computed_input_set_hash: str | None = None
+    hash_specification_version: str = ""
+    target_version_set: dict[str, object] | None = None
+    retry_policy_version: str = ""
     version_set_hash: str = ""
     grant_action: str = "NONE"
     grant_refresh_deadline_at: datetime | None = None
@@ -106,8 +118,12 @@ class ClaimedTradingReviewJob:
     job_id: str
     core_logical_job_id: str
     core_import_session_id: str
+    core_normalization_run_id: str
     request_payload: dict[str, object]
-    expected_input_hash: str
+    expected_input_set_hash: str
+    computed_input_set_hash: str | None
+    hash_specification_version: str
+    retry_policy_version: str
     version_set_hash: str
     deletion_generation: int
     attempt_token: str
@@ -209,7 +225,8 @@ class TradingReviewWorkerRepository(Protocol):
         payload: bytes,
         media_type: str,
         payload_sha256: str,
-        input_hash: str,
+        input_set_hash: str,
+        reconciliation_manifest_hash: str,
         result_hash: str,
         retention: timedelta,
     ) -> bool: ...
@@ -232,19 +249,27 @@ def submit_trading_review_job(
     request_payload: dict[str, object],
     idempotency_key: str,
     repository: TradingReviewJobRepository,
+    computed_input_set_hash: str | None,
 ) -> TradingReviewJobSubmission:
     """Atomically admit one exact, immutable normalization request."""
     fingerprint = normalization_request_fingerprint(request_payload)
+    identity = cast(dict[str, object], request_payload["inputIdentity"])
     job = TradingReviewJob(
         job_id=str(uuid4()),
         core_logical_job_id=_required_string(request_payload, "coreLogicalJobId"),
         core_import_session_id=_required_string(request_payload, "coreImportSessionId"),
+        core_normalization_run_id=_required_string(request_payload, "coreNormalizationRunId"),
         kind=TradingReviewJobKind.NORMALIZATION_RECONCILIATION,
         request_payload=request_payload,
         request_fingerprint=fingerprint,
-        expected_input_hash=_required_string(request_payload, "expectedInputHash"),
+        expected_input_set_hash=_required_string(request_payload, "expectedInputSetHash"),
+        computed_input_set_hash=computed_input_set_hash,
+        hash_specification_version=_required_string(identity, "hashSpecificationVersion"),
+        retry_policy_version=_required_string(request_payload, "retryPolicyVersion"),
         version_set_hash=_required_nested_string(
-            request_payload, "targetVersionSet", "versionSetHash"
+            cast(dict[str, object], request_payload["inputIdentity"]),
+            "targetVersionSet",
+            "versionSetHash",
         ),
         deletion_generation=_required_integer(request_payload, "deletionGeneration"),
         attempt_token=_required_string(request_payload, "attemptToken"),
@@ -255,7 +280,7 @@ def submit_trading_review_job(
 def normalization_request_fingerprint(payload: dict[str, object]) -> str:
     """Hash semantic immutable input while excluding expiring access capabilities."""
     canonical = cast(dict[str, object], json.loads(json.dumps(payload)))
-    artifacts_node = canonical.get("artifacts")
+    artifacts_node = canonical.get("artifactAccessGrants")
     if isinstance(artifacts_node, list):
         artifacts = cast(list[dict[str, object]], artifacts_node)
         for artifact in artifacts:

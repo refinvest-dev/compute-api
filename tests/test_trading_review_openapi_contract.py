@@ -11,7 +11,11 @@ from refinvest.api.routes.trading_review_jobs import _http_error
 from refinvest.app.main import app
 from refinvest.app.trading_review_payload import build_normalization_payload
 from refinvest.trading_review import normalize_and_reconstruct
-from tests.trading_review_support import simple_long_request
+from tests.trading_review_support import (
+    input_set_hash_for,
+    normalization_identity_for,
+    simple_long_request,
+)
 
 CONTRACT = yaml.safe_load(
     (Path(__file__).resolve().parents[1] / "openapi/compute-api.yaml").read_text(encoding="utf-8")
@@ -47,11 +51,16 @@ def test_terminal_payload_and_error_shape_validate_against_openapi() -> None:
     request = simple_long_request()
     result = normalize_and_reconstruct(request)
     now = datetime(2026, 1, 3, tzinfo=UTC)
+    identity = normalization_identity_for(request)
     payload = build_normalization_payload(
         result,
         job_id="job-1",
         core_logical_job_id="logical-1",
         core_import_session_id="session-1",
+        core_normalization_run_id="run-1",
+        input_set_hash=input_set_hash_for(identity),
+        hash_specification_version="TRADING_INPUT_SET_HASH_V1",
+        target_version_set=identity["targetVersionSet"],
         attempt_token="attempt-1",
         deletion_generation=0,
         artifacts=request.artifacts,

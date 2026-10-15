@@ -59,8 +59,12 @@ def build_normalization_payload(
     job_id: str,
     core_logical_job_id: str,
     core_import_session_id: str,
+    core_normalization_run_id: str,
     attempt_token: str,
     deletion_generation: int,
+    input_set_hash: str,
+    hash_specification_version: str,
+    target_version_set: dict[str, object],
     artifacts: tuple[SourceArtifact, ...],
     masking_key: bytes,
     created_at: datetime,
@@ -111,7 +115,7 @@ def build_normalization_payload(
     ]
     manifest = {
         "manifestVersion": result.reconciliation_manifest.manifest_schema_version,
-        "inputHash": result.input_hash,
+        "executionInputHash": result.input_hash,
         "manifestHash": result.reconciliation_manifest.manifest_hash,
         "reconstructionPolicyVersion": result.reconciliation_manifest.reconstruction_policy_version,
         "reconciliationVersion": result.reconciliation_manifest.reconciliation_version,
@@ -148,12 +152,14 @@ def build_normalization_payload(
     return {
         "jobId": job_id,
         "coreLogicalJobId": core_logical_job_id,
+        "coreNormalizationRunId": core_normalization_run_id,
         "coreImportSessionId": core_import_session_id,
         "attemptToken": attempt_token,
         "deletionGeneration": deletion_generation,
         "status": "COMPLETED",
-        "versionSet": _version_set(result),
-        "inputHash": result.input_hash,
+        "targetVersionSet": target_version_set,
+        "inputSetHash": input_set_hash,
+        "hashSpecificationVersion": hash_specification_version,
         "artifactCoverages": coverages,
         "canonicalRecords": records,
         "sourceEvidenceSnapshots": snapshots,
@@ -331,25 +337,6 @@ def _review_unit(
         "allocations": allocations,
         "capability": [item.value for item in episode.capability.capabilities],
         "exclusionReasons": list(episode.exclusion_reasons),
-    }
-
-
-def _version_set(result: NormalizationResult) -> dict[str, object]:
-    version_set = result.version_set
-    return {
-        "sourceDialectVersionsByArtifactRole": {
-            role.value: version
-            for role, version in version_set.source_dialect_versions_by_artifact_role
-        },
-        "adapterVersion": version_set.adapter_version,
-        "normalizerVersion": version_set.normalizer_version,
-        "canonicalSchemaVersion": version_set.canonical_schema_version,
-        "reconstructionPolicyVersion": version_set.reconstruction_policy_version,
-        "reconciliationVersion": version_set.reconciliation_version,
-        "reviewUnitSchemaVersion": version_set.review_unit_schema_version,
-        "evidenceSchemaVersion": version_set.evidence_schema_version,
-        "implementationDigest": version_set.implementation_digest,
-        "versionSetHash": version_set.version_set_hash,
     }
 
 
