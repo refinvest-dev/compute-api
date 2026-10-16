@@ -1,5 +1,15 @@
 # Synthetic V1 normalization identity oracle
 
+`result-integrity-v1.json`은 ADR-066의 synthetic 결과 oracle이다. `result-integrity-v1.schema.json`과
+`scripts/verify-trading-normalization-result-integrity.py`가 terminal 공개 DTO, declared count,
+9개 section canonical JSON/UTF-8 hex/SHA-256, 공개 manifest hash와 전체 resultHash를 검증한다.
+고정 결과 hash는 `cfb13b971bfa0952d5c5a251daef94d7e76271960905ea5a6d516adc32ad4107`다.
+작성 시 독립 Python `hashlib`로 값을 고정했고 Node.js `crypto`로 저장된 hex bytes를 별도 검증한다.
+모든 ID와 기록은 synthetic이며 실제 Binance symbol/UID/Trade ID/CSV/credential/locator가 없다.
+이 vector는 공개 DTO와 hash byte 계약 oracle이며 금융 복원 계산의 golden fixture는 아니다.
+V1 vector 문자열은 ASCII이므로 Python의 key-sorted compact JSON이 JCS와 byte-identical하다;
+비ASCII JCS 적합성은 input identity 별도 vector/구현 검증 범위다.
+
 `input-identity-v1.json`은 ADR-065의 `TRADING_INPUT_SET_HASH_V1` 고정 oracle이다.
 `input-identity-v1.schema.json`은 fixture 자체의 machine-readable shape를 검증한다.
 `wire-v1.json`은 같은 identity의 Compute create request, 완료 descriptor 및

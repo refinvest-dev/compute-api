@@ -116,10 +116,81 @@
       },
       "versionSetHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
     },
-    "reconciliationManifestHash": "1111111111111111111111111111111111111111111111111111111111111111",
-    "resultHash": "2222222222222222222222222222222222222222222222222222222222222222",
+    "reconciliationManifestHash": "83627e83b0f7ff4df5dbd45e8e08d380fe942fc26c02590374a1c0f7607c310b",
+    "resultHash": "cfb13b971bfa0952d5c5a251daef94d7e76271960905ea5a6d516adc32ad4107",
     "createdAt": "2026-01-01T00:00:00Z",
-    "expiresAt": "2026-01-02T00:00:00Z"
+    "expiresAt": "2026-01-02T00:00:00Z",
+    "resultSchemaVersion": "TRADING_NORMALIZATION_RESULT_V1",
+    "resultHashSpecificationVersion": "TRADING_NORMALIZATION_RESULT_HASH_V1",
+    "counts": {
+      "artifactCoverageCount": 2,
+      "canonicalRecordCount": 1,
+      "sourceEvidenceSnapshotCount": 1,
+      "reviewUnitCount": 1,
+      "positionAllocationCount": 1,
+      "excludedReviewUnitCount": 1,
+      "capabilityCount": 1,
+      "validationIssueCount": 1,
+      "reconciliationMatchCount": 0,
+      "reconciliationIssueCount": 0
+    },
+    "sectionDigests": [
+      {
+        "sectionType": "ARTIFACT_COVERAGES",
+        "itemCount": 2,
+        "hashSpecificationVersion": "TRADING_NORMALIZATION_RESULT_HASH_V1",
+        "sectionHash": "a99442f53a9f28a113afe42153a4a4db0ad4053369a06991804be6a85215b89d"
+      },
+      {
+        "sectionType": "CANONICAL_RECORDS",
+        "itemCount": 1,
+        "hashSpecificationVersion": "TRADING_NORMALIZATION_RESULT_HASH_V1",
+        "sectionHash": "80febb81585bda781f5164a75f4210280054b1c741e9cc2881314885cd16e3e9"
+      },
+      {
+        "sectionType": "CAPABILITIES",
+        "itemCount": 1,
+        "hashSpecificationVersion": "TRADING_NORMALIZATION_RESULT_HASH_V1",
+        "sectionHash": "0cc5e6ad55a608d1a0c8110bd05b440a938f5fea170a5d9744709cebb11815a1"
+      },
+      {
+        "sectionType": "QUALITY_REPORT",
+        "itemCount": 1,
+        "hashSpecificationVersion": "TRADING_NORMALIZATION_RESULT_HASH_V1",
+        "sectionHash": "74b1df1cfd742d6314552678e07730ff8db97ea657992f68c33892ed864f7db5"
+      },
+      {
+        "sectionType": "RECONCILIATION_ISSUES",
+        "itemCount": 0,
+        "hashSpecificationVersion": "TRADING_NORMALIZATION_RESULT_HASH_V1",
+        "sectionHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "sectionType": "RECONCILIATION_MANIFEST",
+        "itemCount": 1,
+        "hashSpecificationVersion": "TRADING_NORMALIZATION_RESULT_HASH_V1",
+        "sectionHash": "83627e83b0f7ff4df5dbd45e8e08d380fe942fc26c02590374a1c0f7607c310b"
+      },
+      {
+        "sectionType": "RECONCILIATION_MATCHES",
+        "itemCount": 0,
+        "hashSpecificationVersion": "TRADING_NORMALIZATION_RESULT_HASH_V1",
+        "sectionHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "sectionType": "REVIEW_UNITS",
+        "itemCount": 1,
+        "hashSpecificationVersion": "TRADING_NORMALIZATION_RESULT_HASH_V1",
+        "sectionHash": "c9ea6a88413c5cdb21c6b8be4f8be72015ed045ca9c97f5745c2be30640752eb"
+      },
+      {
+        "sectionType": "SOURCE_EVIDENCE_SNAPSHOTS",
+        "itemCount": 1,
+        "hashSpecificationVersion": "TRADING_NORMALIZATION_RESULT_HASH_V1",
+        "sectionHash": "f39f2a9314acaeb11b57d370c03ca55e43722db7b89de84642b38a9892e89c85"
+      }
+    ],
+    "transportMode": "SINGLE_RESOURCE"
   },
   "failedStatus": {
     "jobId": "job-example",

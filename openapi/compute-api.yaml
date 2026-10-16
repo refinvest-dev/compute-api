@@ -324,13 +324,15 @@ paths:
           schema: { type: string }
       responses:
         '200':
-          description: descriptor의 mediaType/byteSize/SHA-256를 검증해야 한다.
+          description: |
+            Normalization V1은 단일 UTF-8 JSON entity body, Content-Encoding identity다.
+            descriptor byteSize/payloadSha256은 압축·재직렬화 전 정확한 response entity body
+            bytes에 적용한다. HTTP headers, transfer framing, TLS bytes는 제외한다.
           content:
+            application/vnd.refinvest.trading-normalization+json:
+              schema: { $ref: '#/components/schemas/NormalizationTerminalPayload' }
             application/json:
-              schema:
-                oneOf:
-                  - $ref: '#/components/schemas/NormalizationTerminalPayload'
-                  - $ref: '#/components/schemas/AnalyticsTerminalPayload'
+              schema: { $ref: '#/components/schemas/AnalyticsTerminalPayload' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
@@ -625,6 +627,13 @@ components:
         - MISSING_CAPABILITY
         - INCOMPLETE_ANALYSIS_RESULT
         - RESULT_HASH_MISMATCH
+        - RESULT_TRANSPORT_HASH_MISMATCH
+        - RESULT_COUNT_MISMATCH
+        - RESULT_SECTION_HASH_MISMATCH
+        - RECONCILIATION_MANIFEST_HASH_MISMATCH
+        - RESULT_SCHEMA_UNSUPPORTED
+        - EVIDENCE_REFERENCE_INVALID
+        - RESULT_ITEM_CONFLICT
         - STALE_RESULT_AFTER_DELETION
         - JOB_CANCELLED
         - GRANT_REFRESH_DEADLINE_EXCEEDED
@@ -786,12 +795,13 @@ components:
     NormalizationTerminalResultDescriptor:
       type: object
       additionalProperties: false
-      required: [jobId, coreLogicalJobId, coreNormalizationRunId, payloadId, mediaType, byteSize, payloadSha256, attemptToken, deletionGeneration, inputSetHash, hashSpecificationVersion, targetVersionSet, reconciliationManifestHash, resultHash, createdAt, expiresAt]
+      required: [jobId, coreLogicalJobId, coreNormalizationRunId, payloadId, transportMode, mediaType, byteSize, payloadSha256, attemptToken, deletionGeneration, inputSetHash, hashSpecificationVersion, targetVersionSet, resultSchemaVersion, resultHashSpecificationVersion, counts, sectionDigests, reconciliationManifestHash, resultHash, createdAt, expiresAt]
       properties:
         jobId: { type: string }
         coreLogicalJobId: { type: string }
         coreNormalizationRunId: { type: string, minLength: 1 }
         payloadId: { type: string }
+        transportMode: { type: string, enum: [SINGLE_RESOURCE], description: V1은 payloadId resource 하나만 조회. }
         mediaType: { type: string, enum: [application/vnd.refinvest.trading-normalization+json] }
         byteSize: { type: integer, format: int64, minimum: 1 }
         payloadSha256: { $ref: '#/components/schemas/TradingSha256' }
@@ -800,13 +810,18 @@ components:
         inputSetHash: { $ref: '#/components/schemas/TradingSha256' }
         hashSpecificationVersion: { type: string, enum: [TRADING_INPUT_SET_HASH_V1] }
         targetVersionSet: { $ref: '#/components/schemas/NormalizationTargetVersionSet' }
+        resultSchemaVersion: { $ref: '#/components/schemas/NormalizationResultSchemaVersion' }
+        resultHashSpecificationVersion: { $ref: '#/components/schemas/NormalizationResultHashSpecificationVersion' }
+        counts: { $ref: '#/components/schemas/NormalizationResultCounts' }
+        sectionDigests: { $ref: '#/components/schemas/NormalizationResultSectionDigests' }
         reconciliationManifestHash: { $ref: '#/components/schemas/TradingSha256' }
         resultHash: { $ref: '#/components/schemas/TradingSha256' }
         createdAt: { type: string, format: date-time }
         expiresAt: { type: string, format: date-time }
       description: |
         최종 attempt identity는 Core publication과 acknowledgement에서 payload와 함께 검증한다.
-        resultHash는 deterministic engine hash이고 payloadSha256은 실제 전송 bytes의 hash다.
+        resultHash는 공개 NormalizationResultDigestManifest의 JCS hash이고 payloadSha256은
+        Content-Encoding identity인 응답 entity body의 exact bytes SHA-256이다.
     AcknowledgeTradingAnalyticsJobResultRequest:
       type: object
       required: [coreAggregateId, payloadId, payloadSha256, terminalResultHash, persistedAt]
@@ -1272,8 +1287,9 @@ components:
           VENUE_POSITION_SUMMARY: '#/components/schemas/CanonicalPositionSummaryRecord'
     InternalPositionAllocation:
       type: object
-      required: [recordId, reviewUnitId, action, allocatedQuantity]
+      required: [allocationId, recordId, reviewUnitId, action, allocatedQuantity]
       properties:
+        allocationId: { type: string, minLength: 1, description: 동일 입력에서 재생성 가능한 stable allocation identity. }
         recordId: { type: string }
         reviewUnitId: { type: string }
         action: { type: string, enum: [OPEN, INCREASE, REDUCE, CLOSE, REVERSAL_CLOSE, REVERSAL_OPEN] }
@@ -1288,7 +1304,7 @@ components:
           nullable: true
     InternalReviewUnit:
       type: object
-      required: [reviewUnitId, type, instrumentId, direction, outcomeClassification, reconstructionStatus, reconciliationStatus, allocations, capability]
+      required: [reviewUnitId, type, instrumentId, direction, outcomeClassification, reconstructionStatus, reconciliationStatus, allocations, capability, exclusionReasons]
       properties:
         reviewUnitId: { type: string }
         type: { type: string, enum: [FUTURES_POSITION_EPISODE] }
@@ -1314,16 +1330,131 @@ components:
         allocations: { type: array, items: { $ref: '#/components/schemas/InternalPositionAllocation' } }
         capability: { type: array, items: { $ref: '#/components/schemas/InternalAnalysisCapability' } }
         exclusionReasons: { type: array, items: { type: string } }
+    NormalizationResultSchemaVersion:
+      type: string
+      enum: [TRADING_NORMALIZATION_RESULT_V1]
+    NormalizationResultHashSpecificationVersion:
+      type: string
+      enum: [TRADING_NORMALIZATION_RESULT_HASH_V1]
+    NormalizationResultCounts:
+      type: object
+      additionalProperties: false
+      required: [artifactCoverageCount, canonicalRecordCount, sourceEvidenceSnapshotCount, reviewUnitCount, positionAllocationCount, excludedReviewUnitCount, capabilityCount, validationIssueCount, reconciliationMatchCount, reconciliationIssueCount]
+      properties:
+        artifactCoverageCount: { type: integer, format: int64, enum: [2] }
+        canonicalRecordCount: { type: integer, format: int64, minimum: 0 }
+        sourceEvidenceSnapshotCount: { type: integer, format: int64, minimum: 0 }
+        reviewUnitCount: { type: integer, format: int64, minimum: 0 }
+        positionAllocationCount: { type: integer, format: int64, minimum: 0 }
+        excludedReviewUnitCount: { type: integer, format: int64, minimum: 0 }
+        capabilityCount: { type: integer, format: int64, minimum: 0 }
+        validationIssueCount: { type: integer, format: int64, minimum: 0 }
+        reconciliationMatchCount: { type: integer, format: int64, minimum: 0 }
+        reconciliationIssueCount: { type: integer, format: int64, minimum: 0 }
+    NormalizationResultSectionType:
+      type: string
+      enum: [ARTIFACT_COVERAGES, CANONICAL_RECORDS, SOURCE_EVIDENCE_SNAPSHOTS, REVIEW_UNITS, CAPABILITIES, QUALITY_REPORT, RECONCILIATION_MATCHES, RECONCILIATION_ISSUES, RECONCILIATION_MANIFEST]
+    NormalizationResultSectionDigest:
+      type: object
+      additionalProperties: false
+      required: [sectionType, itemCount, hashSpecificationVersion, sectionHash]
+      properties:
+        sectionType: { $ref: '#/components/schemas/NormalizationResultSectionType' }
+        itemCount: { type: integer, format: int64, minimum: 0 }
+        hashSpecificationVersion: { $ref: '#/components/schemas/NormalizationResultHashSpecificationVersion' }
+        sectionHash: { $ref: '#/components/schemas/TradingSha256' }
+    NormalizationResultPageDescriptor:
+      type: object
+      additionalProperties: false
+      required: [payloadId, sectionType, pageIndex, itemCount, payloadSha256, terminal]
+      properties:
+        payloadId: { type: string, minLength: 1 }
+        sectionType: { $ref: '#/components/schemas/NormalizationResultSectionType' }
+        pageIndex: { type: integer, format: int64, minimum: 0 }
+        itemCount: { type: integer, format: int64, minimum: 0 }
+        payloadSha256: { $ref: '#/components/schemas/TradingSha256' }
+        terminal: { type: boolean }
+      description: 미래 paged schema용 shape; V1 SINGLE_RESOURCE에는 사용하지 않는다.
+    NormalizationResultSectionDigests:
+      type: array
+      minItems: 9
+      maxItems: 9
+      items: { $ref: '#/components/schemas/NormalizationResultSectionDigest' }
+      description: 9개 sectionType을 중복 없이 각 하나씩, wire value 오름차순으로 제공.
+    NormalizationResultDigestManifest:
+      type: object
+      additionalProperties: false
+      required: [resultHashSpecificationVersion, resultSchemaVersion, inputSetHash, inputHashSpecificationVersion, targetVersionSet, counts, sectionDigests, reconciliationManifestHash]
+      properties:
+        resultHashSpecificationVersion: { $ref: '#/components/schemas/NormalizationResultHashSpecificationVersion' }
+        resultSchemaVersion: { $ref: '#/components/schemas/NormalizationResultSchemaVersion' }
+        inputSetHash: { $ref: '#/components/schemas/TradingSha256' }
+        inputHashSpecificationVersion: { type: string, enum: [TRADING_INPUT_SET_HASH_V1] }
+        targetVersionSet: { $ref: '#/components/schemas/NormalizationTargetVersionSet' }
+        counts: { $ref: '#/components/schemas/NormalizationResultCounts' }
+        sectionDigests: { $ref: '#/components/schemas/NormalizationResultSectionDigests' }
+        reconciliationManifestHash: { $ref: '#/components/schemas/TradingSha256' }
+    ReconciliationDeltaPayload:
+      type: object
+      additionalProperties: false
+      required: [field, actual, expected, absoluteDelta, tolerance]
+      properties:
+        field: { type: string, minLength: 1 }
+        actual: { $ref: '#/components/schemas/TradingDecimalString' }
+        expected: { $ref: '#/components/schemas/TradingDecimalString' }
+        absoluteDelta: { $ref: '#/components/schemas/TradingDecimalString' }
+        tolerance: { $ref: '#/components/schemas/TradingDecimalString' }
+    ReconciliationMatchPayload:
+      type: object
+      additionalProperties: false
+      required: [matchId, summaryRecordId, status, candidateReviewUnitIds, deltas, evidenceRecordIds]
+      properties:
+        matchId: { type: string, minLength: 1 }
+        summaryRecordId: { type: string, minLength: 1 }
+        reviewUnitId: { type: string, nullable: true }
+        status: { type: string, enum: [EXACT, WITHIN_ROUNDING_TOLERANCE, AMBIGUOUS, INCOMPLETE_TRADES, SUMMARY_MISMATCH, UNSUPPORTED_OVERLAP] }
+        candidateReviewUnitIds: { type: array, items: { type: string } }
+        deltas: { type: array, items: { $ref: '#/components/schemas/ReconciliationDeltaPayload' } }
+        evidenceRecordIds: { type: array, items: { type: string } }
+    ReconciliationIssuePayload:
+      type: object
+      additionalProperties: false
+      required: [issueId, code, severity, evidenceRecordIds]
+      properties:
+        issueId: { type: string, minLength: 1 }
+        code: { type: string, minLength: 1 }
+        severity: { type: string, enum: [WARNING, ERROR] }
+        reviewUnitId: { type: string, nullable: true }
+        summaryRecordId: { type: string, nullable: true }
+        evidenceRecordIds: { type: array, items: { type: string } }
     ReconciliationManifestPayload:
       type: object
-      required: [manifestVersion, executionInputHash, manifestHash, reconstructionPolicyVersion, reconciliationVersion, reviewUnits, capability, quantityConservationPassed, cashFlowConservationPassed]
+      additionalProperties: false
+      required: [manifestVersion, manifestHashSpecificationVersion, inputSetHash, executionInputHash, canonicalRecordSetHash, qualityReportHash, instrumentTermsHash, versionSetHash, sourceArtifactHashesByRole, counts, manifestHash, reconstructionPolicyVersion, reconciliationVersion, artifactCoverages, reviewUnits, reconciliationMatches, reconciliationIssues, capability, quantityConservationPassed, cashFlowConservationPassed]
       properties:
         manifestVersion: { type: string }
+        manifestHashSpecificationVersion: { $ref: '#/components/schemas/NormalizationResultHashSpecificationVersion' }
+        inputSetHash: { $ref: '#/components/schemas/TradingSha256' }
         executionInputHash: { $ref: '#/components/schemas/TradingSha256', description: Compute 계산 입력과 탐지된 dialect/terms 등을 식별하는 execution provenance hash. ADR-065 inputSetHash와 별개. }
+        canonicalRecordSetHash: { $ref: '#/components/schemas/TradingSha256', description: CANONICAL_RECORDS sectionHash와 동일. }
+        qualityReportHash: { $ref: '#/components/schemas/TradingSha256', description: QUALITY_REPORT sectionHash와 동일. }
+        instrumentTermsHash: { $ref: '#/components/schemas/TradingSha256' }
+        versionSetHash: { $ref: '#/components/schemas/TradingSha256' }
+        counts: { $ref: '#/components/schemas/NormalizationResultCounts' }
+        sourceArtifactHashesByRole:
+          type: object
+          additionalProperties: false
+          required: [TRADE_HISTORY, POSITION_HISTORY]
+          properties:
+            TRADE_HISTORY: { $ref: '#/components/schemas/TradingSha256' }
+            POSITION_HISTORY: { $ref: '#/components/schemas/TradingSha256' }
         manifestHash: { $ref: '#/components/schemas/TradingSha256' }
         reconstructionPolicyVersion: { type: string }
         reconciliationVersion: { type: string }
+        artifactCoverages: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/InternalArtifactCoverage' } }
         reviewUnits: { type: array, items: { $ref: '#/components/schemas/InternalReviewUnit' } }
+        reconciliationMatches: { type: array, items: { $ref: '#/components/schemas/ReconciliationMatchPayload' } }
+        reconciliationIssues: { type: array, items: { $ref: '#/components/schemas/ReconciliationIssuePayload' } }
         capability: { type: array, items: { $ref: '#/components/schemas/InternalAnalysisCapability' } }
         quantityConservationPassed: { type: boolean }
         cashFlowConservationPassed: { type: boolean }
@@ -1357,7 +1488,7 @@ components:
           additionalProperties: { type: integer, format: int64, minimum: 0 }
     NormalizationTerminalPayload:
       type: object
-      required: [jobId, coreLogicalJobId, coreNormalizationRunId, coreImportSessionId, attemptToken, deletionGeneration, status, targetVersionSet, inputSetHash, hashSpecificationVersion, artifactCoverages, canonicalRecords, sourceEvidenceSnapshots, reconciliationManifest, capability, qualityReport, ledgerContentHash, resultHash, createdAt, terminalAt]
+      required: [jobId, coreLogicalJobId, coreNormalizationRunId, coreImportSessionId, attemptToken, deletionGeneration, status, targetVersionSet, inputSetHash, hashSpecificationVersion, resultSchemaVersion, resultHashSpecificationVersion, counts, sectionDigests, resultDigestManifest, artifactCoverages, canonicalRecords, sourceEvidenceSnapshots, reconciliationManifest, capability, qualityReport, ledgerContentHash, resultHash, createdAt, terminalAt]
       additionalProperties: false
       properties:
         jobId: { type: string }
@@ -1370,6 +1501,11 @@ components:
         targetVersionSet: { $ref: '#/components/schemas/NormalizationTargetVersionSet' }
         inputSetHash: { $ref: '#/components/schemas/TradingSha256', description: 요청 inputIdentity에서 Compute가 독립 재계산한 값; expectedInputSetHash와 일치. }
         hashSpecificationVersion: { type: string, enum: [TRADING_INPUT_SET_HASH_V1] }
+        resultSchemaVersion: { $ref: '#/components/schemas/NormalizationResultSchemaVersion' }
+        resultHashSpecificationVersion: { $ref: '#/components/schemas/NormalizationResultHashSpecificationVersion' }
+        counts: { $ref: '#/components/schemas/NormalizationResultCounts' }
+        sectionDigests: { $ref: '#/components/schemas/NormalizationResultSectionDigests' }
+        resultDigestManifest: { $ref: '#/components/schemas/NormalizationResultDigestManifest' }
         artifactCoverages:
           type: array
           minItems: 2
