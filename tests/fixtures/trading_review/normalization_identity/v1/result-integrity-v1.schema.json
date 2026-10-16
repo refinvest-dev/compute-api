@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["specificationVersion", "resultSchemaVersion", "terminalPayload", "sectionVectors", "manifestVector", "resultDigestManifestVector"],
+  "properties": {
+    "specificationVersion": {"const": "TRADING_NORMALIZATION_RESULT_HASH_V1"},
+    "resultSchemaVersion": {"const": "TRADING_NORMALIZATION_RESULT_V1"},
+    "terminalPayload": {"type": "object"},
+    "sectionVectors": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/hashVector"},
+      "required": ["ARTIFACT_COVERAGES", "CANONICAL_RECORDS", "SOURCE_EVIDENCE_SNAPSHOTS", "REVIEW_UNITS", "CAPABILITIES", "QUALITY_REPORT", "RECONCILIATION_MATCHES", "RECONCILIATION_ISSUES", "RECONCILIATION_MANIFEST"],
+      "minProperties": 9,
+      "maxProperties": 9
+    },
+    "manifestVector": {"$ref": "#/$defs/hashVector"},
+    "resultDigestManifestVector": {"$ref": "#/$defs/hashVector"}
+  },
+  "$defs": {
+    "hashVector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["canonicalJson", "canonicalUtf8Hex", "expectedSha256"],
+      "properties": {
+        "canonicalJson": {"type": "string"},
+        "canonicalUtf8Hex": {"type": "string", "pattern": "^([0-9a-f]{2})*$"},
+        "expectedSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}
