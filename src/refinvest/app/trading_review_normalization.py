@@ -24,13 +24,16 @@ from refinvest.app.trading_review_identity import (
     supports_target_version_set,
 )
 from refinvest.app.trading_review_payload import MEDIA_TYPE, build_normalization_payload
+from refinvest.app.trading_review_result_integrity import (
+    ResultIntegrityError,
+    canonicalize_result,
+)
 from refinvest.application.trading_review_jobs import (
     ClaimedTradingReviewJob,
     SafeTradingReviewFailure,
 )
 from refinvest.trading_review.decimal import ScaledDecimal
 from refinvest.trading_review.errors import TradingReviewError
-from refinvest.trading_review.hashing import canonical_json_bytes, content_hash
 from refinvest.trading_review.model import (
     InstrumentDescriptor,
     NormalizationRequest,
@@ -180,10 +183,6 @@ def execute_normalization_child(
             stable_identity_key=identity_key,
         )
         result = normalize_and_reconstruct(engine_request)
-        if content_hash(result) != result.result_hash:
-            raise _safe_failure(
-                "RESULT_HASH_MISMATCH", "PUBLICATION", "ENGINE_RESULT_HASH_MISMATCH"
-            )
         terminal_at = datetime.now(UTC)
         payload_object = build_normalization_payload(
             result,
@@ -202,7 +201,7 @@ def execute_normalization_child(
             terminal_at=terminal_at,
             instrument_terms=instruments,
         )
-        payload = canonical_json_bytes(payload_object)
+        payload = canonicalize_result(payload_object)
         if not payload or len(payload) > _PAYLOAD_LIMIT_BYTES:
             raise _safe_failure("INCOMPLETE_ANALYSIS_RESULT", "PUBLICATION", "PAYLOAD_SIZE_INVALID")
         sender.send(
@@ -211,8 +210,12 @@ def execute_normalization_child(
                 MEDIA_TYPE,
                 hashlib.sha256(payload).hexdigest(),
                 input_set_hash,
-                result.reconciliation_manifest.manifest_hash,
-                result.result_hash,
+                str(
+                    cast(dict[str, object], payload_object["reconciliationManifest"])[
+                        "manifestHash"
+                    ]
+                ),
+                str(payload_object["resultHash"]),
             )
         )
     except TradingReviewError as error:
@@ -237,6 +240,15 @@ def execute_normalization_child(
             details=safe_details,
         )
         sender.send(FailedNormalization(failure, False))
+    except ResultIntegrityError as error:
+        sender.send(
+            FailedNormalization(
+                SafeTradingReviewFailure(
+                    error.code, "Normalization result integrity failed.", False, "PUBLICATION"
+                ),
+                False,
+            )
+        )
     except _SafeExecutionError as error:
         sender.send(FailedNormalization(error.failure, error.retryable))
     except Exception:

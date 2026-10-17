@@ -28,6 +28,8 @@ from refinvest.app.trading_review_identity import (
     calculate_input_set_hash,
     supports_target_version_set,
 )
+from refinvest.app.trading_review_payload import MEDIA_TYPE
+from refinvest.app.trading_review_result_integrity import ResultIntegrityError
 from refinvest.application.trading_review_jobs import (
     TradingReviewCapacityExceeded,
     TradingReviewGrantInvalid,
@@ -380,6 +382,7 @@ def get_trading_normalization_job_result(
         "jobId": descriptor.job_id,
         "coreLogicalJobId": descriptor.core_logical_job_id,
         "payloadId": descriptor.payload_id,
+        "transportMode": "SINGLE_RESOURCE",
         "mediaType": descriptor.media_type,
         "byteSize": descriptor.byte_size,
         "payloadSha256": descriptor.payload_sha256,
@@ -389,6 +392,10 @@ def get_trading_normalization_job_result(
         "targetVersionSet": descriptor.target_version_set,
         "reconciliationManifestHash": descriptor.reconciliation_manifest_hash,
         "resultHash": descriptor.result_hash,
+        "resultSchemaVersion": descriptor.result_schema_version,
+        "resultHashSpecificationVersion": descriptor.result_hash_specification_version,
+        "counts": descriptor.counts,
+        "sectionDigests": descriptor.section_digests,
         "createdAt": descriptor.created_at.isoformat(),
         "expiresAt": descriptor.expires_at.isoformat(),
         "attemptToken": descriptor.attempt_token,
@@ -437,10 +444,17 @@ def download_trading_review_terminal_payload(
         PostgresTradingReviewJobRepository, Depends(get_trading_review_repository)
     ],
 ) -> Response:
-    payload = repository.get_terminal_payload(payloadId)
+    try:
+        payload = repository.get_terminal_payload(payloadId)
+    except ResultIntegrityError as error:
+        return _http_error(409, error.code, "Terminal result integrity failed.")
     if payload is None:
         return _http_error(404, "PAYLOAD_NOT_FOUND", "Payload was not found.")
-    return Response(content=payload, media_type="application/json")
+    return Response(
+        content=payload,
+        media_type=f"{MEDIA_TYPE}; charset=utf-8",
+        headers={"Content-Encoding": "identity"},
+    )
 
 
 @router.post(

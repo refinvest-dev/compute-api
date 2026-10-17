@@ -9,11 +9,18 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from os import getenv
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from psycopg import connect
+from psycopg.errors import RaiseException
 
+from refinvest.app.trading_review_result_integrity import (
+    ResultIntegrityError,
+    canonicalize_result,
+    finalize_public_result,
+)
 from refinvest.application.trading_review_jobs import (
     ClaimedTradingReviewJob,
     SafeTradingReviewFailure,
@@ -83,22 +90,46 @@ def _job(logical_id: str) -> TradingReviewJob:
     )
 
 
-def _terminal_payload(
-    claim: ClaimedTradingReviewJob, *, result_hash: str, manifest_hash: str = "d" * 64
-) -> bytes:
-    return json.dumps(
+def _terminal_payload(claim: ClaimedTradingReviewJob) -> bytes:
+    fixture = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "fixtures/trading_review/normalization_identity/v1/result-integrity-v1.json"
+        ).read_text(encoding="utf-8")
+    )
+    payload = fixture["terminalPayload"]
+    identity = claim.request_payload["inputIdentity"]
+    payload.update(
         {
             "jobId": claim.job_id,
+            "coreLogicalJobId": claim.core_logical_job_id,
             "coreNormalizationRunId": claim.core_normalization_run_id,
+            "coreImportSessionId": claim.core_import_session_id,
             "attemptToken": claim.attempt_token,
             "deletionGeneration": claim.deletion_generation,
             "inputSetHash": claim.computed_input_set_hash,
-            "hashSpecificationVersion": claim.hash_specification_version,
-            "reconciliationManifest": {"manifestHash": manifest_hash},
-            "resultHash": result_hash,
-        },
-        separators=(",", ":"),
-    ).encode()
+            "targetVersionSet": identity["targetVersionSet"],
+        }
+    )
+    manifest = payload["reconciliationManifest"]
+    manifest["inputSetHash"] = claim.computed_input_set_hash
+    manifest["versionSetHash"] = identity["targetVersionSet"]["versionSetHash"]
+    manifest["sourceArtifactHashesByRole"] = {
+        role: item["sha256"] for role, item in identity["artifactsByRole"].items()
+    }
+    for snapshot in payload["sourceEvidenceSnapshots"]:
+        snapshot["coreArtifactId"] = identity["artifactsByRole"][snapshot["artifactRole"]][
+            "artifactId"
+        ]
+    return canonicalize_result(finalize_public_result(payload))
+
+
+def _result_hash(payload: bytes) -> str:
+    return str(json.loads(payload)["resultHash"])
+
+
+def _manifest_hash(payload: bytes) -> str:
+    return str(json.loads(payload)["reconciliationManifest"]["manifestHash"])
 
 
 def _delete(job_id: str) -> None:
@@ -212,8 +243,8 @@ def test_claim_reclaim_stale_write_and_atomic_terminal_ack_cleanup() -> None:
         assert reclaimed.lease_owner != first.lease_owner
         assert _artifact_lease_statuses(job.job_id, 1) == ["EXPIRED", "EXPIRED"]
         assert _artifact_lease_statuses(job.job_id, 2) == ["ACTIVE", "ACTIVE"]
-        first_payload = _terminal_payload(first, result_hash="e" * 64)
-        payload = _terminal_payload(reclaimed, result_hash="e" * 64)
+        first_payload = _terminal_payload(first)
+        payload = _terminal_payload(reclaimed)
         first_payload_hash = hashlib.sha256(first_payload).hexdigest()
         payload_hash = hashlib.sha256(payload).hexdigest()
         assert not repository.publish_completed(
@@ -222,8 +253,8 @@ def test_claim_reclaim_stale_write_and_atomic_terminal_ack_cleanup() -> None:
             media_type="application/vnd.refinvest.trading-normalization+json",
             payload_sha256=first_payload_hash,
             input_set_hash=job.expected_input_set_hash,
-            reconciliation_manifest_hash="d" * 64,
-            result_hash="e" * 64,
+            reconciliation_manifest_hash=_manifest_hash(first_payload),
+            result_hash=_result_hash(first_payload),
             retention=timedelta(hours=24),
         )
         assert repository.publish_completed(
@@ -232,8 +263,8 @@ def test_claim_reclaim_stale_write_and_atomic_terminal_ack_cleanup() -> None:
             media_type="application/vnd.refinvest.trading-normalization+json",
             payload_sha256=payload_hash,
             input_set_hash=job.expected_input_set_hash,
-            reconciliation_manifest_hash="d" * 64,
-            result_hash="e" * 64,
+            reconciliation_manifest_hash=_manifest_hash(payload),
+            result_hash=_result_hash(payload),
             retention=timedelta(hours=24),
         )
         assert _artifact_lease_statuses(job.job_id, 2) == ["CONSUMED", "CONSUMED"]
@@ -247,7 +278,16 @@ def test_claim_reclaim_stale_write_and_atomic_terminal_ack_cleanup() -> None:
             descriptor.target_version_set
             == job.request_payload["inputIdentity"]["targetVersionSet"]
         )
-        assert descriptor.reconciliation_manifest_hash == "d" * 64
+        assert descriptor.reconciliation_manifest_hash == _manifest_hash(payload)
+        assert descriptor.counts == json.loads(payload)["counts"]
+        assert descriptor.section_digests == json.loads(payload)["sectionDigests"]
+        with pytest.raises(RaiseException):
+            with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    """UPDATE trading_review_terminal_payloads SET result_hash = %s
+                       WHERE payload_id = %s""",
+                    ("0" * 64, descriptor.payload_id),
+                )
         with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
             cursor.execute(
                 """SELECT payload_bytes, encryption_version
@@ -265,7 +305,7 @@ def test_claim_reclaim_stale_write_and_atomic_terminal_ack_cleanup() -> None:
             core_aggregate_id=job.core_import_session_id,
             payload_id=descriptor.payload_id,
             payload_sha256=payload_hash,
-            terminal_result_hash="e" * 64,
+            terminal_result_hash=_result_hash(payload),
             attempt_token=descriptor.attempt_token,
             deletion_generation=descriptor.deletion_generation,
             disposition="PERSISTED",
@@ -278,6 +318,41 @@ def test_claim_reclaim_stale_write_and_atomic_terminal_ack_cleanup() -> None:
         assert repository.get(job.job_id) is not None
         assert repository.get_terminal_payload(descriptor.payload_id) is None
         assert repository.acknowledge(job.job_id, **ack)
+    finally:
+        _delete(job.job_id)
+
+
+def test_invalid_digest_cannot_create_partial_terminal_success() -> None:
+    assert DATABASE_URL is not None
+    repository = PostgresTradingReviewJobRepository(DATABASE_URL, PAYLOAD_KEY)
+    job = _job(str(uuid4()))
+    repository.create_idempotently(job, hashlib.sha256(job.job_id.encode()).hexdigest())
+    try:
+        claim = repository.claim_next("worker", timedelta(seconds=30))
+        assert claim is not None
+        document = json.loads(_terminal_payload(claim))
+        document["resultHash"] = "0" * 64
+        payload = canonicalize_result(document)
+        with pytest.raises(ResultIntegrityError, match="RESULT_HASH_MISMATCH"):
+            repository.publish_completed(
+                claim,
+                payload=payload,
+                media_type="application/vnd.refinvest.trading-normalization+json",
+                payload_sha256=hashlib.sha256(payload).hexdigest(),
+                input_set_hash=job.expected_input_set_hash,
+                reconciliation_manifest_hash=_manifest_hash(payload),
+                result_hash="0" * 64,
+                retention=timedelta(hours=24),
+            )
+        view = repository.get(job.job_id)
+        assert view is not None and view.status is TradingReviewJobStatus.RUNNING
+        assert repository.get_result_descriptor(job.job_id) is None
+        with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*) FROM trading_review_terminal_payloads WHERE job_id = %s",
+                (job.job_id,),
+            )
+            assert cursor.fetchone()[0] == 0
     finally:
         _delete(job.job_id)
 
@@ -310,15 +385,15 @@ def test_running_cancellation_blocks_publication_and_expires_safely() -> None:
             job.job_id, hashlib.sha256(f"cancel-{job.job_id}".encode()).hexdigest()
         )
         assert requested is not None and requested.cancellation_requested
-        payload = _terminal_payload(claim, result_hash="f" * 64)
+        payload = _terminal_payload(claim)
         assert not repository.publish_completed(
             claim,
             payload=payload,
             media_type="application/vnd.refinvest.trading-normalization+json",
             payload_sha256=hashlib.sha256(payload).hexdigest(),
             input_set_hash=job.expected_input_set_hash,
-            reconciliation_manifest_hash="d" * 64,
-            result_hash="f" * 64,
+            reconciliation_manifest_hash=_manifest_hash(payload),
+            result_hash=_result_hash(payload),
             retention=timedelta(hours=24),
         )
         view = repository.get(job.job_id)
@@ -349,15 +424,15 @@ def test_one_active_logical_job_and_expired_lease_never_publishes() -> None:
                    WHERE job_id = %s""",
                 (first.job_id,),
             )
-        payload = _terminal_payload(claim, result_hash="f" * 64)
+        payload = _terminal_payload(claim)
         assert not repository.publish_completed(
             claim,
             payload=payload,
             media_type="application/vnd.refinvest.trading-normalization+json",
             payload_sha256=hashlib.sha256(payload).hexdigest(),
             input_set_hash=first.expected_input_set_hash,
-            reconciliation_manifest_hash="d" * 64,
-            result_hash="f" * 64,
+            reconciliation_manifest_hash=_manifest_hash(payload),
+            result_hash=_result_hash(payload),
             retention=timedelta(hours=24),
         )
         assert repository.get(first.job_id).status is TradingReviewJobStatus.RUNNING  # type: ignore[union-attr]
@@ -406,15 +481,15 @@ def test_unacknowledged_terminal_payload_expires_after_24_hours() -> None:
     try:
         claim = repository.claim_next("worker", timedelta(seconds=30))
         assert claim is not None
-        payload = _terminal_payload(claim, result_hash="f" * 64)
+        payload = _terminal_payload(claim)
         assert repository.publish_completed(
             claim,
             payload=payload,
             media_type="application/vnd.refinvest.trading-normalization+json",
             payload_sha256=hashlib.sha256(payload).hexdigest(),
             input_set_hash=job.expected_input_set_hash,
-            reconciliation_manifest_hash="d" * 64,
-            result_hash="f" * 64,
+            reconciliation_manifest_hash=_manifest_hash(payload),
+            result_hash=_result_hash(payload),
             retention=timedelta(hours=24),
         )
         with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
@@ -606,7 +681,7 @@ def test_acknowledgement_requires_final_token_and_stale_discard_generation() -> 
     try:
         claim = repository.claim_next("worker", timedelta(seconds=30))
         assert claim is not None
-        payload = _terminal_payload(claim, result_hash="f" * 64)
+        payload = _terminal_payload(claim)
         payload_hash = hashlib.sha256(payload).hexdigest()
         assert repository.publish_completed(
             claim,
@@ -614,8 +689,8 @@ def test_acknowledgement_requires_final_token_and_stale_discard_generation() -> 
             media_type="application/vnd.refinvest.trading-normalization+json",
             payload_sha256=payload_hash,
             input_set_hash=job.expected_input_set_hash,
-            reconciliation_manifest_hash="d" * 64,
-            result_hash="f" * 64,
+            reconciliation_manifest_hash=_manifest_hash(payload),
+            result_hash=_result_hash(payload),
             retention=timedelta(hours=24),
         )
         descriptor = repository.get_result_descriptor(job.job_id)
@@ -625,7 +700,7 @@ def test_acknowledgement_requires_final_token_and_stale_discard_generation() -> 
             core_aggregate_id=job.core_import_session_id,
             payload_id=descriptor.payload_id,
             payload_sha256=payload_hash,
-            terminal_result_hash="f" * 64,
+            terminal_result_hash=_result_hash(payload),
             attempt_token=descriptor.attempt_token,
             deletion_generation=descriptor.deletion_generation,
             disposition="DISCARDED_STALE",

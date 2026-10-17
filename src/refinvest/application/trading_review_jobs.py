@@ -76,6 +76,10 @@ class TerminalPayloadDescriptor:
     target_version_set: dict[str, object]
     reconciliation_manifest_hash: str
     result_hash: str
+    result_schema_version: str
+    result_hash_specification_version: str
+    counts: dict[str, int]
+    section_digests: list[dict[str, object]]
     created_at: datetime
     expires_at: datetime
     attempt_token: str = ""

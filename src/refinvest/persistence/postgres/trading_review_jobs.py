@@ -15,6 +15,11 @@ from psycopg import connect
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Jsonb
 
+from refinvest.app.trading_review_result_integrity import (
+    ResultIntegrityError,
+    parse_result_json_bytes,
+    verify_public_result,
+)
 from refinvest.application.trading_review_jobs import (
     ClaimedTradingReviewJob,
     GrantUpdateReceipt,
@@ -817,22 +822,30 @@ class PostgresTradingReviewJobRepository:
         if retention <= timedelta(0):
             raise ValueError("retention must be positive.")
         if hashlib.sha256(payload).hexdigest() != payload_sha256:
-            raise ValueError("payload_sha256 does not match payload bytes.")
-        document = cast(dict[str, object], json.loads(payload))
+            raise ResultIntegrityError("RESULT_TRANSPORT_HASH_MISMATCH")
+        document = parse_result_json_bytes(payload)
         raw_manifest = document.get("reconciliationManifest")
         manifest = cast(dict[str, object], raw_manifest) if isinstance(raw_manifest, dict) else None
         if (
             document.get("jobId") != claim.job_id
+            or document.get("coreLogicalJobId") != claim.core_logical_job_id
+            or document.get("coreImportSessionId") != claim.core_import_session_id
             or document.get("coreNormalizationRunId") != claim.core_normalization_run_id
             or document.get("attemptToken") != claim.attempt_token
             or document.get("deletionGeneration") != claim.deletion_generation
             or document.get("inputSetHash") != input_set_hash
             or document.get("hashSpecificationVersion") != claim.hash_specification_version
+            or document.get("targetVersionSet")
+            != cast(dict[str, object], claim.request_payload["inputIdentity"])["targetVersionSet"]
             or document.get("resultHash") != result_hash
             or manifest is None
             or manifest.get("manifestHash") != reconciliation_manifest_hash
         ):
             raise ValueError("Terminal payload identity differs from persisted job.")
+        verify_public_result(document)
+        counts = cast(dict[str, int], document["counts"])
+        section_digests = cast(list[dict[str, object]], document["sectionDigests"])
+        digest_manifest = cast(dict[str, object], document["resultDigestManifest"])
         if self._payload_cipher is None:
             raise RuntimeError("Terminal payload encryption is not configured.")
         payload_id = str(uuid4())
@@ -873,8 +886,10 @@ class PostgresTradingReviewJobRepository:
                 INSERT INTO trading_review_terminal_payloads
                     (payload_id, job_id, attempt_number, attempt_token, deletion_generation,
                      media_type, payload_bytes, byte_size, payload_sha256, input_set_hash,
-                     version_set_hash, reconciliation_manifest_hash, result_hash, expires_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                     version_set_hash, reconciliation_manifest_hash, result_hash,
+                     result_schema_version, result_hash_specification_version,
+                     result_counts, section_digests, result_digest_manifest, expires_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         CURRENT_TIMESTAMP + (%s * INTERVAL '1 second'))
                 """,
                 (
@@ -891,6 +906,11 @@ class PostgresTradingReviewJobRepository:
                     claim.version_set_hash,
                     reconciliation_manifest_hash,
                     result_hash,
+                    document["resultSchemaVersion"],
+                    document["resultHashSpecificationVersion"],
+                    Jsonb(counts),
+                    Jsonb(section_digests),
+                    Jsonb(digest_manifest),
                     retention.total_seconds(),
                 ),
             )
@@ -1032,12 +1052,15 @@ class PostgresTradingReviewJobRepository:
                        p.payload_id, p.media_type, p.byte_size, p.payload_sha256,
                        p.input_set_hash, j.hash_specification_version, j.target_version_set,
                        p.reconciliation_manifest_hash, p.result_hash, p.created_at,
-                       p.expires_at, p.attempt_token, p.deletion_generation
+                       p.expires_at, p.attempt_token, p.deletion_generation,
+                       p.result_schema_version, p.result_hash_specification_version,
+                       p.result_counts, p.section_digests
                 FROM trading_review_terminal_payloads AS p
                 JOIN trading_review_jobs AS j ON j.job_id = p.job_id
                 WHERE p.job_id = %s AND j.status = 'COMPLETED'
                   AND j.core_normalization_run_id IS NOT NULL AND p.input_set_hash IS NOT NULL
                   AND p.expires_at > CURRENT_TIMESTAMP AND p.purged_at IS NULL
+                  AND p.result_schema_version = 'TRADING_NORMALIZATION_RESULT_V1'
                 """,
                 (job_id,),
             )
@@ -1064,26 +1087,34 @@ class PostgresTradingReviewJobRepository:
                 datetime,
                 str,
                 int,
+                str,
+                str,
+                dict[str, int],
+                list[dict[str, object]],
             ],
             row,
         )
         return TerminalPayloadDescriptor(
-            str(values[0]),
-            values[1],
-            values[2],
-            str(values[3]),
-            values[4],
-            values[5],
-            values[6],
-            values[7],
-            values[8],
-            values[9],
-            values[10],
-            values[11],
-            values[12],
-            values[13],
-            values[14],
-            values[15],
+            job_id=str(values[0]),
+            core_logical_job_id=values[1],
+            core_normalization_run_id=values[2],
+            payload_id=str(values[3]),
+            media_type=values[4],
+            byte_size=values[5],
+            payload_sha256=values[6],
+            input_set_hash=values[7],
+            hash_specification_version=values[8],
+            target_version_set=values[9],
+            reconciliation_manifest_hash=values[10],
+            result_hash=values[11],
+            created_at=values[12],
+            expires_at=values[13],
+            attempt_token=values[14],
+            deletion_generation=values[15],
+            result_schema_version=values[16],
+            result_hash_specification_version=values[17],
+            counts=values[18],
+            section_digests=values[19],
         )
 
     def get_terminal_payload(self, payload_id: str) -> bytes | None:
@@ -1093,11 +1124,14 @@ class PostgresTradingReviewJobRepository:
         with connect(self._database_url) as connection, connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT p.payload_bytes, p.payload_sha256, p.byte_size
+                SELECT p.payload_bytes, p.payload_sha256, p.byte_size,
+                       p.result_counts, p.section_digests, p.result_digest_manifest,
+                       p.reconciliation_manifest_hash, p.result_hash
                 FROM trading_review_terminal_payloads AS p
                 JOIN trading_review_jobs AS j ON j.job_id = p.job_id
                 WHERE p.payload_id = %s AND p.expires_at > CURRENT_TIMESTAMP
                   AND p.purged_at IS NULL AND j.core_normalization_run_id IS NOT NULL
+                  AND p.result_schema_version = 'TRADING_NORMALIZATION_RESULT_V1'
                 """,
                 (payload_id,),
             )
@@ -1106,13 +1140,24 @@ class PostgresTradingReviewJobRepository:
             return None
         encrypted = bytes(row[0])
         if len(encrypted) < 28:
-            raise RuntimeError("Terminal payload integrity check failed.")
+            raise ResultIntegrityError("RESULT_TRANSPORT_HASH_MISMATCH")
         try:
             payload = cipher.decrypt(encrypted[:12], encrypted[12:], payload_id.encode())
         except InvalidTag as error:
-            raise RuntimeError("Terminal payload integrity check failed.") from error
+            raise ResultIntegrityError("RESULT_TRANSPORT_HASH_MISMATCH") from error
         if len(payload) != row[2] or hashlib.sha256(payload).hexdigest() != row[1]:
-            raise RuntimeError("Terminal payload integrity check failed.")
+            raise ResultIntegrityError("RESULT_TRANSPORT_HASH_MISMATCH")
+        document = parse_result_json_bytes(payload)
+        verify_public_result(document)
+        manifest = cast(dict[str, object], document["reconciliationManifest"])
+        if document["counts"] != row[3]:
+            raise ResultIntegrityError("RESULT_COUNT_MISMATCH")
+        if document["sectionDigests"] != row[4]:
+            raise ResultIntegrityError("RESULT_SECTION_HASH_MISMATCH")
+        if document["resultDigestManifest"] != row[5] or document["resultHash"] != row[7]:
+            raise ResultIntegrityError("RESULT_HASH_MISMATCH")
+        if manifest["manifestHash"] != row[6]:
+            raise ResultIntegrityError("RECONCILIATION_MANIFEST_HASH_MISMATCH")
         return payload
 
     def acknowledge(

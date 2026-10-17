@@ -7,6 +7,7 @@ import hmac
 from datetime import UTC, datetime
 from decimal import localcontext
 
+from refinvest.app.trading_review_result_integrity import finalize_public_result
 from refinvest.trading_review.decimal import ScaledDecimal
 from refinvest.trading_review.hashing import stable_id
 from refinvest.trading_review.model import (
@@ -115,11 +116,65 @@ def build_normalization_payload(
     ]
     manifest = {
         "manifestVersion": result.reconciliation_manifest.manifest_schema_version,
+        "inputSetHash": input_set_hash,
         "executionInputHash": result.input_hash,
-        "manifestHash": result.reconciliation_manifest.manifest_hash,
+        "instrumentTermsHash": result.instrument_terms_hash,
+        "versionSetHash": target_version_set["versionSetHash"],
+        "sourceArtifactHashesByRole": {item.role.value: item.content_hash for item in artifacts},
         "reconstructionPolicyVersion": result.reconciliation_manifest.reconstruction_policy_version,
         "reconciliationVersion": result.reconciliation_manifest.reconciliation_version,
+        "artifactCoverages": coverages,
         "reviewUnits": review_units,
+        "reconciliationMatches": [
+            {
+                "matchId": stable_id(
+                    "reconciliation_match", {"summaryRecordId": item.summary_record_id}
+                ),
+                "summaryRecordId": item.summary_record_id,
+                "reviewUnitId": item.episode_id,
+                "status": item.status.value,
+                "candidateReviewUnitIds": list(item.candidate_episode_ids),
+                "deltas": [
+                    {
+                        "field": delta.field,
+                        "actual": delta.actual.source_lexeme,
+                        "expected": delta.expected.source_lexeme,
+                        "absoluteDelta": delta.absolute_delta.source_lexeme,
+                        "tolerance": delta.tolerance.source_lexeme,
+                    }
+                    for delta in item.deltas
+                ],
+                "evidenceRecordIds": [
+                    record_id
+                    for record_id in item.evidence_record_ids
+                    if record_id != item.episode_id
+                ],
+            }
+            for item in result.reconciliation_manifest.matches
+        ],
+        "reconciliationIssues": [
+            {
+                "issueId": stable_id(
+                    "reconciliation_issue",
+                    {
+                        "code": item.code,
+                        "reviewUnitId": item.episode_id,
+                        "summaryRecordId": item.summary_record_id,
+                        "evidenceRecordIds": sorted(item.evidence_record_ids),
+                    },
+                ),
+                "code": item.code,
+                "severity": item.severity,
+                "reviewUnitId": item.episode_id,
+                "summaryRecordId": item.summary_record_id,
+                "evidenceRecordIds": [
+                    record_id
+                    for record_id in item.evidence_record_ids
+                    if record_id != item.episode_id
+                ],
+            }
+            for item in result.reconciliation_manifest.issues
+        ],
         "capability": [item.value for item in result.capability.capabilities],
         "quantityConservationPassed": result.reconciliation_manifest.quantity_conservation_passed,
         "cashFlowConservationPassed": (
@@ -149,7 +204,7 @@ def build_normalization_payload(
         },
         "excludedReasonCounts": dict(result.quality_report.exclusion_reason_counts),
     }
-    return {
+    payload: dict[str, object] = {
         "jobId": job_id,
         "coreLogicalJobId": core_logical_job_id,
         "coreNormalizationRunId": core_normalization_run_id,
@@ -166,11 +221,11 @@ def build_normalization_payload(
         "reconciliationManifest": manifest,
         "capability": [item.value for item in result.capability.capabilities],
         "qualityReport": quality,
-        "ledgerContentHash": result.canonical_record_set_hash,
-        "resultHash": result.result_hash,
+        "_artifactIdsByRole": {item.role.value: item.artifact_id for item in artifacts},
         "createdAt": _timestamp(created_at),
         "terminalAt": _timestamp(terminal_at),
     }
+    return finalize_public_result(payload)
 
 
 def _evidence_snapshots(
@@ -281,6 +336,14 @@ def _review_unit(
     for item in episode.allocations:
         allocations.append(
             {
+                "allocationId": stable_id(
+                    "allocation",
+                    {
+                        "recordId": item.execution_record_id,
+                        "reviewUnitId": item.episode_id,
+                        "action": item.action.value,
+                    },
+                ),
                 "recordId": item.execution_record_id,
                 "reviewUnitId": item.episode_id,
                 "action": item.action.value,
