@@ -15,6 +15,7 @@ from refinvest.app.trading_review_normalization import (
     CompletedNormalization,
     ProcessIsolatedNormalizationExecutor,
 )
+from refinvest.app.trading_review_result_integrity import ResultIntegrityError
 from refinvest.application.trading_review_jobs import SafeTradingReviewFailure
 from refinvest.observability.metrics import TradingReviewWorkerMetrics, safe_record, serve_metrics
 from refinvest.persistence.postgres.trading_review_jobs import PostgresTradingReviewJobRepository
@@ -122,6 +123,13 @@ class TradingReviewWorkerHost:
                     if committed and self.metrics is not None:
                         safe_record(self.metrics.terminal, "FAILED", monotonic() - began)
                         safe_record(self.metrics.failure, outcome.failure.code)
+        except ResultIntegrityError as error:
+            failure = SafeTradingReviewFailure(
+                error.code, "Normalization result integrity failed.", False, "PUBLICATION"
+            )
+            self.repository.mark_failed(claim, failure)
+            if self.metrics is not None:
+                safe_record(self.metrics.failure, error.code)
         except Exception:
             _LOG.warning("trading_review_worker_attempt_failed")
             failure = SafeTradingReviewFailure(

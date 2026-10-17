@@ -294,6 +294,12 @@ def test_completed_descriptor_download_ack_and_failed_status() -> None:
         payload = b'{"status":"COMPLETED"}'
         payload_hash = hashlib.sha256(payload).hexdigest()
         payload_id = str(uuid4())
+        vector = json.loads(
+            (
+                Path(__file__).parent
+                / "fixtures/trading_review/normalization_identity/v1/result-integrity-v1.json"
+            ).read_text(encoding="utf-8")
+        )["terminalPayload"]
         repository.descriptor = TerminalPayloadDescriptor(
             job_id=job_id,
             core_logical_job_id="logical-1",
@@ -311,6 +317,10 @@ def test_completed_descriptor_download_ack_and_failed_status() -> None:
             expires_at=now + timedelta(hours=24),
             attempt_token="attempt-1",
             deletion_generation=0,
+            result_schema_version="TRADING_NORMALIZATION_RESULT_V1",
+            result_hash_specification_version="TRADING_NORMALIZATION_RESULT_HASH_V1",
+            counts=vector["counts"],
+            section_digests=vector["sectionDigests"],
         )
         repository.payload = payload
         assert repository.view is not None
@@ -327,6 +337,11 @@ def test_completed_descriptor_download_ack_and_failed_status() -> None:
         assert result.json()["payloadSha256"] == payload_hash
         download = client.get(f"/trading-review/terminal-payloads/{payload_id}", headers=headers)
         assert download.status_code == 200 and download.content == payload
+        assert hashlib.sha256(download.content).hexdigest() == result.json()["payloadSha256"]
+        assert download.headers["content-type"] == (
+            "application/vnd.refinvest.trading-normalization+json; charset=utf-8"
+        )
+        assert download.headers["content-encoding"] == "identity"
         ack_body = {
             "coreAggregateId": "session-1",
             "payloadId": payload_id,

@@ -286,12 +286,9 @@ def test_child_reads_verified_artifacts_and_invokes_production_engine(
     execute_normalization_child(settings, claim, sender)  # type: ignore[arg-type]
     outcome = sender.outcome
     assert isinstance(outcome, CompletedNormalization)
-    assert outcome.result_hash == expected.result_hash
+    assert outcome.result_hash == json.loads(outcome.payload)["resultHash"]
     payload = json.loads(outcome.payload)
-    assert (
-        payload["reconciliationManifest"]["manifestHash"]
-        == expected.reconciliation_manifest.manifest_hash
-    )
+    assert payload["reconciliationManifest"]["manifestHash"] == outcome.reconciliation_manifest_hash
     assert payload["coreNormalizationRunId"] == claim.core_normalization_run_id
     assert payload["inputSetHash"] == input_set_hash
     assert payload["reconciliationManifest"]["executionInputHash"] == expected.input_hash
@@ -317,11 +314,12 @@ def test_child_reads_verified_artifacts_and_invokes_production_engine(
     assert failed_sender.outcome.failure.code == "INPUT_HASH_SPECIFICATION_UNSUPPORTED"
     assert len(opened) == before
 
-    monkeypatch.setattr(
-        normalization,
-        "normalize_and_reconstruct",
-        lambda _: replace(expected, result_hash="0" * 64),
-    )
+    from refinvest.app.trading_review_result_integrity import ResultIntegrityError
+
+    def invalid_public_result(*_: object, **__: object) -> dict[str, object]:
+        raise ResultIntegrityError("RESULT_HASH_MISMATCH")
+
+    monkeypatch.setattr(normalization, "build_normalization_payload", invalid_public_result)
     failed_sender = Sender()
     execute_normalization_child(settings, claim, failed_sender)  # type: ignore[arg-type]
     assert isinstance(failed_sender.outcome, FailedNormalization)

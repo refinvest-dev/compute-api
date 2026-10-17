@@ -125,6 +125,7 @@ class ComputeTerminalResultDescriptorTransport(StrictTransport):
     core_logical_job_id: str = Field(alias="coreLogicalJobId")
     core_normalization_run_id: str = Field(alias="coreNormalizationRunId", min_length=1)
     payload_id: str = Field(alias="payloadId")
+    transport_mode: Literal["SINGLE_RESOURCE"] = Field(alias="transportMode")
     media_type: Literal["application/vnd.refinvest.trading-normalization+json"] = Field(
         alias="mediaType"
     )
@@ -139,6 +140,16 @@ class ComputeTerminalResultDescriptorTransport(StrictTransport):
         alias="reconciliationManifestHash", pattern=r"^[a-f0-9]{64}$"
     )
     result_hash: str = Field(alias="resultHash", pattern=r"^[a-f0-9]{64}$")
+    result_schema_version: Literal["TRADING_NORMALIZATION_RESULT_V1"] = Field(
+        alias="resultSchemaVersion"
+    )
+    result_hash_specification_version: Literal["TRADING_NORMALIZATION_RESULT_HASH_V1"] = Field(
+        alias="resultHashSpecificationVersion"
+    )
+    counts: dict[str, int]
+    section_digests: list[dict[str, object]] = Field(
+        alias="sectionDigests", min_length=9, max_length=9
+    )
     created_at: datetime = Field(alias="createdAt")
     expires_at: datetime = Field(alias="expiresAt")
     attempt_token: str = Field(alias="attemptToken", min_length=1)
