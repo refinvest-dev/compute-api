@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 from refinvest.trading_review.canonical import canonicalize
 from refinvest.trading_review.capability import aggregate_capability
 from refinvest.trading_review.coverage import compute_coverages
@@ -142,7 +140,7 @@ def normalize_and_reconstruct(request: NormalizationRequest) -> NormalizationRes
         }
     )
     canonical_hash = content_hash(canonical.records)
-    manifest_base = ReconciliationManifest(
+    manifest = ReconciliationManifest(
         manifest_schema_version=MANIFEST_SCHEMA_V1,
         input_hash=input_hash,
         canonical_record_set_hash=canonical_hash,
@@ -158,9 +156,7 @@ def normalize_and_reconstruct(request: NormalizationRequest) -> NormalizationRes
         quantity_conservation_passed=quantity_ok,
         fee_conservation_passed=fee_ok,
         pnl_conservation_passed=pnl_ok,
-        manifest_hash="",
     )
-    manifest = replace(manifest_base, manifest_hash=content_hash(manifest_base))
     capability = aggregate_capability(reconciled.episodes)
     quality = build_quality_report(
         trade_source_rows=len(parsed[SourceArtifactRole.TRADE_HISTORY].rows),
@@ -172,7 +168,7 @@ def normalize_and_reconstruct(request: NormalizationRequest) -> NormalizationRes
         coverages=coverages,
         validation_issues=canonical.validation_issues,
     )
-    result_base = NormalizationResult(
+    return NormalizationResult(
         input_hash=input_hash,
         version_set=request.version_set,
         instrument_terms_hash=terms_hash,
@@ -183,9 +179,7 @@ def normalize_and_reconstruct(request: NormalizationRequest) -> NormalizationRes
         capability=capability,
         quality_report=quality,
         canonical_record_set_hash=canonical_hash,
-        result_hash="",
     )
-    return replace(result_base, result_hash=content_hash(result_base))
 
 
 def _artifacts_by_role(

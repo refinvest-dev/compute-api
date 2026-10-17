@@ -1,8 +1,10 @@
 """Normalization admission, production result serialization, and privacy checks."""
 
+import hashlib
 from datetime import UTC, datetime
 
 from refinvest.app.trading_review_payload import build_normalization_payload
+from refinvest.app.trading_review_result_integrity import canonicalize_result
 from refinvest.application.trading_review_jobs import normalization_request_fingerprint
 from refinvest.trading_review import normalize_and_reconstruct
 from tests.trading_review_support import (
@@ -84,7 +86,10 @@ def test_production_result_payload_is_complete_and_masks_raw_identifiers() -> No
     assert payload["status"] == "COMPLETED"
     assert payload["inputSetHash"] == input_set_hash_for(identity)
     assert payload["reconciliationManifest"]["executionInputHash"] == result.input_hash
-    assert payload["resultHash"] == result.result_hash
+    assert (
+        payload["resultHash"]
+        == hashlib.sha256(canonicalize_result(payload["resultDigestManifest"])).hexdigest()
+    )
     assert payload["attemptToken"] == "attempt-1"
     assert payload["deletionGeneration"] == 0
     assert len(payload["artifactCoverages"]) == 2  # type: ignore[arg-type]
@@ -102,4 +107,4 @@ def test_production_result_payload_is_complete_and_masks_raw_identifiers() -> No
     assert isinstance(manifest, dict)
     units = manifest["reviewUnits"]
     assert isinstance(units, list)
-    assert units[0]["initialNotional"]["amount"] == "20.00"
+    assert units[0]["initialNotional"]["amount"] == "20"

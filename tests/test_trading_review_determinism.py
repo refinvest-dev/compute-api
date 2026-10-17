@@ -22,11 +22,10 @@ def test_repeated_invocation_and_runtime_ids_have_stable_hashes() -> None:
     )
     assert first.input_hash == second.input_hash == different_runtime_ids.input_hash
     assert first.canonical_record_set_hash == different_runtime_ids.canonical_record_set_hash
-    assert (
-        first.reconciliation_manifest.manifest_hash
-        == different_runtime_ids.reconciliation_manifest.manifest_hash
+    assert first == second
+    assert content_hash(first.reconciliation_manifest) == content_hash(
+        different_runtime_ids.reconciliation_manifest
     )
-    assert first.result_hash == second.result_hash == different_runtime_ids.result_hash
 
 
 def test_source_row_permutation_changes_artifact_lineage_not_economic_order() -> None:
@@ -45,9 +44,8 @@ def test_source_row_permutation_changes_artifact_lineage_not_economic_order() ->
     assert first.episodes[0].gross_realized_pnl == permuted.episodes[0].gross_realized_pnl
     # Physical bytes and source-row provenance are part of artifact lineage by contract.
     assert first.input_hash != permuted.input_hash
-    assert (
-        first.reconciliation_manifest.manifest_hash
-        != permuted.reconciliation_manifest.manifest_hash
+    assert content_hash(first.reconciliation_manifest) != content_hash(
+        permuted.reconciliation_manifest
     )
 
 

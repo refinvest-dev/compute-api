@@ -323,7 +323,6 @@ class ReconciliationManifest:
     quantity_conservation_passed: bool
     fee_conservation_passed: bool
     pnl_conservation_passed: bool
-    manifest_hash: str = field(metadata={"hash": False})
 
 
 @dataclass(frozen=True, slots=True)
@@ -393,4 +392,3 @@ class NormalizationResult:
     capability: CapabilitySnapshot
     quality_report: ImportQualityReport
     canonical_record_set_hash: str
-    result_hash: str
