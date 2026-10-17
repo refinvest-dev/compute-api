@@ -59,7 +59,9 @@ The terminal payload follows OpenAPI's canonical record and evidence schemas. Pu
 ordered and canonicalized before V1 count, nine section digests, reconciliation manifest hash,
 and overall resultHash are calculated. `payloadSha256` covers the exact uncompressed UTF-8
 HTTP entity body and is independent of those semantic hashes. The V1 transport is one resource;
-page/chunk retrieval requires a future schema version. Counts, digests, and hash versions are
+section and manifest SHA-256 inputs are streamed in canonical chunks rather than copied as
+whole section byte arrays. Page/chunk retrieval requires a future schema version. Counts,
+digests, and hash versions are
 stored with encrypted bytes in the same terminal transaction, and a database trigger prevents
 later integrity-metadata edits. Legacy rows without V1 digests are not reinterpreted.
 The payload contains

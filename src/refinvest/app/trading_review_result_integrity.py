@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
+from io import BytesIO
 from typing import cast
 
 RESULT_SCHEMA_V1 = "TRADING_NORMALIZATION_RESULT_V1"
@@ -40,40 +42,49 @@ def _utf16_key(value: str) -> bytes:
     return value.encode("utf-16-be")
 
 
-def canonicalize_result(value: object) -> bytes:
-    """RFC 8785 subset used by V1: objects, arrays, strings, booleans, safe ints."""
-
-    def encode(node: object) -> str:
-        if isinstance(node, str):
-            node.encode("utf-8")
-            return json.dumps(node, ensure_ascii=False, separators=(",", ":"))
-        if node is None:
-            return "null"
-        if isinstance(node, bool):
-            return "true" if node else "false"
-        if isinstance(node, int):
-            if node < 0 or node > _MAX_SAFE_INTEGER:
-                raise ResultIntegrityError("RESULT_COUNT_MISMATCH")
-            return str(node)
-        if isinstance(node, dict):
-            mapping = cast(dict[object, object], node)
-            if any(not isinstance(key, str) for key in mapping):
-                raise TypeError("Result object keys must be strings")
-            string_map = cast(dict[str, object], node)
-            return (
-                "{"
-                + ",".join(
-                    encode(key) + ":" + encode(string_map[key])
-                    for key in sorted(string_map, key=_utf16_key)
-                )
-                + "}"
-            )
-        if isinstance(node, (tuple, list)):
-            sequence = cast(list[object] | tuple[object, ...], node)
-            return "[" + ",".join(encode(item) for item in sequence) + "]"
+def _canonical_chunks(node: object) -> Iterator[bytes]:
+    if isinstance(node, str):
+        node.encode("utf-8")
+        yield json.dumps(node, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    elif node is None:
+        yield b"null"
+    elif isinstance(node, bool):
+        yield b"true" if node else b"false"
+    elif isinstance(node, int):
+        if node < 0 or node > _MAX_SAFE_INTEGER:
+            raise ResultIntegrityError("RESULT_COUNT_MISMATCH")
+        yield str(node).encode("ascii")
+    elif isinstance(node, dict):
+        mapping = cast(dict[object, object], node)
+        if any(not isinstance(key, str) for key in mapping):
+            raise TypeError("Result object keys must be strings")
+        string_map = cast(dict[str, object], node)
+        yield b"{"
+        for index, key in enumerate(sorted(string_map, key=_utf16_key)):
+            if index:
+                yield b","
+            yield from _canonical_chunks(key)
+            yield b":"
+            yield from _canonical_chunks(string_map[key])
+        yield b"}"
+    elif isinstance(node, (tuple, list)):
+        sequence = cast(list[object] | tuple[object, ...], node)
+        yield b"["
+        for index, item in enumerate(sequence):
+            if index:
+                yield b","
+            yield from _canonical_chunks(item)
+        yield b"]"
+    else:
         raise TypeError(f"Unsupported result canonical type: {type(node).__name__}")
 
-    return encode(value).encode("utf-8")
+
+def canonicalize_result(value: object) -> bytes:
+    """RFC 8785 V1 bytes, streamed into one final transport buffer."""
+    output = BytesIO()
+    for chunk in _canonical_chunks(value):
+        output.write(chunk)
+    return output.getvalue()
 
 
 def parse_result_json_bytes(payload: bytes) -> dict[str, object]:
@@ -114,7 +125,10 @@ def parse_result_json_bytes(payload: bytes) -> dict[str, object]:
 
 
 def _hash(value: object) -> str:
-    return hashlib.sha256(canonicalize_result(value)).hexdigest()
+    digest = hashlib.sha256()
+    for chunk in _canonical_chunks(value):
+        digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _decimal(value: str) -> str:
