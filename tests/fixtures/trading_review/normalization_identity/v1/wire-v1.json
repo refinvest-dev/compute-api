@@ -75,6 +75,12 @@
       }
     ],
     "pinnedInstrumentTerms": [],
+    "resultDeliveryPolicy": {
+      "policyVersion": "RESULT_DELIVERY_V1",
+      "mode": "SINGLE_RESOURCE",
+      "maxAcceptedPayloadBytes": 1000,
+      "acceptedContentEncodings": ["identity"]
+    },
     "retryPolicyVersion": "POLICY_V1",
     "deletionGeneration": 1,
     "attemptToken": "attempt-example"
@@ -84,7 +90,9 @@
     "coreLogicalJobId": "logical-example",
     "coreNormalizationRunId": "run-example",
     "payloadId": "payload-example",
+    "resultDeliveryPolicyVersion": "RESULT_DELIVERY_V1",
     "mediaType": "application/vnd.refinvest.trading-normalization+json",
+    "contentEncoding": "identity",
     "byteSize": 100,
     "payloadSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
     "attemptToken": "attempt-example",

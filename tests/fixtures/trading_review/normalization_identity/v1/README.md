@@ -15,6 +15,8 @@ V1 vector 문자열은 ASCII이므로 Python의 key-sorted compact JSON이 JCS�
 `wire-v1.json`은 같은 identity의 Compute create request, 완료 descriptor 및
 입력 불일치 `FAILED` status를 OpenAPI schema로 검증하는 예시다. grant URI는
 `example.invalid`의 비작동 synthetic locator이며 서명·credential이 없다.
+`resultDeliveryPolicy`와 descriptor의 policy version/content encoding도 이 wire fixture에서
+검증한다. 예시 `maxAcceptedPayloadBytes=1000`은 synthetic schema 검증값이며 운영 한도가 아니다.
 모든 ID, component hash와 SHA-256 원본 값은 예시이며 실제 Binance CSV/UID/거래값/URL/
 credential이 아니다. Component `versionSetHash` 값은 이 vector에서 **identity hash 바이트
 검증용 synthetic 값**이다. 배포 registry의 VersionSet compatibility/개별 component hash

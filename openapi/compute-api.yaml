@@ -326,8 +326,9 @@ paths:
         '200':
           description: |
             Normalization V1은 단일 UTF-8 JSON entity body, Content-Encoding identity다.
-            descriptor byteSize/payloadSha256은 압축·재직렬화 전 정확한 response entity body
+            descriptor byteSize/payloadSha256은 재직렬화하지 않은 정확한 response entity body
             bytes에 적용한다. HTTP headers, transfer framing, TLS bytes는 제외한다.
+            Content-Length가 없어도 수신자는 실제 bytes를 세어 advertised limit을 강제한다.
           content:
             application/vnd.refinvest.trading-normalization+json:
               schema: { $ref: '#/components/schemas/NormalizationTerminalPayload' }
@@ -634,6 +635,11 @@ components:
         - RESULT_SCHEMA_UNSUPPORTED
         - EVIDENCE_REFERENCE_INVALID
         - RESULT_ITEM_CONFLICT
+        - RESULT_PAYLOAD_LIMIT_EXCEEDED
+        - RESULT_PAYLOAD_LENGTH_MISMATCH
+        - RESULT_CONTENT_ENCODING_UNSUPPORTED
+        - RESULT_PAYLOAD_STREAM_ABORTED
+        - RESULT_PAYLOAD_PARSE_FAILED
         - STALE_RESULT_AFTER_DELETION
         - JOB_CANCELLED
         - GRANT_REFRESH_DEADLINE_EXCEEDED
@@ -795,14 +801,16 @@ components:
     NormalizationTerminalResultDescriptor:
       type: object
       additionalProperties: false
-      required: [jobId, coreLogicalJobId, coreNormalizationRunId, payloadId, transportMode, mediaType, byteSize, payloadSha256, attemptToken, deletionGeneration, inputSetHash, hashSpecificationVersion, targetVersionSet, resultSchemaVersion, resultHashSpecificationVersion, counts, sectionDigests, reconciliationManifestHash, resultHash, createdAt, expiresAt]
+      required: [jobId, coreLogicalJobId, coreNormalizationRunId, payloadId, transportMode, resultDeliveryPolicyVersion, mediaType, contentEncoding, byteSize, payloadSha256, attemptToken, deletionGeneration, inputSetHash, hashSpecificationVersion, targetVersionSet, resultSchemaVersion, resultHashSpecificationVersion, counts, sectionDigests, reconciliationManifestHash, resultHash, createdAt, expiresAt]
       properties:
         jobId: { type: string }
         coreLogicalJobId: { type: string }
         coreNormalizationRunId: { type: string, minLength: 1 }
         payloadId: { type: string }
         transportMode: { type: string, enum: [SINGLE_RESOURCE], description: V1은 payloadId resource 하나만 조회. }
+        resultDeliveryPolicyVersion: { type: string, enum: [RESULT_DELIVERY_V1] }
         mediaType: { type: string, enum: [application/vnd.refinvest.trading-normalization+json] }
+        contentEncoding: { type: string, enum: [identity] }
         byteSize: { type: integer, format: int64, minimum: 1 }
         payloadSha256: { $ref: '#/components/schemas/TradingSha256' }
         attemptToken: { type: string, minLength: 1 }
@@ -822,6 +830,7 @@ components:
         최종 attempt identity는 Core publication과 acknowledgement에서 payload와 함께 검증한다.
         resultHash는 공개 NormalizationResultDigestManifest의 JCS hash이고 payloadSha256은
         Content-Encoding identity인 응답 entity body의 exact bytes SHA-256이다.
+        byteSize는 동일 bytes의 실제 길이이며 resultDeliveryPolicyVersion은 Run에 pin한 policy와 같다.
     AcknowledgeTradingAnalyticsJobResultRequest:
       type: object
       required: [coreAggregateId, payloadId, payloadSha256, terminalResultHash, persistedAt]
@@ -1018,9 +1027,28 @@ components:
         declaredProduct: { $ref: '#/components/schemas/NormalizationDeclaredProduct' }
         declaredPositionMode: { type: string, enum: [ONE_WAY] }
         targetVersionSet: { $ref: '#/components/schemas/NormalizationTargetVersionSet' }
+    NormalizationResultDeliveryPolicy:
+      type: object
+      additionalProperties: false
+      required: [policyVersion, mode, maxAcceptedPayloadBytes, acceptedContentEncodings]
+      properties:
+        policyVersion: { type: string, enum: [RESULT_DELIVERY_V1] }
+        mode: { type: string, enum: [SINGLE_RESOURCE] }
+        maxAcceptedPayloadBytes:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Core가 수용하는 exact UTF-8 HTTP entity body bytes 상한. Compute는 자체 상한과 작은 값을 적용한다.
+        acceptedContentEncodings:
+          type: array
+          minItems: 1
+          maxItems: 1
+          uniqueItems: true
+          items: { type: string, enum: [identity] }
+          description: V1은 identity만 허용한다.
     CreateTradingNormalizationJobRequest:
       type: object
-      required: [coreLogicalJobId, coreNormalizationRunId, coreImportSessionId, inputIdentity, expectedInputSetHash, artifactAccessGrants, pinnedInstrumentTerms, retryPolicyVersion, deletionGeneration, attemptToken]
+      required: [coreLogicalJobId, coreNormalizationRunId, coreImportSessionId, inputIdentity, expectedInputSetHash, artifactAccessGrants, pinnedInstrumentTerms, resultDeliveryPolicy, retryPolicyVersion, deletionGeneration, attemptToken]
       additionalProperties: false
       description: |
         inputIdentity만 ADR-065 inputSetHash의 RFC 8785 hash 대상이다. Compute는
@@ -1030,6 +1058,9 @@ components:
         artifactAccessGrants의 두 role/ID/SHA-256은 inputIdentity.artifactsByRole과
         정확히 같아야 한다. byteSize/contentType은 별도 pin/다운로드 검증 descriptor다.
         pinnedInstrumentTerms는 실행 입력/result provenance이며 inputSetHash 대상이 아니다.
+        resultDeliveryPolicy는 Run 시작 시 pin한 transport 정책이다. inputSetHash와
+        semantic resultHash의 입력이 아니며 Compute job에 보존한다. 동일 job의 replay나
+        grant update에서 변경하지 않는다.
         Compute 생성 fingerprint는 immutable 계산 입력, Core IDs, 최초 attemptToken과
         deletionGeneration을 포함하되 grant accessUri/expiresAt은 제외한다. 같은 key에
         다른 coreNormalizationRunId는 409. 갱신된 URI/expiry만 있는 replay는 기존 job.
@@ -1043,6 +1074,7 @@ components:
         coreImportSessionId: { type: string }
         inputIdentity: { $ref: '#/components/schemas/NormalizationInputIdentity' }
         expectedInputSetHash: { $ref: '#/components/schemas/TradingSha256' }
+        resultDeliveryPolicy: { $ref: '#/components/schemas/NormalizationResultDeliveryPolicy' }
         artifactAccessGrants:
           type: array
           minItems: 2
@@ -1363,18 +1395,6 @@ components:
         itemCount: { type: integer, format: int64, minimum: 0 }
         hashSpecificationVersion: { $ref: '#/components/schemas/NormalizationResultHashSpecificationVersion' }
         sectionHash: { $ref: '#/components/schemas/TradingSha256' }
-    NormalizationResultPageDescriptor:
-      type: object
-      additionalProperties: false
-      required: [payloadId, sectionType, pageIndex, itemCount, payloadSha256, terminal]
-      properties:
-        payloadId: { type: string, minLength: 1 }
-        sectionType: { $ref: '#/components/schemas/NormalizationResultSectionType' }
-        pageIndex: { type: integer, format: int64, minimum: 0 }
-        itemCount: { type: integer, format: int64, minimum: 0 }
-        payloadSha256: { $ref: '#/components/schemas/TradingSha256' }
-        terminal: { type: boolean }
-      description: 미래 paged schema용 shape; V1 SINGLE_RESOURCE에는 사용하지 않는다.
     NormalizationResultSectionDigests:
       type: array
       minItems: 9
