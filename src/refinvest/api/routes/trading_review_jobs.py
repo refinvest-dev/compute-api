@@ -113,6 +113,7 @@ def get_trading_review_repository(
         ),
         grant_refresh_wait=timedelta(seconds=settings.trading_review_grant_refresh_wait_seconds),
         max_attempts=settings.trading_review_max_attempts,
+        max_payload_bytes=settings.trading_review_max_payload_bytes,
     )
 
 
@@ -383,7 +384,9 @@ def get_trading_normalization_job_result(
         "coreLogicalJobId": descriptor.core_logical_job_id,
         "payloadId": descriptor.payload_id,
         "transportMode": "SINGLE_RESOURCE",
+        "resultDeliveryPolicyVersion": descriptor.result_delivery_policy_version,
         "mediaType": descriptor.media_type,
+        "contentEncoding": descriptor.content_encoding,
         "byteSize": descriptor.byte_size,
         "payloadSha256": descriptor.payload_sha256,
         "coreNormalizationRunId": descriptor.core_normalization_run_id,

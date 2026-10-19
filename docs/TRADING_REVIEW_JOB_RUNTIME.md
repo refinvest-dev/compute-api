@@ -7,12 +7,21 @@ OpenAPI 0.4.0 (ADR-064). Core is the sole caller. The FastAPI process accepts an
 
 ## Deployment
 
-Apply migrations through `0014_lock_trading_normalization_result_integrity.sql`. Install the
+Apply migrations through `0015_pin_trading_result_delivery_policy.sql`. Install the
 Trading Review worker and cleanup systemd units in `deploy/systemd/`. Configure the worker with
 the same PostgreSQL URL as the API, stable identity and masking secrets, the pinned timezone
 database version, and an explicit comma-separated `host:port` allowlist for Core artifact grant
 URLs. Secrets and signed URLs must not be placed in logs or metrics. Run one worker initially;
 multiple workers use PostgreSQL `FOR UPDATE SKIP LOCKED` claims and lease-owner CAS.
+Set `REFINVEST_TRADING_REVIEW_MAX_PAYLOAD_BYTES` on API and worker to the same positive
+deployment limit (default 512 MiB). The worker applies the smaller of this limit and the
+Core-advertised `maxAcceptedPayloadBytes` to the exact UTF-8 response bytes. Coordinate a
+lower Compute limit with Core before deployment. The effective limit and limiting side may
+be recorded as safe operational metadata without payload content or identifiers.
+New jobs pin the Core delivery policy in a separate immutable column. The migration ends
+active policy-less jobs with a safe `VERSION_INCOMPATIBLE` failure; existing terminal rows
+age out under the established retention policy. A same-key request with a different policy
+conflicts.
 API and worker processes must share `REFINVEST_TRADING_REVIEW_PAYLOAD_KEY`, a URL-safe
 base64-encoded 32-byte AES-GCM key from secret management. The cleanup process does not need it.
 Keep the previous key available to both processes until all payloads it encrypted have expired
@@ -73,7 +82,7 @@ Compute storage from long-lived backups. Metrics use fixed status and safe failu
 
 ## Verification
 
-Set `REFINVEST_TEST_DATABASE_URL` to an isolated PostgreSQL database with migration 0014 applied,
+Set `REFINVEST_TEST_DATABASE_URL` to an isolated PostgreSQL database with migration 0015 applied,
 then run `uv run pytest tests/integration/test_postgres_trading_review_jobs.py`. Route and worker
 tests use synthetic artifacts. Integration fixture validation is a separate sibling-checkout
 contract check; it is not a Compute runtime dependency. Core dispatch and HTTP end-to-end tests

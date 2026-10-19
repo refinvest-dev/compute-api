@@ -232,6 +232,12 @@ def test_child_reads_verified_artifacts_and_invokes_production_engine(
     input_set_hash = input_set_hash_for(identity)
     request_payload: dict[str, object] = {
         "inputIdentity": identity,
+        "resultDeliveryPolicy": {
+            "policyVersion": "RESULT_DELIVERY_V1",
+            "mode": "SINGLE_RESOURCE",
+            "maxAcceptedPayloadBytes": 52_428_800,
+            "acceptedContentEncodings": ["identity"],
+        },
         "artifactAccessGrants": [
             {
                 "coreArtifactId": artifact.artifact_id,
@@ -292,6 +298,26 @@ def test_child_reads_verified_artifacts_and_invokes_production_engine(
     assert payload["coreNormalizationRunId"] == claim.core_normalization_run_id
     assert payload["inputSetHash"] == input_set_hash
     assert payload["reconciliationManifest"]["executionInputHash"] == expected.input_hash
+
+    bounded_policy = {
+        **request_payload["resultDeliveryPolicy"],
+        "maxAcceptedPayloadBytes": len(outcome.payload),
+    }
+    equal_claim = replace(
+        claim, request_payload={**request_payload, "resultDeliveryPolicy": bounded_policy}
+    )
+    equal_sender = Sender()
+    execute_normalization_child(settings, equal_claim, equal_sender)  # type: ignore[arg-type]
+    assert isinstance(equal_sender.outcome, CompletedNormalization)
+    too_small_policy = {**bounded_policy, "maxAcceptedPayloadBytes": len(outcome.payload) - 1}
+    too_small_claim = replace(
+        claim, request_payload={**request_payload, "resultDeliveryPolicy": too_small_policy}
+    )
+    limited_sender = Sender()
+    execute_normalization_child(settings, too_small_claim, limited_sender)  # type: ignore[arg-type]
+    assert isinstance(limited_sender.outcome, FailedNormalization)
+    assert limited_sender.outcome.failure.code == "RESULT_PAYLOAD_LIMIT_EXCEEDED"
+    assert limited_sender.outcome.retryable is False
 
     before = len(opened)
     mismatch = replace(claim, expected_input_set_hash="0" * 64)

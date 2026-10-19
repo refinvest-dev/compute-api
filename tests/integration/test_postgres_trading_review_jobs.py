@@ -30,8 +30,12 @@ from refinvest.application.trading_review_jobs import (
     TradingReviewJobKind,
     TradingReviewJobStateConflict,
     TradingReviewJobStatus,
+    normalization_request_fingerprint,
 )
-from refinvest.persistence.postgres.trading_review_jobs import PostgresTradingReviewJobRepository
+from refinvest.persistence.postgres.trading_review_jobs import (
+    PostgresTradingReviewJobRepository,
+    ResultPayloadLimitExceeded,
+)
 from tests.trading_review_support import (
     input_set_hash_for,
     normalization_identity_for,
@@ -58,6 +62,12 @@ def _job(logical_id: str) -> TradingReviewJob:
         "coreImportSessionId": f"session-{logical_id}",
         "inputIdentity": identity,
         "expectedInputSetHash": input_set_hash,
+        "resultDeliveryPolicy": {
+            "policyVersion": "RESULT_DELIVERY_V1",
+            "mode": "SINGLE_RESOURCE",
+            "maxAcceptedPayloadBytes": 52_428_800,
+            "acceptedContentEncodings": ["identity"],
+        },
         "retryPolicyVersion": "POLICY_V1",
         "artifactAccessGrants": [
             {
@@ -90,7 +100,7 @@ def _job(logical_id: str) -> TradingReviewJob:
     )
 
 
-def _terminal_payload(claim: ClaimedTradingReviewJob) -> bytes:
+def _terminal_payload(claim: ClaimedTradingReviewJob | TradingReviewJob) -> bytes:
     fixture = json.loads(
         (
             Path(__file__).resolve().parents[1]
@@ -204,6 +214,37 @@ def test_concurrent_admission_one_job_and_fingerprint_conflict() -> None:
             _delete(accepted_id)
 
 
+def test_pinned_policy_replay_and_change_conflict() -> None:
+    assert DATABASE_URL is not None
+    repository = PostgresTradingReviewJobRepository(DATABASE_URL, PAYLOAD_KEY)
+    initial = _job(str(uuid4()))
+    initial = replace(
+        initial, request_fingerprint=normalization_request_fingerprint(initial.request_payload)
+    )
+    key = hashlib.sha256(initial.job_id.encode()).hexdigest()
+    repository.create_idempotently(initial, key)
+    try:
+        assert repository.create_idempotently(initial, key).job_id == initial.job_id
+        changed_policy = dict(initial.request_payload["resultDeliveryPolicy"])
+        changed_policy["maxAcceptedPayloadBytes"] += 1
+        changed_payload = {**initial.request_payload, "resultDeliveryPolicy": changed_policy}
+        changed = replace(
+            initial,
+            request_payload=changed_payload,
+            request_fingerprint=normalization_request_fingerprint(changed_payload),
+        )
+        with pytest.raises(TradingReviewIdempotencyConflict):
+            repository.create_idempotently(changed, key)
+        with pytest.raises(RaiseException):
+            with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE trading_review_jobs SET result_delivery_policy = %s WHERE job_id = %s",
+                    (json.dumps(changed_policy), initial.job_id),
+                )
+    finally:
+        _delete(initial.job_id)
+
+
 def test_claim_reclaim_stale_write_and_atomic_terminal_ack_cleanup() -> None:
     assert DATABASE_URL is not None
     repository = PostgresTradingReviewJobRepository(DATABASE_URL, PAYLOAD_KEY)
@@ -222,6 +263,16 @@ def test_claim_reclaim_stale_write_and_atomic_terminal_ack_cleanup() -> None:
         assert sum(claim is not None for claim in claims) == 1
         assert first.core_normalization_run_id == job.core_normalization_run_id
         assert first.request_payload["inputIdentity"] == job.request_payload["inputIdentity"]
+        assert (
+            first.request_payload["resultDeliveryPolicy"]
+            == job.request_payload["resultDeliveryPolicy"]
+        )
+        with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT result_delivery_policy FROM trading_review_jobs WHERE job_id = %s",
+                (job.job_id,),
+            )
+            assert cursor.fetchone()[0] == job.request_payload["resultDeliveryPolicy"]
         assert first.computed_input_set_hash == job.computed_input_set_hash
         assert first.retry_policy_version == job.retry_policy_version
         assert _artifact_lease_statuses(job.job_id, 1) == ["ACTIVE", "ACTIVE"]
@@ -279,6 +330,8 @@ def test_claim_reclaim_stale_write_and_atomic_terminal_ack_cleanup() -> None:
             == job.request_payload["inputIdentity"]["targetVersionSet"]
         )
         assert descriptor.reconciliation_manifest_hash == _manifest_hash(payload)
+        assert descriptor.result_delivery_policy_version == "RESULT_DELIVERY_V1"
+        assert descriptor.content_encoding == "identity"
         assert descriptor.counts == json.loads(payload)["counts"]
         assert descriptor.section_digests == json.loads(payload)["sectionDigests"]
         with pytest.raises(RaiseException):
@@ -300,6 +353,9 @@ def test_claim_reclaim_stale_write_and_atomic_terminal_ack_cleanup() -> None:
         assert payload not in bytes(encrypted[0])
         assert encrypted[1] == "AES256_GCM_V1"
         assert repository.get_terminal_payload(descriptor.payload_id) == payload
+        restarted = PostgresTradingReviewJobRepository(DATABASE_URL, PAYLOAD_KEY)
+        assert restarted.get_terminal_payload(descriptor.payload_id) == payload
+        assert restarted.get_result_descriptor(job.job_id) == descriptor
         ack = dict(
             idempotency_key_hash=hashlib.sha256(f"ack-{job.job_id}".encode()).hexdigest(),
             core_aggregate_id=job.core_import_session_id,
@@ -353,6 +409,75 @@ def test_invalid_digest_cannot_create_partial_terminal_success() -> None:
                 (job.job_id,),
             )
             assert cursor.fetchone()[0] == 0
+    finally:
+        _delete(job.job_id)
+
+
+@pytest.mark.parametrize(
+    ("delta", "configured_is_smaller"), [(-1, False), (0, False), (1, False), (-1, True)]
+)
+def test_exact_payload_limit_and_terminal_publication(
+    delta: int, configured_is_smaller: bool
+) -> None:
+    assert DATABASE_URL is not None
+    job = _job(str(uuid4()))
+    expected_size = len(_terminal_payload(job))
+    boundary = expected_size + delta
+    policy = dict(job.request_payload["resultDeliveryPolicy"])
+    policy["maxAcceptedPayloadBytes"] = expected_size + 1 if configured_is_smaller else boundary
+    job = replace(job, request_payload={**job.request_payload, "resultDeliveryPolicy": policy})
+    repository = PostgresTradingReviewJobRepository(
+        DATABASE_URL,
+        PAYLOAD_KEY,
+        max_payload_bytes=boundary if configured_is_smaller else 512 * 1024 * 1024,
+    )
+    repository.create_idempotently(job, hashlib.sha256(job.job_id.encode()).hexdigest())
+    try:
+        claim = repository.claim_next("worker", timedelta(seconds=30))
+        assert claim is not None
+        payload = _terminal_payload(claim)
+        assert len(payload) == expected_size
+
+        def publish() -> bool:
+            return repository.publish_completed(
+                claim,
+                payload=payload,
+                media_type="application/vnd.refinvest.trading-normalization+json",
+                payload_sha256=hashlib.sha256(payload).hexdigest(),
+                input_set_hash=job.expected_input_set_hash,
+                reconciliation_manifest_hash=_manifest_hash(payload),
+                result_hash=_result_hash(payload),
+                retention=timedelta(hours=24),
+            )
+
+        if delta < 0:
+            with pytest.raises(ResultPayloadLimitExceeded):
+                publish()
+            assert repository.mark_failed(
+                claim,
+                SafeTradingReviewFailure(
+                    "RESULT_PAYLOAD_LIMIT_EXCEEDED",
+                    "Normalization result exceeds the configured delivery limit.",
+                    False,
+                    "PUBLICATION",
+                ),
+            )
+            view = repository.get(job.job_id)
+            assert view is not None and view.status is TradingReviewJobStatus.FAILED
+            assert view.failure is not None and not view.failure.retryable
+            assert view.failure.code == "RESULT_PAYLOAD_LIMIT_EXCEEDED"
+            assert repository.get_result_descriptor(job.job_id) is None
+            with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT count(*) FROM trading_review_terminal_payloads WHERE job_id = %s",
+                    (job.job_id,),
+                )
+                assert cursor.fetchone()[0] == 0
+        else:
+            assert publish()
+            descriptor = repository.get_result_descriptor(job.job_id)
+            assert descriptor is not None and descriptor.byte_size == len(payload)
+            assert repository.get_terminal_payload(descriptor.payload_id) == payload
     finally:
         _delete(job.job_id)
 

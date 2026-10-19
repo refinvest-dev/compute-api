@@ -35,12 +35,26 @@ class PinnedInstrumentTermsTransport(StrictTransport):
     instrument_terms_version: str = Field(alias="instrumentTermsVersion", min_length=1)
 
 
+class NormalizationResultDeliveryPolicyTransport(StrictTransport):
+    policy_version: Literal["RESULT_DELIVERY_V1"] = Field(alias="policyVersion")
+    mode: Literal["SINGLE_RESOURCE"]
+    max_accepted_payload_bytes: int = Field(
+        alias="maxAcceptedPayloadBytes", ge=1, le=2**63 - 1, strict=True
+    )
+    accepted_content_encodings: list[Literal["identity"]] = Field(
+        alias="acceptedContentEncodings", min_length=1, max_length=1
+    )
+
+
 class CreateTradingNormalizationJobTransport(StrictTransport):
     core_logical_job_id: str = Field(alias="coreLogicalJobId", min_length=1)
     core_normalization_run_id: str = Field(alias="coreNormalizationRunId", min_length=1)
     core_import_session_id: str = Field(alias="coreImportSessionId", min_length=1)
     input_identity: NormalizationInputIdentity = Field(alias="inputIdentity")
     expected_input_set_hash: str = Field(alias="expectedInputSetHash", pattern=r"^[a-f0-9]{64}$")
+    result_delivery_policy: NormalizationResultDeliveryPolicyTransport = Field(
+        alias="resultDeliveryPolicy"
+    )
     artifact_access_grants: list[ArtifactReadGrantTransport] = Field(
         alias="artifactAccessGrants", min_length=2, max_length=2
     )
@@ -126,9 +140,13 @@ class ComputeTerminalResultDescriptorTransport(StrictTransport):
     core_normalization_run_id: str = Field(alias="coreNormalizationRunId", min_length=1)
     payload_id: str = Field(alias="payloadId")
     transport_mode: Literal["SINGLE_RESOURCE"] = Field(alias="transportMode")
+    result_delivery_policy_version: Literal["RESULT_DELIVERY_V1"] = Field(
+        alias="resultDeliveryPolicyVersion"
+    )
     media_type: Literal["application/vnd.refinvest.trading-normalization+json"] = Field(
         alias="mediaType"
     )
+    content_encoding: Literal["identity"] = Field(alias="contentEncoding")
     byte_size: int = Field(alias="byteSize", ge=1)
     payload_sha256: str = Field(alias="payloadSha256", pattern=r"^[a-f0-9]{64}$")
     input_set_hash: str = Field(alias="inputSetHash", pattern=r"^[a-f0-9]{64}$")

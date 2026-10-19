@@ -30,6 +30,7 @@ class Settings:
     trading_review_grant_renewal_cutoff_seconds: int = 3_600
     trading_review_grant_refresh_wait_seconds: int = 300
     trading_review_max_attempts: int = 3
+    trading_review_max_payload_bytes: int = 512 * 1024 * 1024
     trading_review_timezone_database_version: str | None = None
     trading_review_identity_key: str | None = None
     trading_review_masking_key: str | None = None
@@ -92,6 +93,9 @@ class Settings:
             ),
             trading_review_max_attempts=_positive_environment_integer(
                 "REFINVEST_TRADING_REVIEW_MAX_ATTEMPTS", 3
+            ),
+            trading_review_max_payload_bytes=_positive_environment_integer(
+                "REFINVEST_TRADING_REVIEW_MAX_PAYLOAD_BYTES", 512 * 1024 * 1024
             ),
             trading_review_timezone_database_version=(
                 getenv("REFINVEST_TRADING_REVIEW_TZDB_VERSION") or None

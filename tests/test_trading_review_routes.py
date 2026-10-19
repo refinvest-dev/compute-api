@@ -167,6 +167,12 @@ def _body() -> dict[str, object]:
         "coreImportSessionId": "session-1",
         "inputIdentity": identity,
         "expectedInputSetHash": input_set_hash_for(identity),
+        "resultDeliveryPolicy": {
+            "policyVersion": "RESULT_DELIVERY_V1",
+            "mode": "SINGLE_RESOURCE",
+            "maxAcceptedPayloadBytes": 52_428_800,
+            "acceptedContentEncodings": ["identity"],
+        },
         "artifactAccessGrants": [
             {
                 "coreArtifactId": artifact.artifact_id,
@@ -226,6 +232,14 @@ def test_normalization_routes_auth_admission_status_result_cancel_and_ack() -> N
         _validate("CreateTradingNormalizationJobRequest", body)
         job_id = accepted.json()["jobId"]
         assert client.post(base, json=body, headers=headers).json()["jobId"] == job_id
+        invalid_policy = copy.deepcopy(body)
+        invalid_policy["resultDeliveryPolicy"]["policyVersion"] = "RESULT_DELIVERY_V2"
+        rejected = client.post(
+            base, json=invalid_policy, headers={**headers, "Idempotency-Key": "invalid-policy"}
+        )
+        assert rejected.status_code == 400
+        assert rejected.json()["code"] == "REQUEST_INVALID"
+        assert rejected.json()["retryable"] is False
         duplicate_json = json.dumps(body).replace(
             '"tradingBookId":', '"tradingBookId": "forged", "tradingBookId":', 1
         )
@@ -342,6 +356,13 @@ def test_completed_descriptor_download_ack_and_failed_status() -> None:
             "application/vnd.refinvest.trading-normalization+json; charset=utf-8"
         )
         assert download.headers["content-encoding"] == "identity"
+        assert not download.content.startswith(b"\xef\xbb\xbf")
+        assert download.headers["content-length"] == str(len(payload))
+        assert result.json()["byteSize"] == len(download.content)
+        assert result.json()["resultDeliveryPolicyVersion"] == "RESULT_DELIVERY_V1"
+        assert result.json()["contentEncoding"] == download.headers["content-encoding"]
+        repeated = client.get(f"/trading-review/terminal-payloads/{payload_id}", headers=headers)
+        assert repeated.content == download.content
         ack_body = {
             "coreAggregateId": "session-1",
             "payloadId": payload_id,
