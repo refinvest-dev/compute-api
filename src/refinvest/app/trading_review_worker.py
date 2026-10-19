@@ -18,7 +18,10 @@ from refinvest.app.trading_review_normalization import (
 from refinvest.app.trading_review_result_integrity import ResultIntegrityError
 from refinvest.application.trading_review_jobs import SafeTradingReviewFailure
 from refinvest.observability.metrics import TradingReviewWorkerMetrics, safe_record, serve_metrics
-from refinvest.persistence.postgres.trading_review_jobs import PostgresTradingReviewJobRepository
+from refinvest.persistence.postgres.trading_review_jobs import (
+    PostgresTradingReviewJobRepository,
+    ResultPayloadLimitExceeded,
+)
 
 _LOG = logging.getLogger(__name__)
 
@@ -123,6 +126,16 @@ class TradingReviewWorkerHost:
                     if committed and self.metrics is not None:
                         safe_record(self.metrics.terminal, "FAILED", monotonic() - began)
                         safe_record(self.metrics.failure, outcome.failure.code)
+        except ResultPayloadLimitExceeded:
+            failure = SafeTradingReviewFailure(
+                "RESULT_PAYLOAD_LIMIT_EXCEEDED",
+                "Normalization result exceeds the configured delivery limit.",
+                False,
+                "PUBLICATION",
+            )
+            self.repository.mark_failed(claim, failure)
+            if self.metrics is not None:
+                safe_record(self.metrics.failure, failure.code)
         except ResultIntegrityError as error:
             failure = SafeTradingReviewFailure(
                 error.code, "Normalization result integrity failed.", False, "PUBLICATION"
@@ -166,6 +179,8 @@ def create_trading_review_worker(
         raise ValueError("REFINVEST_TRADING_MASKING_KEY must have at least 32 characters.")
     if not settings.trading_review_artifact_hosts:
         raise ValueError("REFINVEST_TRADING_REVIEW_ARTIFACT_HOSTS is required.")
+    if settings.trading_review_max_payload_bytes <= 0:
+        raise ValueError("REFINVEST_TRADING_REVIEW_MAX_PAYLOAD_BYTES must be positive.")
     payload_key = trading_review_payload_key(settings)
     return TradingReviewWorkerHost(
         PostgresTradingReviewJobRepository(
@@ -179,6 +194,7 @@ def create_trading_review_worker(
                 seconds=settings.trading_review_grant_refresh_wait_seconds
             ),
             max_attempts=settings.trading_review_max_attempts,
+            max_payload_bytes=settings.trading_review_max_payload_bytes,
         ),
         ProcessIsolatedNormalizationExecutor(
             settings, timedelta(seconds=settings.trading_review_execution_timeout_seconds)

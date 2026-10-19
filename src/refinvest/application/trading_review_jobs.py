@@ -84,6 +84,8 @@ class TerminalPayloadDescriptor:
     expires_at: datetime
     attempt_token: str = ""
     deletion_generation: int = 0
+    result_delivery_policy_version: str = "RESULT_DELIVERY_V1"
+    content_encoding: str = "identity"
 
 
 @dataclass(frozen=True, slots=True)

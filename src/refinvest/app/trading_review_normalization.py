@@ -24,6 +24,7 @@ from refinvest.app.trading_review_identity import (
     supports_target_version_set,
 )
 from refinvest.app.trading_review_payload import MEDIA_TYPE, build_normalization_payload
+from refinvest.app.trading_review_result_delivery import effective_payload_limit
 from refinvest.app.trading_review_result_integrity import (
     ResultIntegrityError,
     canonicalize_result,
@@ -46,7 +47,6 @@ from refinvest.trading_review.versions import SUPPORTED_VERSION_SET
 
 _LOGGER = logging.getLogger(__name__)
 _MAX_ARTIFACT_BYTES = 52_428_800
-_PAYLOAD_LIMIT_BYTES = 512 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,9 +201,33 @@ def execute_normalization_child(
             terminal_at=terminal_at,
             instrument_terms=instruments,
         )
-        payload = canonicalize_result(payload_object)
-        if not payload or len(payload) > _PAYLOAD_LIMIT_BYTES:
-            raise _safe_failure("INCOMPLETE_ANALYSIS_RESULT", "PUBLICATION", "PAYLOAD_SIZE_INVALID")
+        try:
+            payload = canonicalize_result(payload_object)
+        except ResultIntegrityError:
+            raise
+        except (TypeError, ValueError, UnicodeError, OverflowError):
+            raise _safe_failure(
+                "INTERNAL_ERROR", "PUBLICATION", "PAYLOAD_SERIALIZATION_FAILED"
+            ) from None
+        policy = cast(dict[str, object], request["resultDeliveryPolicy"])
+        limit, limited_by = effective_payload_limit(
+            policy, settings.trading_review_max_payload_bytes
+        )
+        _LOGGER.info(
+            "trading_review_result_delivery_limit policy_version=%s core_maximum=%d "
+            "compute_maximum=%d effective_maximum=%d limited_by=%s",
+            policy["policyVersion"],
+            policy["maxAcceptedPayloadBytes"],
+            settings.trading_review_max_payload_bytes,
+            limit,
+            limited_by,
+        )
+        if not payload:
+            raise _safe_failure("INCOMPLETE_ANALYSIS_RESULT", "PUBLICATION", "PAYLOAD_EMPTY")
+        if len(payload) > limit:
+            raise _safe_failure(
+                "RESULT_PAYLOAD_LIMIT_EXCEEDED", "PUBLICATION", "PAYLOAD_LIMIT_EXCEEDED"
+            )
         sender.send(
             CompletedNormalization(
                 payload,

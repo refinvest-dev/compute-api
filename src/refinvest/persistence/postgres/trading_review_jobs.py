@@ -15,6 +15,7 @@ from psycopg import connect
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Jsonb
 
+from refinvest.app.trading_review_result_delivery import effective_payload_limit
 from refinvest.app.trading_review_result_integrity import (
     ResultIntegrityError,
     parse_result_json_bytes,
@@ -37,6 +38,10 @@ from refinvest.application.trading_review_jobs import (
 )
 
 
+class ResultPayloadLimitExceeded(ValueError):
+    """The exact entity body exceeds the pinned effective limit."""
+
+
 class PostgresTradingReviewJobRepository:
     """Short transactions, database-clock leases, and immutable terminal payloads."""
 
@@ -49,6 +54,7 @@ class PostgresTradingReviewJobRepository:
         grant_renewal_cutoff: timedelta = timedelta(hours=1),
         grant_refresh_wait: timedelta = timedelta(minutes=5),
         max_attempts: int = 3,
+        max_payload_bytes: int = 512 * 1024 * 1024,
     ) -> None:
         if payload_encryption_key is not None and len(payload_encryption_key) != 32:
             raise ValueError("Trading Review payload encryption key must be 32 bytes.")
@@ -62,6 +68,9 @@ class PostgresTradingReviewJobRepository:
         self._grant_renewal_cutoff = grant_renewal_cutoff
         self._grant_refresh_wait = grant_refresh_wait
         self._max_attempts = max_attempts
+        if max_payload_bytes <= 0:
+            raise ValueError("Trading Review result payload limit must be positive.")
+        self._max_payload_bytes = max_payload_bytes
 
     def create_idempotently(
         self, job: TradingReviewJob, idempotency_key_hash: str
@@ -130,10 +139,11 @@ class PostgresTradingReviewJobRepository:
                      version_set_hash, deletion_generation, attempt_token,
                      grant_renewal_cutoff_at, current_grants_encrypted,
                      core_normalization_run_id, input_identity, computed_input_set_hash,
-                     hash_specification_version, retry_policy_version, target_version_set)
+                     hash_specification_version, retry_policy_version, target_version_set,
+                     result_delivery_policy)
                 VALUES (%s, %s, %s, %s, 'PENDING', %s, %s, %s, %s, %s, %s,
                         CURRENT_TIMESTAMP + (%s * INTERVAL '1 second'), %s,
-                        %s, %s, %s, %s, %s, %s)
+                        %s, %s, %s, %s, %s, %s, %s)
                 RETURNING created_at
                 """,
                 (
@@ -162,6 +172,7 @@ class PostgresTradingReviewJobRepository:
                             ],
                         )
                     ),
+                    Jsonb(job.request_payload["resultDeliveryPolicy"]),
                 ),
             )
             row = cursor.fetchone()
@@ -611,6 +622,7 @@ class PostgresTradingReviewJobRepository:
                     FROM trading_review_jobs AS j
                     WHERE j.cancellation_requested = FALSE
                       AND j.core_normalization_run_id IS NOT NULL
+                      AND j.result_delivery_policy IS NOT NULL
                       AND j.grant_action = 'NONE'
                       AND j.attempt_count < %s
                       AND (j.status = 'PENDING' OR
@@ -640,7 +652,7 @@ class PostgresTradingReviewJobRepository:
                     j.deletion_generation, j.attempt_token, j.attempt_count, j.created_at,
                     j.grant_revision, j.current_grants_encrypted, j.core_normalization_run_id,
                     j.computed_input_set_hash, j.hash_specification_version,
-                    j.retry_policy_version, j.input_identity
+                    j.retry_policy_version, j.input_identity, j.result_delivery_policy
                 """,
                 (self._max_attempts, worker_id, lease_owner, lease_duration.total_seconds()),
             )
@@ -666,10 +678,12 @@ class PostgresTradingReviewJobRepository:
                     str,
                     str,
                     dict[str, object],
+                    dict[str, object],
                 ],
                 row,
             )
             request_payload = self._with_grant_locators(str(values[0]), values[3], values[11])
+            request_payload["resultDeliveryPolicy"] = values[17]
             cursor.execute(
                 """
                 INSERT INTO trading_review_job_attempts
@@ -821,6 +835,10 @@ class PostgresTradingReviewJobRepository:
     ) -> bool:
         if retention <= timedelta(0):
             raise ValueError("retention must be positive.")
+        policy = cast(dict[str, object], claim.request_payload["resultDeliveryPolicy"])
+        limit, _limited_by = effective_payload_limit(policy, self._max_payload_bytes)
+        if len(payload) > limit:
+            raise ResultPayloadLimitExceeded()
         if hashlib.sha256(payload).hexdigest() != payload_sha256:
             raise ResultIntegrityError("RESULT_TRANSPORT_HASH_MISMATCH")
         document = parse_result_json_bytes(payload)
@@ -857,7 +875,8 @@ class PostgresTradingReviewJobRepository:
             cursor.execute(
                 """
                 SELECT cancellation_requested, grant_revision, expected_input_set_hash,
-                       version_set_hash, computed_input_set_hash, core_normalization_run_id
+                       version_set_hash, computed_input_set_hash, core_normalization_run_id,
+                       result_delivery_policy
                 FROM trading_review_jobs
                 WHERE job_id = %s AND status = 'RUNNING' AND lease_owner = %s
                   AND attempt_count = %s AND attempt_token = %s AND deletion_generation = %s
@@ -878,6 +897,7 @@ class PostgresTradingReviewJobRepository:
                 or row[3] != claim.version_set_hash
                 or row[4] != input_set_hash
                 or row[5] != claim.core_normalization_run_id
+                or row[6] != policy
             ):
                 return False
             cursor.execute("SET CONSTRAINTS trading_review_jobs_terminal_payload_fk DEFERRED")
@@ -1054,11 +1074,12 @@ class PostgresTradingReviewJobRepository:
                        p.reconciliation_manifest_hash, p.result_hash, p.created_at,
                        p.expires_at, p.attempt_token, p.deletion_generation,
                        p.result_schema_version, p.result_hash_specification_version,
-                       p.result_counts, p.section_digests
+                       p.result_counts, p.section_digests, j.result_delivery_policy
                 FROM trading_review_terminal_payloads AS p
                 JOIN trading_review_jobs AS j ON j.job_id = p.job_id
                 WHERE p.job_id = %s AND j.status = 'COMPLETED'
                   AND j.core_normalization_run_id IS NOT NULL AND p.input_set_hash IS NOT NULL
+                  AND j.result_delivery_policy IS NOT NULL
                   AND p.expires_at > CURRENT_TIMESTAMP AND p.purged_at IS NULL
                   AND p.result_schema_version = 'TRADING_NORMALIZATION_RESULT_V1'
                 """,
@@ -1091,6 +1112,7 @@ class PostgresTradingReviewJobRepository:
                 str,
                 dict[str, int],
                 list[dict[str, object]],
+                dict[str, object],
             ],
             row,
         )
@@ -1115,6 +1137,8 @@ class PostgresTradingReviewJobRepository:
             result_hash_specification_version=values[17],
             counts=values[18],
             section_digests=values[19],
+            result_delivery_policy_version=cast(str, values[20]["policyVersion"]),
+            content_encoding=cast(list[str], values[20]["acceptedContentEncodings"])[0],
         )
 
     def get_terminal_payload(self, payload_id: str) -> bytes | None:
@@ -1130,7 +1154,8 @@ class PostgresTradingReviewJobRepository:
                 FROM trading_review_terminal_payloads AS p
                 JOIN trading_review_jobs AS j ON j.job_id = p.job_id
                 WHERE p.payload_id = %s AND p.expires_at > CURRENT_TIMESTAMP
-                  AND p.purged_at IS NULL AND j.core_normalization_run_id IS NOT NULL
+                  AND p.purged_at IS NULL AND j.status = 'COMPLETED'
+                  AND j.core_normalization_run_id IS NOT NULL
                   AND p.result_schema_version = 'TRADING_NORMALIZATION_RESULT_V1'
                 """,
                 (payload_id,),
