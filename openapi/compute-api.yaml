@@ -1468,7 +1468,7 @@ components:
           properties:
             TRADE_HISTORY: { $ref: '#/components/schemas/TradingSha256' }
             POSITION_HISTORY: { $ref: '#/components/schemas/TradingSha256' }
-        manifestHash: { $ref: '#/components/schemas/TradingSha256' }
+        manifestHash: { $ref: '#/components/schemas/TradingSha256', description: V1은 수신 ReconciliationManifestPayload에서 manifestHash만 제외한 JCS hash이며 required counts를 포함한다. }
         reconstructionPolicyVersion: { type: string }
         reconciliationVersion: { type: string }
         artifactCoverages: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/InternalArtifactCoverage' } }
