@@ -762,7 +762,7 @@ components:
       allOf:
         - $ref: '#/components/schemas/TradingComputeJobFailed'
         - $ref: '#/components/schemas/TradingNormalizationRuntimeIdentity'
-      description: FAILED에는 별도 terminal payload가 없고 safe structured failure가 status에 있다.
+      description: FAILED에는 safe structured failure가 필수이며 별도 terminal success payload나 quality report 전송 의무가 없다. Core는 failure code에 따라 public Import REJECTED 또는 PROCESSING_FAILED를 결정한다.
     TradingNormalizationJobCancelled:
       allOf:
         - $ref: '#/components/schemas/TradingComputeJobCancelled'
