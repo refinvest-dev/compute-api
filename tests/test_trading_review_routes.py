@@ -390,6 +390,9 @@ def test_completed_descriptor_download_ack_and_failed_status() -> None:
         assert failed.status_code == 200
         _validate("TradingNormalizationJobStatusResponse", failed.json())
         assert failed.json()["failure"]["code"] == "FILE_FORMAT_INVALID"
+        assert failed.json()["failure"]["retryable"] is False
+        assert failed.json().get("terminalPayloadId") is None
+        assert failed.json().get("qualityReport") is None
         assert client.get(f"{base}/{job_id}/result", headers=headers).status_code == 409
 
 
