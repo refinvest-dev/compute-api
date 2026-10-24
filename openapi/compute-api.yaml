@@ -254,7 +254,7 @@ paths:
       responses:
         '202':
           description: accepted.
-          content: { application/json: { schema: { $ref: '#/components/schemas/TradingComputeJobAccepted' } } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/TradingAnalyticsJobAccepted' } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/Conflict' }
@@ -276,7 +276,7 @@ paths:
       responses:
         '200':
           description: status.
-          content: { application/json: { schema: { $ref: '#/components/schemas/TradingComputeJobStatusResponse' } } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/TradingAnalyticsJobStatusResponse' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
@@ -289,7 +289,7 @@ paths:
       responses:
         '200':
           description: opaque payload descriptor.
-          content: { application/json: { schema: { $ref: '#/components/schemas/ComputeTerminalResultDescriptor' } } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/AnalyticsTerminalResultDescriptor' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/ResultUnavailable' }
@@ -305,11 +305,33 @@ paths:
       responses:
         '202':
           description: cancellation accepted 또는 existing terminal job.
-          content: { application/json: { schema: { $ref: '#/components/schemas/TradingComputeJobStatusResponse' } } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/TradingAnalyticsJobStatusResponse' } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+
+  /trading-review/analytics-jobs/{jobId}/input-grants:
+    post:
+      operationId: updateTradingAnalyticsJobInputGrants
+      tags: [trading-review-jobs]
+      summary: queued Analytics grant replacement or explicit retry attempt
+      parameters:
+        - $ref: '#/components/parameters/TradingComputeJobId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/UpdateTradingAnalyticsJobGrantsRequest' } } }
+      responses:
+        '200':
+          description: first receipt or identical idempotent replay.
+          content: { application/json: { schema: { $ref: '#/components/schemas/TradingAnalyticsGrantUpdateReceipt' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   # ============ Trading Review terminal payload ============
   /trading-review/terminal-payloads/{payloadId}:
@@ -332,7 +354,7 @@ paths:
           content:
             application/vnd.refinvest.trading-normalization+json:
               schema: { $ref: '#/components/schemas/NormalizationTerminalPayload' }
-            application/json:
+            application/vnd.refinvest.trading-analytics+json:
               schema: { $ref: '#/components/schemas/AnalyticsTerminalPayload' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -349,6 +371,10 @@ paths:
         Core가 저장하지 않은 completed payload를 폐기할 때만 사용한다.
         Normalization PERSISTED는 Core LedgerRevision/Session ACCEPTED의 원자적 publication
         commit 이후에만 전송한다. ACK 실패는 같은 payload로 재전송하고 Revision을 다시 만들지 않는다.
+        Analytics PERSISTED는 Core AnalysisResult/AnalysisRun COMPLETED commit 뒤에만 전송한다.
+        Analytics DISCARDED_STALE은 current attempt 또는 deletion generation 불일치로
+        AnalysisResult를 저장하지 않은 completed payload에 사용한다.
+        두 disposition 모두 최종 attemptToken/deletionGeneration과 payload/hash를 비교한다.
         다른 attempt/hash/job 조합은 409이며 FAILED에는 acknowledgement payload가 없다.
       parameters:
         - $ref: '#/components/parameters/TradingComputeJobId'
@@ -617,8 +643,24 @@ components:
         - SOURCE_CONTENT_LENGTH_MISMATCH
         - SOURCE_CONTENT_HASH_MISMATCH
         - INPUT_SET_HASH_MISMATCH
+        - INPUT_REFERENCE_EXPIRED
+        - INPUT_STREAM_ABORTED
+        - INPUT_CONTENT_LENGTH_MISMATCH
+        - INPUT_CONTENT_HASH_MISMATCH
+        - INPUT_SCHEMA_UNSUPPORTED
+        - INPUT_HASH_MISMATCH
+        - ANALYSIS_CONFIG_HASH_MISMATCH
+        - ENGINE_INVARIANT_VIOLATION
+        - RESULT_INTEGRITY_FAILURE
+        - RESULT_PAYLOAD_TOO_LARGE
+        - LEASE_LOST
+        - STALE_ATTEMPT
+        - DELETED_GENERATION
+        - RETRY_EXHAUSTED
+        - RESULT_PAYLOAD_EXPIRED
         - INPUT_HASH_SPECIFICATION_UNSUPPORTED
         - ARTIFACT_IDENTITY_CONFLICT
+        - IDEMPOTENCY_CONFLICT
         - ARTIFACT_ACCESS_DENIED
         - VERSION_UNAVAILABLE
         - VERSION_INCOMPATIBLE
@@ -657,6 +699,18 @@ components:
         kind: { $ref: '#/components/schemas/TradingComputeJobKind' }
         status: { type: string, enum: [PENDING] }
         createdAt: { type: string, format: date-time }
+    TradingAnalyticsJobAccepted:
+      allOf:
+        - $ref: '#/components/schemas/TradingComputeJobAccepted'
+        - type: object
+          required: [coreAnalysisRunId, attempt, attemptToken, deletionGeneration, grantRevision, expectedInputHash]
+          properties:
+            coreAnalysisRunId: { type: string }
+            attempt: { type: integer, enum: [1] }
+            attemptToken: { type: string }
+            deletionGeneration: { type: integer, minimum: 0 }
+            grantRevision: { type: integer, enum: [0] }
+            expectedInputHash: { $ref: '#/components/schemas/TradingSha256' }
     TradingComputeJobStatusBase:
       type: object
       required: [jobId, coreLogicalJobId, kind, progressStage, attempt, createdAt, updatedAt]
@@ -717,6 +771,26 @@ components:
           COMPLETED: '#/components/schemas/TradingComputeJobCompleted'
           FAILED: '#/components/schemas/TradingComputeJobFailed'
           CANCELLED: '#/components/schemas/TradingComputeJobCancelled'
+    TradingAnalyticsJobStatusResponse:
+      allOf:
+        - $ref: '#/components/schemas/TradingComputeJobStatusResponse'
+        - type: object
+          required: [coreAnalysisRunId, attemptToken, deletionGeneration, grantRevision, expectedInputHash, inputHashSpecificationVersion, analysisConfigHash, targetVersionSet, retryPolicyVersion, resultDeliveryPolicy, retryCutoffAt, retryAvailable]
+          properties:
+            coreAnalysisRunId: { type: string }
+            attempt: { type: integer, minimum: 1, maximum: 3 }
+            attemptToken: { type: string }
+            deletionGeneration: { type: integer, minimum: 0 }
+            grantRevision: { type: integer, minimum: 0 }
+            expectedInputHash: { $ref: '#/components/schemas/TradingSha256' }
+            inputHashSpecificationVersion: { type: string, enum: [TRADING_ANALYTICS_INPUT_HASH_V1] }
+            analysisConfigHash: { $ref: '#/components/schemas/TradingSha256' }
+            targetVersionSet: { $ref: '#/components/schemas/InternalAnalyticsVersionSet' }
+            retryPolicyVersion: { type: string, enum: [ANALYTICS_RETRY_V1] }
+            resultDeliveryPolicy: { $ref: '#/components/schemas/AnalyticsResultDeliveryPolicy' }
+            retryCutoffAt: { type: string, format: date-time }
+            retryAvailable: { type: boolean }
+            lastAttemptFailure: { $ref: '#/components/schemas/TradingStructuredFailure' }
     TradingNormalizationRuntimeIdentity:
       type: object
       required: [coreNormalizationRunId, attemptToken, deletionGeneration, grantRevision, expectedInputSetHash, hashSpecificationVersion, targetVersionSet]
@@ -831,16 +905,44 @@ components:
         resultHash는 공개 NormalizationResultDigestManifest의 JCS hash이고 payloadSha256은
         Content-Encoding identity인 응답 entity body의 exact bytes SHA-256이다.
         byteSize는 동일 bytes의 실제 길이이며 resultDeliveryPolicyVersion은 Run에 pin한 policy와 같다.
-    AcknowledgeTradingAnalyticsJobResultRequest:
+    AcknowledgeTradingAnalyticsPersistedRequest:
       type: object
-      required: [coreAggregateId, payloadId, payloadSha256, terminalResultHash, persistedAt]
+      required: [coreAnalysisRunId, payloadId, payloadSha256, terminalResultHash, attemptToken, deletionGeneration, disposition, persistedAt]
       additionalProperties: false
       properties:
-        coreAggregateId: { type: string }
+        coreAnalysisRunId: { type: string }
         payloadId: { type: string }
         payloadSha256: { $ref: '#/components/schemas/TradingSha256' }
         terminalResultHash: { $ref: '#/components/schemas/TradingSha256' }
+        attemptToken: { type: string }
+        deletionGeneration: { type: integer, minimum: 0 }
+        disposition: { type: string, enum: [PERSISTED] }
         persistedAt: { type: string, format: date-time }
+    AcknowledgeTradingAnalyticsDiscardedRequest:
+      type: object
+      required: [coreAnalysisRunId, payloadId, payloadSha256, terminalResultHash, attemptToken, deletionGeneration, disposition, discardedAt, staleReason]
+      additionalProperties: false
+      oneOf:
+        - required: [currentDeletionGeneration]
+          properties:
+            staleReason: { type: string, enum: [DELETED_GENERATION] }
+            currentDeletionGeneration: { type: integer, minimum: 1 }
+        - required: [currentAttemptToken]
+          properties:
+            staleReason: { type: string, enum: [STALE_ATTEMPT] }
+            currentAttemptToken: { type: string }
+      properties:
+        coreAnalysisRunId: { type: string }
+        payloadId: { type: string }
+        payloadSha256: { $ref: '#/components/schemas/TradingSha256' }
+        terminalResultHash: { $ref: '#/components/schemas/TradingSha256' }
+        attemptToken: { type: string }
+        deletionGeneration: { type: integer, minimum: 0 }
+        disposition: { type: string, enum: [DISCARDED_STALE] }
+        discardedAt: { type: string, format: date-time }
+        staleReason: { type: string, enum: [DELETED_GENERATION, STALE_ATTEMPT] }
+        currentDeletionGeneration: { type: integer, minimum: 1 }
+        currentAttemptToken: { type: string }
     AcknowledgeTradingNormalizationPersistedRequest:
       type: object
       required: [coreAggregateId, payloadId, payloadSha256, terminalResultHash, attemptToken, deletionGeneration, disposition, persistedAt]
@@ -874,12 +976,13 @@ components:
           description: Core tombstone generation. deletionGeneration보다 커야 하며 Core가 검증한다.
     AcknowledgeTradingReviewJobResultRequest:
       oneOf:
-        - $ref: '#/components/schemas/AcknowledgeTradingAnalyticsJobResultRequest'
+        - $ref: '#/components/schemas/AcknowledgeTradingAnalyticsPersistedRequest'
+        - $ref: '#/components/schemas/AcknowledgeTradingAnalyticsDiscardedRequest'
         - $ref: '#/components/schemas/AcknowledgeTradingNormalizationPersistedRequest'
         - $ref: '#/components/schemas/AcknowledgeTradingNormalizationDiscardedRequest'
       description: |
-        Existing analytics acknowledgement는 그대로 유지한다. Normalization은 terminal
-        payload의 최종 attemptToken/deletionGeneration과 job/payload/hash를 모두 비교한다.
+        Analytics ACK는 persisted/stale disposition과 최종 attempt/deletion identity를 비교한다.
+        Normalization V1 ACK는 기존 schema를 유지한다.
 
     ArtifactRole:
       type: string
@@ -1139,6 +1242,7 @@ components:
     CorePayloadReference:
       type: object
       required: [coreReferenceId, mediaType, byteSize, sha256, accessUri, expiresAt]
+      additionalProperties: false
       properties:
         coreReferenceId: { type: string }
         mediaType: { type: string }
@@ -1155,6 +1259,7 @@ components:
         analysisPeriod:
           type: object
           required: [startInclusive, endExclusive]
+          additionalProperties: false
           properties:
             startInclusive: { type: string, format: date-time }
             endExclusive: { type: string, format: date-time }
@@ -1187,17 +1292,19 @@ components:
             holdingLosses: { type: integer, minimum: 1 }
     InternalAnalyticsVersionSet:
       type: object
+      additionalProperties: false
       required: [metricDefinitionVersionsByMetricId, findingRuleSetVersion, analysisConfigVersion, evidenceSchemaVersion, implementationDigest, versionSetHash]
       properties:
         metricDefinitionVersionsByMetricId:
           type: object
+          additionalProperties: false
           required: [ENTRY_WITHIN_WINDOW_AFTER_LOSS, INITIAL_EXPOSURE_CHANGE_AFTER_LOSS, WIN_LOSS_HOLDING_DURATION_DIFFERENCE]
           properties:
             ENTRY_WITHIN_WINDOW_AFTER_LOSS: { type: string }
             INITIAL_EXPOSURE_CHANGE_AFTER_LOSS: { type: string }
             WIN_LOSS_HOLDING_DURATION_DIFFERENCE: { type: string }
-        findingRuleSetVersion: { type: string }
-        analysisConfigVersion: { type: string }
+        findingRuleSetVersion: { type: string, enum: [TRADING_FINDING_RULES_DISABLED_V1] }
+        analysisConfigVersion: { type: string, enum: [ANALYSIS_CONFIG_V1] }
         evidenceSchemaVersion: { type: string }
         implementationDigest: { type: string }
         versionSetHash: { $ref: '#/components/schemas/TradingSha256' }
@@ -1206,7 +1313,7 @@ components:
       enum: [CLOSED_OUTCOME, INITIAL_EXPOSURE, MAX_EXPOSURE, POSITION_INCREASES, FEES, FUNDING_PAYMENTS, MARKET_PRICE_PATH, VENUE_REPORTED_PNL, POSITION_MODE_USER_DECLARED, POSITION_MODE_OBSERVED_COMPATIBLE, VENUE_POSITION_SUMMARY, EXECUTION_ORIGIN_KNOWN, STABLE_EPISODE_TIME]
     CreateTradingAnalyticsJobRequest:
       type: object
-      required: [coreLogicalJobId, coreAnalysisRunId, ledgerRevisionId, ledgerRevisionContent, reconciliationManifest, targetVersionSet, analysisConfig, analysisConfigHash, capabilitySnapshot, expectedInputHash, deletionGeneration, attemptToken]
+      required: [coreLogicalJobId, coreAnalysisRunId, ledgerRevisionId, ledgerRevisionContent, reconciliationManifest, inputIdentity, targetVersionSet, analysisConfig, analysisConfigHash, capabilitySnapshot, expectedInputHash, inputHashSpecificationVersion, resultSchemaVersion, resultHashSpecificationVersion, retryPolicyVersion, resultDeliveryPolicy, deletionGeneration, attemptToken]
       additionalProperties: false
       properties:
         coreLogicalJobId: { type: string }
@@ -1214,13 +1321,146 @@ components:
         ledgerRevisionId: { type: string }
         ledgerRevisionContent: { $ref: '#/components/schemas/CorePayloadReference' }
         reconciliationManifest: { $ref: '#/components/schemas/CorePayloadReference' }
+        inputIdentity: { $ref: '#/components/schemas/AnalyticsInputIdentityV1' }
         targetVersionSet: { $ref: '#/components/schemas/InternalAnalyticsVersionSet' }
         analysisConfig: { $ref: '#/components/schemas/InternalAnalysisConfig' }
         analysisConfigHash: { $ref: '#/components/schemas/TradingSha256' }
         capabilitySnapshot: { type: array, items: { $ref: '#/components/schemas/InternalAnalysisCapability' } }
         expectedInputHash: { $ref: '#/components/schemas/TradingSha256' }
+        inputHashSpecificationVersion: { type: string, enum: [TRADING_ANALYTICS_INPUT_HASH_V1] }
+        resultSchemaVersion: { type: string, enum: [TRADING_ANALYTICS_RESULT_SCHEMA_V1] }
+        resultHashSpecificationVersion: { type: string, enum: [TRADING_ANALYTICS_RESULT_HASH_V1] }
+        retryPolicyVersion: { type: string, enum: [ANALYTICS_RETRY_V1] }
+        resultDeliveryPolicy: { $ref: '#/components/schemas/AnalyticsResultDeliveryPolicy' }
         deletionGeneration: { type: integer, format: int64, minimum: 0 }
         attemptToken: { type: string }
+
+    AnalyticsResultDeliveryPolicy:
+      type: object
+      additionalProperties: false
+      required: [policyVersion, transportMode, maxPayloadBytes]
+      properties:
+        policyVersion: { type: string, enum: [ANALYTICS_RESULT_DELIVERY_V1] }
+        transportMode: { type: string, enum: [SINGLE_RESOURCE] }
+        maxPayloadBytes: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+    AnalyticsCanonicalDecimalString:
+      type: string
+      pattern: '^(0|-?[1-9][0-9]*|-?(0|[1-9][0-9]*)\.[0-9]*[1-9])$'
+    AnalyticsArtifactIdentity:
+      type: object
+      additionalProperties: false
+      required: [coreReferenceId, mediaType, byteSize, sha256]
+      properties:
+        coreReferenceId: { type: string, minLength: 1 }
+        mediaType: { type: string, enum: [application/vnd.refinvest.trading-analysis-input.v1+json] }
+        byteSize: { type: integer, format: int64, minimum: 1 }
+        sha256: { $ref: '#/components/schemas/TradingSha256' }
+    AnalyticsManifestArtifactIdentity:
+      type: object
+      additionalProperties: false
+      required: [coreReferenceId, mediaType, byteSize, sha256, manifestHash]
+      properties:
+        coreReferenceId: { type: string, minLength: 1 }
+        mediaType: { type: string, enum: [application/vnd.refinvest.trading-reconciliation-manifest.v1+json] }
+        byteSize: { type: integer, format: int64, minimum: 1 }
+        sha256: { $ref: '#/components/schemas/TradingSha256' }
+        manifestHash: { $ref: '#/components/schemas/TradingSha256' }
+    AnalyticsInputIdentityV1:
+      type: object
+      additionalProperties: false
+      required: [hashSpecificationVersion, ledgerRevisionId, ledgerRevisionContent, reconciliationManifest, ledgerContentHash, analysisConfigHash, targetVersionSet, capabilitySnapshot]
+      properties:
+        hashSpecificationVersion: { type: string, enum: [TRADING_ANALYTICS_INPUT_HASH_V1] }
+        ledgerRevisionId: { type: string, minLength: 1 }
+        ledgerRevisionContent: { $ref: '#/components/schemas/AnalyticsArtifactIdentity' }
+        reconciliationManifest: { $ref: '#/components/schemas/AnalyticsManifestArtifactIdentity' }
+        ledgerContentHash: { $ref: '#/components/schemas/TradingSha256' }
+        analysisConfigHash: { $ref: '#/components/schemas/TradingSha256' }
+        targetVersionSet: { $ref: '#/components/schemas/InternalAnalyticsVersionSet' }
+        capabilitySnapshot: { type: array, uniqueItems: true, items: { $ref: '#/components/schemas/InternalAnalysisCapability' } }
+    AnalyticsSourceEvidenceReference:
+      type: object
+      additionalProperties: false
+      required: [snapshotId, recordId, coreArtifactId, sourceRowNumber, sourceRowHash]
+      properties:
+        snapshotId: { type: string, minLength: 1 }
+        recordId: { type: string, minLength: 1 }
+        coreArtifactId: { type: string, minLength: 1 }
+        sourceRowNumber: { type: integer, minimum: 1 }
+        sourceRowHash: { $ref: '#/components/schemas/TradingSha256' }
+    AnalyticsInstrumentDescriptor:
+      type: object
+      additionalProperties: false
+      required: [instrumentId, sourceSymbol, venueSymbol, settlementAsset, quantityStep, priceTick, contractMultiplier, settlementPrecision, instrumentTermsVersion]
+      properties:
+        instrumentId: { type: string, minLength: 1 }
+        sourceSymbol: { type: string, minLength: 1 }
+        venueSymbol: { type: string, minLength: 1 }
+        settlementAsset: { type: string, minLength: 1 }
+        quantityStep: { $ref: '#/components/schemas/AnalyticsCanonicalDecimalString' }
+        priceTick: { $ref: '#/components/schemas/AnalyticsCanonicalDecimalString' }
+        contractMultiplier: { $ref: '#/components/schemas/AnalyticsCanonicalDecimalString' }
+        settlementPrecision: { type: integer, minimum: 0 }
+        instrumentTermsVersion: { type: string, minLength: 1 }
+    AnalyticsLedgerInputV1:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, ledgerRevisionId, ledgerContentHash, canonicalSchemaVersion, reviewUnitSchemaVersion, instrumentDescriptors, canonicalRecords, sourceEvidenceReferences, reviewUnitEngineInputs]
+      properties:
+        schemaVersion: { type: string, enum: [TRADING_ANALYTICS_LEDGER_INPUT_V1] }
+        ledgerRevisionId: { type: string, minLength: 1 }
+        ledgerContentHash: { $ref: '#/components/schemas/TradingSha256' }
+        canonicalSchemaVersion: { type: string, minLength: 1 }
+        reviewUnitSchemaVersion: { type: string, minLength: 1 }
+        instrumentDescriptors: { type: array, items: { $ref: '#/components/schemas/AnalyticsInstrumentDescriptor' } }
+        canonicalRecords: { type: array, items: { $ref: '#/components/schemas/CanonicalTradingRecord' } }
+        sourceEvidenceReferences: { type: array, items: { $ref: '#/components/schemas/AnalyticsSourceEvidenceReference' } }
+        reviewUnitEngineInputs: { type: array, items: { $ref: '#/components/schemas/AnalyticsReviewUnitEngineInput' } }
+    AnalyticsAllocationEvidence:
+      type: object
+      additionalProperties: false
+      required: [allocationId, evidenceRecordIds, allocatedFee, allocatedReportedPnl]
+      properties:
+        allocationId: { type: string, minLength: 1 }
+        evidenceRecordIds: { type: array, uniqueItems: true, items: { type: string } }
+        allocatedFee: { $ref: '#/components/schemas/TradingMoney' }
+        allocatedReportedPnl: { $ref: '#/components/schemas/TradingMoney' }
+    AnalyticsReviewUnitEngineInput:
+      type: object
+      additionalProperties: false
+      required: [reviewUnitId, evidenceRecordIds, stableEpisodeTimeAvailable, allocationEvidence]
+      properties:
+        reviewUnitId: { type: string, minLength: 1 }
+        evidenceRecordIds: { type: array, uniqueItems: true, items: { type: string } }
+        stableEpisodeTimeAvailable: { type: boolean }
+        allocationEvidence: { type: array, items: { $ref: '#/components/schemas/AnalyticsAllocationEvidence' } }
+    UpdateTradingAnalyticsJobGrantsRequest:
+      type: object
+      additionalProperties: false
+      required: [mode, expectedGrantRevision, expectedAttemptToken, nextAttemptToken, expectedInputHash, versionSetHash, deletionGeneration, expectedRetryCutoffAt, ledgerRevisionContent, reconciliationManifest]
+      properties:
+        mode: { type: string, enum: [REPLACE_QUEUED_GRANTS, START_RETRY_ATTEMPT] }
+        expectedGrantRevision: { type: integer, format: int64, minimum: 0 }
+        expectedAttemptToken: { type: string, minLength: 1 }
+        nextAttemptToken: { type: string, minLength: 1 }
+        expectedInputHash: { $ref: '#/components/schemas/TradingSha256' }
+        versionSetHash: { $ref: '#/components/schemas/TradingSha256' }
+        deletionGeneration: { type: integer, format: int64, minimum: 0 }
+        expectedRetryCutoffAt: { type: string, format: date-time }
+        ledgerRevisionContent: { $ref: '#/components/schemas/CorePayloadReference' }
+        reconciliationManifest: { $ref: '#/components/schemas/CorePayloadReference' }
+    TradingAnalyticsGrantUpdateReceipt:
+      type: object
+      additionalProperties: false
+      required: [jobId, mode, grantRevision, attemptToken, attempt, status, updatedAt]
+      properties:
+        jobId: { type: string }
+        mode: { type: string, enum: [REPLACE_QUEUED_GRANTS, START_RETRY_ATTEMPT] }
+        grantRevision: { type: integer, format: int64, minimum: 1 }
+        attemptToken: { type: string }
+        attempt: { type: integer, minimum: 1, maximum: 3 }
+        status: { type: string, enum: [PENDING] }
+        updatedAt: { type: string, format: date-time }
 
     # ---- Normalization terminal payload ----
     InternalSourceEvidenceSnapshot:
@@ -1546,55 +1786,167 @@ components:
     InternalMetricStatus:
       type: string
       enum: [AVAILABLE, INSUFFICIENT_SAMPLE, MISSING_CAPABILITY, NOT_APPLICABLE]
+    AnalyticsNullableRational:
+      type: object
+      nullable: true
+      allOf: [ { $ref: '#/components/schemas/TradingRational' } ]
+    AnalyticsDistribution:
+      type: object
+      additionalProperties: false
+      required: [count, minimum, p25, median, p75, maximum, mean]
+      properties:
+        count: { type: integer, minimum: 0 }
+        minimum: { $ref: '#/components/schemas/AnalyticsNullableRational' }
+        p25: { $ref: '#/components/schemas/AnalyticsNullableRational' }
+        median: { $ref: '#/components/schemas/AnalyticsNullableRational' }
+        p75: { $ref: '#/components/schemas/AnalyticsNullableRational' }
+        maximum: { $ref: '#/components/schemas/AnalyticsNullableRational' }
+        mean: { $ref: '#/components/schemas/AnalyticsNullableRational' }
+    AnalyticsScalarInput:
+      type: object
+      additionalProperties: false
+      required: [reviewUnitId, name, value]
+      properties:
+        reviewUnitId: { type: string }
+        name: { type: string }
+        value: { type: string }
+    AnalyticsMetricCommon:
+      type: object
+      additionalProperties: false
+      required: [metricId, definitionId, definitionVersion, status, findingEligibility, requiredCapabilities, populationCount, eligibleCount, excludedCount, excludedReasonCounts, scalarInputs, relationIds, membershipIds, values, metricHash]
+      properties:
+        metricId: { type: string }
+        definitionId: { type: string }
+        definitionVersion: { type: string }
+        status: { $ref: '#/components/schemas/InternalMetricStatus' }
+        findingEligibility: { type: string, enum: [ELIGIBLE, INELIGIBLE_SAMPLE, INELIGIBLE_METRIC_STATUS] }
+        requiredCapabilities: { type: array, uniqueItems: true, items: { $ref: '#/components/schemas/InternalAnalysisCapability' } }
+        populationCount: { type: integer, minimum: 0 }
+        eligibleCount: { type: integer, minimum: 0 }
+        excludedCount: { type: integer, minimum: 0 }
+        excludedReasonCounts: { type: object, additionalProperties: { type: integer, minimum: 0 } }
+        scalarInputs: { type: array, items: { $ref: '#/components/schemas/AnalyticsScalarInput' } }
+        relationIds: { type: array, uniqueItems: true, items: { type: string } }
+        membershipIds: { type: array, uniqueItems: true, items: { type: string } }
+        values: { type: object }
+        metricHash: { $ref: '#/components/schemas/TradingSha256' }
+    AnalyticsReentryValues:
+      type: object
+      additionalProperties: false
+      required: [eligibleLossCount, lossWithEntryCount, relatedEntryCount, sameSymbolCount, differentSymbolCount, sameInstrumentRelatedEntryCount, differentInstrumentRelatedEntryCount, entryWithinWindowRate, elapsedTimeDistribution]
+      properties:
+        eligibleLossCount: { type: integer, minimum: 0 }
+        lossWithEntryCount: { type: integer, minimum: 0 }
+        relatedEntryCount: { type: integer, minimum: 0 }
+        sameSymbolCount: { type: integer, minimum: 0 }
+        differentSymbolCount: { type: integer, minimum: 0 }
+        sameInstrumentRelatedEntryCount: { type: integer, minimum: 0 }
+        differentInstrumentRelatedEntryCount: { type: integer, minimum: 0 }
+        entryWithinWindowRate: { $ref: '#/components/schemas/AnalyticsNullableRational' }
+        elapsedTimeDistribution: { type: object, nullable: true, allOf: [ { $ref: '#/components/schemas/AnalyticsDistribution' } ] }
+    AnalyticsExposurePair:
+      type: object
+      additionalProperties: false
+      required: [lossId, entryId, currency, lossNotional, entryNotional, absoluteDelta, ratio, percentageDelta, sameInstrument, sameDirection, baselineEpisodeIds, baselineMedian, baselineRatio, baselineDelta, baselineReason]
+      properties:
+        lossId: { type: string }
+        entryId: { type: string }
+        currency: { type: string }
+        lossNotional: { $ref: '#/components/schemas/AnalyticsCanonicalDecimalString' }
+        entryNotional: { $ref: '#/components/schemas/AnalyticsCanonicalDecimalString' }
+        absoluteDelta: { $ref: '#/components/schemas/AnalyticsCanonicalDecimalString' }
+        ratio: { $ref: '#/components/schemas/TradingRational' }
+        percentageDelta: { $ref: '#/components/schemas/TradingRational' }
+        sameInstrument: { type: boolean }
+        sameDirection: { type: boolean }
+        baselineEpisodeIds: { type: array, uniqueItems: true, items: { type: string } }
+        baselineMedian: { $ref: '#/components/schemas/AnalyticsNullableRational' }
+        baselineRatio: { $ref: '#/components/schemas/AnalyticsNullableRational' }
+        baselineDelta: { $ref: '#/components/schemas/AnalyticsNullableRational' }
+        baselineReason: { type: string, nullable: true }
+    AnalyticsCurrencyDistribution:
+      type: object
+      additionalProperties: false
+      required: [currency, distribution]
+      properties:
+        currency: { type: string }
+        distribution: { $ref: '#/components/schemas/AnalyticsDistribution' }
+    AnalyticsExposureValues:
+      type: object
+      additionalProperties: false
+      required: [pairCount, increasedCount, equalCount, decreasedCount, medianNextEntryVsLossEpisodeRatio, ratioDistribution, percentageDeltaDistribution, absoluteDeltaByCurrency, pairs]
+      properties:
+        pairCount: { type: integer, minimum: 0 }
+        increasedCount: { type: integer, minimum: 0 }
+        equalCount: { type: integer, minimum: 0 }
+        decreasedCount: { type: integer, minimum: 0 }
+        medianNextEntryVsLossEpisodeRatio: { $ref: '#/components/schemas/AnalyticsNullableRational' }
+        ratioDistribution: { type: object, nullable: true, allOf: [ { $ref: '#/components/schemas/AnalyticsDistribution' } ] }
+        percentageDeltaDistribution: { type: object, nullable: true, allOf: [ { $ref: '#/components/schemas/AnalyticsDistribution' } ] }
+        absoluteDeltaByCurrency: { type: array, items: { $ref: '#/components/schemas/AnalyticsCurrencyDistribution' } }
+        pairs: { type: array, items: { $ref: '#/components/schemas/AnalyticsExposurePair' } }
+    AnalyticsHoldingValues:
+      type: object
+      additionalProperties: false
+      required: [winCount, lossCount, breakevenCount, unavailableCount, winDistribution, lossDistribution, medianDifferenceMicroseconds, medianRatio, medianRatioReason]
+      properties:
+        winCount: { type: integer, minimum: 0 }
+        lossCount: { type: integer, minimum: 0 }
+        breakevenCount: { type: integer, minimum: 0 }
+        unavailableCount: { type: integer, minimum: 0 }
+        winDistribution: { type: object, nullable: true, allOf: [ { $ref: '#/components/schemas/AnalyticsDistribution' } ] }
+        lossDistribution: { type: object, nullable: true, allOf: [ { $ref: '#/components/schemas/AnalyticsDistribution' } ] }
+        medianDifferenceMicroseconds: { $ref: '#/components/schemas/AnalyticsNullableRational' }
+        medianRatio: { $ref: '#/components/schemas/AnalyticsNullableRational' }
+        medianRatioReason: { type: string, nullable: true }
+    AnalyticsReentryMetric:
+      allOf:
+        - $ref: '#/components/schemas/AnalyticsMetricCommon'
+        - type: object
+          required: [definitionId, values]
+          properties:
+            definitionId: { type: string, enum: [ENTRY_WITHIN_WINDOW_AFTER_LOSS] }
+            values: { $ref: '#/components/schemas/AnalyticsReentryValues' }
+    AnalyticsExposureMetric:
+      allOf:
+        - $ref: '#/components/schemas/AnalyticsMetricCommon'
+        - type: object
+          required: [definitionId, values]
+          properties:
+            definitionId: { type: string, enum: [INITIAL_EXPOSURE_CHANGE_AFTER_LOSS] }
+            values: { $ref: '#/components/schemas/AnalyticsExposureValues' }
+    AnalyticsHoldingMetric:
+      allOf:
+        - $ref: '#/components/schemas/AnalyticsMetricCommon'
+        - type: object
+          required: [definitionId, values]
+          properties:
+            definitionId: { type: string, enum: [WIN_LOSS_HOLDING_DURATION_DIFFERENCE] }
+            values: { $ref: '#/components/schemas/AnalyticsHoldingValues' }
+    InternalBehaviorMetric:
+      oneOf:
+        - $ref: '#/components/schemas/AnalyticsReentryMetric'
+        - $ref: '#/components/schemas/AnalyticsExposureMetric'
+        - $ref: '#/components/schemas/AnalyticsHoldingMetric'
+      discriminator:
+        propertyName: definitionId
+        mapping:
+          ENTRY_WITHIN_WINDOW_AFTER_LOSS: '#/components/schemas/AnalyticsReentryMetric'
+          INITIAL_EXPOSURE_CHANGE_AFTER_LOSS: '#/components/schemas/AnalyticsExposureMetric'
+          WIN_LOSS_HOLDING_DURATION_DIFFERENCE: '#/components/schemas/AnalyticsHoldingMetric'
     InternalBehaviorObservation:
       type: object
-      required: [observationId, definitionId, definitionVersion, subjectReviewUnitIds, observedAt, attributes, evidenceRecordIds]
+      additionalProperties: false
+      required: [observationId, definitionId, definitionVersion, subjectReviewUnitIds, observedAt, attributes, relationIds, membershipIds]
       properties:
         observationId: { type: string }
         definitionId: { type: string, enum: [ENTRY_WITHIN_WINDOW_AFTER_LOSS, INITIAL_EXPOSURE_CHANGE_AFTER_LOSS, WIN_LOSS_HOLDING_DURATION_DIFFERENCE] }
         definitionVersion: { type: string }
-        subjectReviewUnitIds: { type: array, items: { type: string } }
+        subjectReviewUnitIds: { type: array, uniqueItems: true, items: { type: string } }
         observedAt: { type: string, format: date-time }
-        attributes:
-          type: array
-          items:
-            type: object
-            required: [name, value]
-            properties:
-              name: { type: string }
-              value: { type: string }
-        evidenceRecordIds: { type: array, items: { type: string } }
-    InternalBehaviorMetric:
-      type: object
-      required: [metricId, definitionId, definitionVersion, status, findingEligibility, populationCount, eligibleCount, excludedCount, excludedReasonCounts, subjectReviewUnitIds, comparisonReviewUnitIds, capabilitySnapshot, result, evidenceReference, metricHash]
-      properties:
-        metricId: { type: string }
-        definitionId: { type: string, enum: [ENTRY_WITHIN_WINDOW_AFTER_LOSS, INITIAL_EXPOSURE_CHANGE_AFTER_LOSS, WIN_LOSS_HOLDING_DURATION_DIFFERENCE] }
-        definitionVersion: { type: string }
-        status: { $ref: '#/components/schemas/InternalMetricStatus' }
-        findingEligibility: { type: string, enum: [ELIGIBLE, INELIGIBLE_SAMPLE, INELIGIBLE_METRIC_STATUS] }
-        populationCount: { type: integer, format: int64, minimum: 0 }
-        eligibleCount: { type: integer, format: int64, minimum: 0 }
-        excludedCount: { type: integer, format: int64, minimum: 0 }
-        excludedReasonCounts:
-          type: object
-          additionalProperties: { type: integer, format: int64, minimum: 0 }
-        subjectReviewUnitIds: { type: array, items: { type: string } }
-        comparisonReviewUnitIds: { type: array, items: { type: string } }
-        capabilitySnapshot: { type: array, items: { $ref: '#/components/schemas/InternalAnalysisCapability' } }
-        result:
-          type: object
-          properties:
-            decimal:
-              allOf: [ { $ref: '#/components/schemas/TradingDecimalString' } ]
-              type: string
-              nullable: true
-            ratio:
-              allOf: [ { $ref: '#/components/schemas/TradingRational' } ]
-              type: object
-              nullable: true
-            durationMicroseconds: { type: integer, format: int64, minimum: 0, nullable: true }
-        evidenceReference: { type: string }
+        attributes: { type: array, items: { $ref: '#/components/schemas/AnalyticsScalarInput' } }
+        relationIds: { type: array, uniqueItems: true, items: { type: string } }
+        membershipIds: { type: array, uniqueItems: true, items: { type: string } }
         metricHash: { $ref: '#/components/schemas/TradingSha256' }
     InternalBehaviorFinding:
       type: object
@@ -1611,37 +1963,147 @@ components:
         rankReason: { type: string }
     InternalEvidenceMembership:
       type: object
-      required: [metricId, reviewUnitId, role, allocationRecordIds, sourceEvidenceSnapshotIds]
+      additionalProperties: false
+      required: [membershipId, metricId, reviewUnitId, role, exclusionReason, reasons, allocationRecordIds, canonicalRecordIds, sourceEvidenceSnapshotIds]
       properties:
+        membershipId: { type: string }
         metricId: { type: string }
         reviewUnitId: { type: string }
-        role: { type: string, enum: [SUPPORTING, COMPARISON, EXCLUDED_CANDIDATE, SELECTION_BOUNDARY] }
+        role: { type: string, enum: [SUBJECT, COMPARISON, EXCLUDED, RELATION_CANDIDATE, RELATED_ENTRY, PRIOR_BASELINE, SELECTION_BOUNDARY] }
         exclusionReason: { type: string, nullable: true }
-        allocationRecordIds: { type: array, items: { type: string } }
-        sourceEvidenceSnapshotIds: { type: array, items: { type: string } }
-    AnalyticsTerminalPayload:
+        reasons: { type: array, uniqueItems: true, items: { type: string } }
+        allocationRecordIds: { type: array, uniqueItems: true, items: { type: string } }
+        canonicalRecordIds: { type: array, uniqueItems: true, items: { type: string } }
+        sourceEvidenceSnapshotIds: { type: array, uniqueItems: true, items: { type: string } }
+    AnalyticsAllocatedAmount:
       type: object
-      required: [jobId, coreLogicalJobId, coreAnalysisRunId, status, versionSet, analysisConfig, analysisConfigHash, inputHash, reviewUnits, observations, metrics, findings, evidenceMembership, populationCount, eligibleCount, excludedCount, exclusionReasonCounts, evidenceHash, resultHash, createdAt, terminalAt]
+      additionalProperties: false
+      required: [recordId, amount, currency]
+      properties:
+        recordId: { type: string }
+        amount: { $ref: '#/components/schemas/AnalyticsCanonicalDecimalString' }
+        currency: { type: string }
+    AnalyticsOutcomeClassification:
+      type: object
+      additionalProperties: false
+      required: [reviewUnitId, outcome, netTradingPnl, settlementCurrency, allocatedReportedPnl, allocatedFees, membershipId]
+      properties:
+        reviewUnitId: { type: string }
+        outcome: { type: string, enum: [LOSS, BREAKEVEN, WIN, UNAVAILABLE] }
+        netTradingPnl: { type: string, nullable: true, pattern: '^(0|-?[1-9][0-9]*|-?(0|[1-9][0-9]*)\.[0-9]*[1-9])$' }
+        settlementCurrency: { type: string, nullable: true }
+        allocatedReportedPnl: { type: array, items: { $ref: '#/components/schemas/AnalyticsAllocatedAmount' } }
+        allocatedFees: { type: array, items: { $ref: '#/components/schemas/AnalyticsAllocatedAmount' } }
+        membershipId: { type: string }
+    AnalyticsRelationCandidate:
+      type: object
+      additionalProperties: false
+      required: [entryId, role, openedAt, membershipId]
+      properties:
+        entryId: { type: string }
+        role: { type: string, enum: [REVERSAL_SEPARATE, SAME_TIMESTAMP, AFTER_WINDOW, MISSING_STABLE_EPISODE_TIME, SELECTED_EARLIEST, LATER_NOT_LINKED] }
+        openedAt: { type: string, format: date-time, nullable: true }
+        membershipId: { type: string }
+    AnalyticsLossEntryRelation:
+      type: object
+      additionalProperties: false
+      required: [relationId, lossId, closedAt, candidates, relatedEntryIds, elapsedMicroseconds, membershipIds]
+      properties:
+        relationId: { type: string }
+        lossId: { type: string }
+        closedAt: { type: string, format: date-time }
+        candidates: { type: array, items: { $ref: '#/components/schemas/AnalyticsRelationCandidate' } }
+        relatedEntryIds: { type: array, uniqueItems: true, items: { type: string } }
+        elapsedMicroseconds: { type: integer, format: int64, minimum: 0, nullable: true }
+        membershipIds: { type: array, uniqueItems: true, items: { type: string } }
+    AnalyticsResultCounts:
+      type: object
+      additionalProperties: false
+      required: [outcomeClassificationCount, observationCount, metricCount, relationCount, evidenceMembershipCount, findingCount]
+      properties:
+        outcomeClassificationCount: { type: integer, minimum: 0 }
+        observationCount: { type: integer, minimum: 0 }
+        metricCount: { type: integer, enum: [3] }
+        relationCount: { type: integer, minimum: 0 }
+        evidenceMembershipCount: { type: integer, minimum: 0 }
+        findingCount: { type: integer, enum: [0] }
+    AnalyticsResultSectionDigest:
+      type: object
+      additionalProperties: false
+      required: [sectionType, itemCount, hashSpecificationVersion, sectionHash]
+      properties:
+        sectionType: { type: string, enum: [OUTCOME_CLASSIFICATIONS, OBSERVATIONS, METRICS, RELATIONS, EVIDENCE_MEMBERSHIPS, FINDINGS] }
+        itemCount: { type: integer, minimum: 0 }
+        hashSpecificationVersion: { type: string, enum: [TRADING_ANALYTICS_RESULT_HASH_V1] }
+        sectionHash: { $ref: '#/components/schemas/TradingSha256' }
+    AnalyticsResultDigestManifest:
+      type: object
+      additionalProperties: false
+      required: [resultHashSpecificationVersion, resultSchemaVersion, inputHash, inputHashSpecificationVersion, analysisConfigHash, targetVersionSet, counts, sectionDigests]
+      properties:
+        resultHashSpecificationVersion: { type: string, enum: [TRADING_ANALYTICS_RESULT_HASH_V1] }
+        resultSchemaVersion: { type: string, enum: [TRADING_ANALYTICS_RESULT_SCHEMA_V1] }
+        inputHash: { $ref: '#/components/schemas/TradingSha256' }
+        inputHashSpecificationVersion: { type: string, enum: [TRADING_ANALYTICS_INPUT_HASH_V1] }
+        analysisConfigHash: { $ref: '#/components/schemas/TradingSha256' }
+        targetVersionSet: { $ref: '#/components/schemas/InternalAnalyticsVersionSet' }
+        counts: { $ref: '#/components/schemas/AnalyticsResultCounts' }
+        sectionDigests: { type: array, minItems: 6, maxItems: 6, items: { $ref: '#/components/schemas/AnalyticsResultSectionDigest' } }
+    AnalyticsTerminalResultDescriptor:
+      type: object
+      additionalProperties: false
+      required: [jobId, coreLogicalJobId, coreAnalysisRunId, payloadId, transportMode, resultDeliveryPolicyVersion, mediaType, contentEncoding, byteSize, payloadSha256, attemptToken, deletionGeneration, inputHash, inputHashSpecificationVersion, analysisConfigHash, targetVersionSet, resultSchemaVersion, resultHashSpecificationVersion, counts, sectionDigests, evidenceHash, resultHash, createdAt, expiresAt]
       properties:
         jobId: { type: string }
         coreLogicalJobId: { type: string }
         coreAnalysisRunId: { type: string }
+        payloadId: { type: string }
+        transportMode: { type: string, enum: [SINGLE_RESOURCE] }
+        resultDeliveryPolicyVersion: { type: string, enum: [ANALYTICS_RESULT_DELIVERY_V1] }
+        mediaType: { type: string, enum: [application/vnd.refinvest.trading-analytics+json] }
+        contentEncoding: { type: string, enum: [identity] }
+        byteSize: { type: integer, minimum: 1 }
+        payloadSha256: { $ref: '#/components/schemas/TradingSha256' }
+        attemptToken: { type: string }
+        deletionGeneration: { type: integer, minimum: 0 }
+        inputHash: { $ref: '#/components/schemas/TradingSha256' }
+        inputHashSpecificationVersion: { type: string, enum: [TRADING_ANALYTICS_INPUT_HASH_V1] }
+        analysisConfigHash: { $ref: '#/components/schemas/TradingSha256' }
+        targetVersionSet: { $ref: '#/components/schemas/InternalAnalyticsVersionSet' }
+        resultSchemaVersion: { type: string, enum: [TRADING_ANALYTICS_RESULT_SCHEMA_V1] }
+        resultHashSpecificationVersion: { type: string, enum: [TRADING_ANALYTICS_RESULT_HASH_V1] }
+        counts: { $ref: '#/components/schemas/AnalyticsResultCounts' }
+        sectionDigests: { type: array, minItems: 6, maxItems: 6, items: { $ref: '#/components/schemas/AnalyticsResultSectionDigest' } }
+        evidenceHash: { $ref: '#/components/schemas/TradingSha256' }
+        resultHash: { $ref: '#/components/schemas/TradingSha256' }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+    AnalyticsTerminalPayload:
+      type: object
+      additionalProperties: false
+      required: [jobId, coreLogicalJobId, coreAnalysisRunId, attemptToken, deletionGeneration, status, targetVersionSet, analysisConfigHash, inputHash, inputHashSpecificationVersion, resultSchemaVersion, resultHashSpecificationVersion, counts, sectionDigests, resultDigestManifest, outcomeClassifications, observations, metrics, relations, evidenceMembership, findings, evidenceHash, resultHash, createdAt, terminalAt]
+      properties:
+        jobId: { type: string }
+        coreLogicalJobId: { type: string }
+        coreAnalysisRunId: { type: string }
+        attemptToken: { type: string }
+        deletionGeneration: { type: integer, minimum: 0 }
         status: { type: string, enum: [COMPLETED] }
-        versionSet: { $ref: '#/components/schemas/InternalAnalyticsVersionSet' }
-        analysisConfig: { $ref: '#/components/schemas/InternalAnalysisConfig' }
+        targetVersionSet: { $ref: '#/components/schemas/InternalAnalyticsVersionSet' }
         analysisConfigHash: { $ref: '#/components/schemas/TradingSha256' }
         inputHash: { $ref: '#/components/schemas/TradingSha256' }
-        reviewUnits: { type: array, items: { $ref: '#/components/schemas/InternalReviewUnit' } }
+        inputHashSpecificationVersion: { type: string, enum: [TRADING_ANALYTICS_INPUT_HASH_V1] }
+        resultSchemaVersion: { type: string, enum: [TRADING_ANALYTICS_RESULT_SCHEMA_V1] }
+        resultHashSpecificationVersion: { type: string, enum: [TRADING_ANALYTICS_RESULT_HASH_V1] }
+        counts: { $ref: '#/components/schemas/AnalyticsResultCounts' }
+        sectionDigests: { type: array, minItems: 6, maxItems: 6, items: { $ref: '#/components/schemas/AnalyticsResultSectionDigest' } }
+        resultDigestManifest: { $ref: '#/components/schemas/AnalyticsResultDigestManifest' }
+        outcomeClassifications: { type: array, items: { $ref: '#/components/schemas/AnalyticsOutcomeClassification' } }
         observations: { type: array, items: { $ref: '#/components/schemas/InternalBehaviorObservation' } }
         metrics: { type: array, minItems: 3, maxItems: 3, items: { $ref: '#/components/schemas/InternalBehaviorMetric' } }
-        findings: { type: array, items: { $ref: '#/components/schemas/InternalBehaviorFinding' } }
+        relations: { type: array, items: { $ref: '#/components/schemas/AnalyticsLossEntryRelation' } }
         evidenceMembership: { type: array, items: { $ref: '#/components/schemas/InternalEvidenceMembership' } }
-        populationCount: { type: integer, format: int64, minimum: 0 }
-        eligibleCount: { type: integer, format: int64, minimum: 0 }
-        excludedCount: { type: integer, format: int64, minimum: 0 }
-        exclusionReasonCounts:
-          type: object
-          additionalProperties: { type: integer, format: int64, minimum: 0 }
+        findings: { type: array, maxItems: 0, items: { $ref: '#/components/schemas/InternalBehaviorFinding' } }
         evidenceHash: { $ref: '#/components/schemas/TradingSha256' }
         resultHash: { $ref: '#/components/schemas/TradingSha256' }
         createdAt: { type: string, format: date-time }
