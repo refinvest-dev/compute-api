@@ -10,6 +10,7 @@ from fractions import Fraction
 
 from refinvest.trading_review.analytics.model import (
     AnalysisConfig,
+    AnalyticsExecutionInput,
     Distribution,
     EvidenceReference,
     ExposurePair,
@@ -246,7 +247,7 @@ def _finding(status: MetricStatus, enough: bool) -> FindingEligibility:
 
 def _initial_notional(
     episode: FuturesPositionEpisode,
-    executions: dict[str, ExecutionRecord],
+    executions: dict[str, ExecutionRecord | AnalyticsExecutionInput],
     instruments: dict[str, InstrumentDescriptor],
 ) -> tuple[Decimal, str] | None:
     if (
@@ -276,7 +277,7 @@ def _initial_notional(
 
 def _notional_inputs(
     episode: FuturesPositionEpisode,
-    executions: dict[str, ExecutionRecord],
+    executions: dict[str, ExecutionRecord | AnalyticsExecutionInput],
     instruments: dict[str, InstrumentDescriptor],
 ) -> tuple[tuple[str, str, str], ...]:
     opening = next(
@@ -517,7 +518,7 @@ def _build_exposure(
     episodes: tuple[FuturesPositionEpisode, ...],
     config: AnalysisConfig,
     records: dict[str, CanonicalRecord],
-    executions: dict[str, ExecutionRecord],
+    executions: dict[str, ExecutionRecord | AnalyticsExecutionInput],
     instruments: dict[str, InstrumentDescriptor],
     reentry: MetricResult,
 ) -> MetricResult:
@@ -874,7 +875,11 @@ def calculate_behavior_metrics(
         for item in episodes
     ):
         raise ValueError("net trading PnL must use pinned settlement currency")
-    executions = {key: item for key, item in records.items() if isinstance(item, ExecutionRecord)}
+    executions: dict[str, ExecutionRecord | AnalyticsExecutionInput] = {
+        key: item
+        for key, item in records.items()
+        if isinstance(item, (ExecutionRecord, AnalyticsExecutionInput))
+    }
     reentry = _build_reentry(episodes, analysis_config, records)
     exposure = _build_exposure(episodes, analysis_config, records, executions, terms, reentry)
     holding = _build_holding(episodes, analysis_config, records)

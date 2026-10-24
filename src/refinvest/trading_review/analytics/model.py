@@ -7,8 +7,15 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
 
-from refinvest.trading_review.decimal import ExactRational
-from refinvest.trading_review.model import Capability
+from refinvest.trading_review.decimal import ExactRational, ScaledDecimal
+from refinvest.trading_review.model import (
+    AllocationAction,
+    Capability,
+    Direction,
+    MoneyAmount,
+    ReconciliationStatus,
+    ReconstructionStatus,
+)
 
 
 class MetricStatus(StrEnum):
@@ -246,6 +253,57 @@ class MetricResult:
     values: ReentryValues | ExposureValues | HoldingValues
     relations: tuple[LossEntryRelation, ...] = ()
     outcome_classifications: tuple[OutcomeClassification, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class AnalyticsEvidenceRow:
+    """Only provenance fields present in the immutable Analytics ledger artifact."""
+
+    artifact_id: str
+    source_row_number: int
+    source_row_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class AnalyticsCanonicalInput:
+    record_id: str
+    provenance: tuple[AnalyticsEvidenceRow, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class AnalyticsExecutionInput(AnalyticsCanonicalInput):
+    price: ScaledDecimal
+
+
+@dataclass(frozen=True, slots=True)
+class AnalyticsAllocationInput:
+    execution_record_id: str
+    action: AllocationAction
+    allocated_fee: MoneyAmount
+    allocated_reported_pnl: MoneyAmount
+    evidence_record_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class AnalyticsCapabilityInput:
+    capabilities: tuple[Capability, ...]
+    stable_episode_time_available: bool
+
+
+@dataclass(frozen=True, slots=True)
+class AnalyticsEpisodeInput:
+    episode_id: str
+    instrument_id: str
+    direction: Direction
+    opened_at: datetime | None
+    closed_at: datetime | None
+    initial_quantity: ScaledDecimal | None
+    net_trading_pnl: MoneyAmount | None
+    reconstruction_status: ReconstructionStatus
+    reconciliation_status: ReconciliationStatus
+    allocations: tuple[AnalyticsAllocationInput, ...]
+    capability: AnalyticsCapabilityInput
+    evidence_record_ids: tuple[str, ...]
 
 
 def utc(instant: datetime | None) -> datetime:

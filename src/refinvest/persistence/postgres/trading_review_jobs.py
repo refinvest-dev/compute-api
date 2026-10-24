@@ -115,7 +115,10 @@ class PostgresTradingReviewJobRepository:
                 )
             _lock_key(cursor, "trading-review-active-capacity")
             cursor.execute(
-                "SELECT COUNT(*) FROM trading_review_jobs WHERE status IN ('PENDING', 'RUNNING')"
+                "SELECT (SELECT COUNT(*) FROM trading_review_jobs "
+                "WHERE status IN ('PENDING', 'RUNNING')) + "
+                "(SELECT COUNT(*) FROM trading_analytics_jobs "
+                "WHERE status IN ('PENDING', 'RUNNING'))"
             )
             count_row = cursor.fetchone()
             if count_row is None:
