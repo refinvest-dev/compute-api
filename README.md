@@ -1,5 +1,7 @@
 # refinvest-compute
 
+Trading Review Analytics Job deployment and verification: [docs/TRADING_ANALYTICS_RUNTIME.md](docs/TRADING_ANALYTICS_RUNTIME.md).
+
 내부 Backtest Engine 및 Market Data Ingestion 서비스다. 계산 계약과 작업 규칙은
 [`AGENTS.md`](AGENTS.md)에서 시작한다.
 

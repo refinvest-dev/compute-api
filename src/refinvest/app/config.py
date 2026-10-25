@@ -36,6 +36,8 @@ class Settings:
     trading_review_masking_key: str | None = None
     trading_review_artifact_hosts: tuple[str, ...] = ()
     trading_review_payload_encryption_key: str | None = None
+    trading_analytics_implementation_digest: str | None = None
+    trading_analytics_max_input_bytes: int = 512 * 1024 * 1024
     massive_api_key: str | None = None
     snapshot_storage_root: str | None = None
     snapshot_storage_backend: str = "filesystem"
@@ -109,6 +111,12 @@ class Settings:
             ),
             trading_review_payload_encryption_key=(
                 getenv("REFINVEST_TRADING_REVIEW_PAYLOAD_KEY") or None
+            ),
+            trading_analytics_implementation_digest=(
+                getenv("REFINVEST_TRADING_ANALYTICS_IMPLEMENTATION_DIGEST") or None
+            ),
+            trading_analytics_max_input_bytes=_positive_environment_integer(
+                "REFINVEST_TRADING_ANALYTICS_MAX_INPUT_BYTES", 512 * 1024 * 1024
             ),
             massive_api_key=getenv("REFINVEST_MASSIVE_API_KEY") or None,
             snapshot_storage_root=getenv("REFINVEST_SNAPSHOT_STORAGE_ROOT") or None,

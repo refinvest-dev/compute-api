@@ -1,0 +1,24 @@
+[Unit]
+Description=Refinvest Trading Review analytics worker
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=3h
+StartLimitBurst=3
+
+[Service]
+Type=exec
+User=refinvest
+Group=refinvest
+WorkingDirectory=/opt/refinvest/compute-api
+EnvironmentFile=/etc/refinvest/trading-analytics-worker.env
+ExecStart=/opt/refinvest/compute-api/.venv/bin/refinvest-trading-analytics-worker
+Restart=on-failure
+RestartSec=30s
+TimeoutStopSec=10m
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

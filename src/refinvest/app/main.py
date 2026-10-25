@@ -16,6 +16,7 @@ from refinvest.api.routes.assets import router as assets_router
 from refinvest.api.routes.backtests import router as backtests_router
 from refinvest.api.routes.health import router as health_router
 from refinvest.api.routes.series import router as series_router
+from refinvest.api.routes.trading_analytics_jobs import router as trading_analytics_jobs_router
 from refinvest.api.routes.trading_review_jobs import router as trading_review_jobs_router
 from refinvest.api.schemas.errors import map_transport_validation_error
 from refinvest.app.config import get_settings
@@ -101,6 +102,7 @@ def create_app() -> FastAPI:
     application.include_router(assets_router)
     application.include_router(series_router)
     application.include_router(trading_review_jobs_router)
+    application.include_router(trading_analytics_jobs_router)
     application.add_exception_handler(RequestValidationError, request_validation_error_handler)
     application.add_exception_handler(StarletteHTTPException, internal_http_error_handler)
     return application

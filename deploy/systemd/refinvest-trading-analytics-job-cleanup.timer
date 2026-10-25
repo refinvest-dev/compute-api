@@ -1,0 +1,10 @@
+[Unit]
+Description=Hourly Trading Review analytics job cleanup
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+Unit=refinvest-trading-analytics-job-cleanup.service
+
+[Install]
+WantedBy=timers.target

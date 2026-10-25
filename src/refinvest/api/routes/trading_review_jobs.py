@@ -15,6 +15,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import JSONResponse, Response
 from fastapi.routing import APIRoute
 
+from refinvest.api.routes.trading_analytics_jobs import get_optional_analytics_repository
+from refinvest.api.schemas.trading_analytics_jobs import AcknowledgeAnalyticsTransport
 from refinvest.api.schemas.trading_review_jobs import (
     AcknowledgeTradingReviewJobTransport,
     CreateTradingNormalizationJobTransport,
@@ -41,6 +43,11 @@ from refinvest.application.trading_review_jobs import (
     submit_trading_review_job,
 )
 from refinvest.observability.metrics import ApiMetrics, safe_record
+from refinvest.persistence.postgres.trading_analytics_jobs import (
+    AnalyticsJobConflict,
+    AnalyticsJobUnavailable,
+    PostgresAnalyticsJobRepository,
+)
 from refinvest.persistence.postgres.trading_review_jobs import PostgresTradingReviewJobRepository
 from refinvest.trading_review.decimal import ScaledDecimal
 from refinvest.trading_review.errors import TradingReviewError
@@ -60,9 +67,7 @@ class _UniqueIdentityKeysRoute(APIRoute):
         handler = super().get_route_handler()
 
         async def reject_duplicate_keys(request: Request) -> Response:
-            if request.method == "POST" and request.url.path.endswith(
-                "/trading-review/normalization-jobs"
-            ):
+            if request.method == "POST" and request.url.path.startswith("/trading-review/"):
                 settings_provider = cast(
                     Callable[[], Settings],
                     request.app.dependency_overrides.get(get_settings, get_settings),
@@ -75,7 +80,9 @@ class _UniqueIdentityKeysRoute(APIRoute):
                     and compare_digest(configured_key, supplied_key)
                 ):
                     try:
-                        json.loads(await request.body(), object_pairs_hook=_unique_json_object)
+                        body = await request.body()
+                        if body:
+                            json.loads(body, object_pairs_hook=_unique_json_object)
                     except (ValueError, UnicodeDecodeError):
                         return _http_error(422, "REQUEST_INVALID", "Malformed request body.")
             return await handler(request)
@@ -446,13 +453,28 @@ def download_trading_review_terminal_payload(
     repository: Annotated[
         PostgresTradingReviewJobRepository, Depends(get_trading_review_repository)
     ],
+    analytics_repository: Annotated[
+        PostgresAnalyticsJobRepository | None, Depends(get_optional_analytics_repository)
+    ],
 ) -> Response:
     try:
         payload = repository.get_terminal_payload(payloadId)
     except ResultIntegrityError as error:
         return _http_error(409, error.code, "Terminal result integrity failed.")
     if payload is None:
-        return _http_error(404, "PAYLOAD_NOT_FOUND", "Payload was not found.")
+        if analytics_repository is None:
+            return _http_error(404, "PAYLOAD_NOT_FOUND", "Payload was not found.")
+        try:
+            analytics_payload = analytics_repository.payload_bytes(payloadId)
+        except AnalyticsJobUnavailable:
+            return _http_error(404, "RESULT_PAYLOAD_EXPIRED", "Payload has expired.")
+        if analytics_payload is None:
+            return _http_error(404, "PAYLOAD_NOT_FOUND", "Payload was not found.")
+        return Response(
+            content=analytics_payload,
+            media_type="application/vnd.refinvest.trading-analytics+json; charset=utf-8",
+            headers={"Content-Encoding": "identity"},
+        )
     return Response(
         content=payload,
         media_type=f"{MEDIA_TYPE}; charset=utf-8",
@@ -469,15 +491,37 @@ def download_trading_review_terminal_payload(
 )
 def acknowledge_trading_review_job_result(
     jobId: str,
-    body: AcknowledgeTradingReviewJobTransport,
+    body: AcknowledgeTradingReviewJobTransport | AcknowledgeAnalyticsTransport,
     repository: Annotated[
         PostgresTradingReviewJobRepository, Depends(get_trading_review_repository)
+    ],
+    analytics_repository: Annotated[
+        PostgresAnalyticsJobRepository | None, Depends(get_optional_analytics_repository)
     ],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> Response:
     key = _key(idempotency_key)
     if key is None:
         return _http_error(400, "REQUEST_INVALID", "Invalid Idempotency-Key.")
+    if isinstance(body, AcknowledgeAnalyticsTransport):
+        if analytics_repository is None:
+            return _http_error(
+                503, "TEMPORARY_DEPENDENCY_FAILURE", "Job store is unavailable.", True
+            )
+        try:
+            analytics_repository.acknowledge(
+                jobId, body.model_dump(mode="json", by_alias=True, exclude_none=True)
+            )
+        except AnalyticsJobUnavailable as error:
+            code = (
+                "RESULT_PAYLOAD_EXPIRED"
+                if str(error) == "RESULT_PAYLOAD_EXPIRED"
+                else "JOB_NOT_FOUND"
+            )
+            return _http_error(404, code, "Job or payload was not found.")
+        except AnalyticsJobConflict:
+            return _http_error(409, "RESULT_HASH_MISMATCH", "Acknowledgement conflicts.")
+        return Response(status_code=204)
     recorded_at = body.persisted_at if body.disposition == "PERSISTED" else body.discarded_at
     if (
         recorded_at is None
