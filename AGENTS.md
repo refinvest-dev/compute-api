@@ -201,8 +201,12 @@ Core→Compute 요청은 `X-Internal-Api-Key` 기반 내부 인증을 사용한�
 - 과도한 추상화보다 명확한 계산 흐름을 우선한다.
 - `PR_BODY.md`는 로컬 PR 작성 보조 파일이다. 어떤 경우에도 Git에 add, commit, push하지 않는다.
 - 커밋 메시지의 괄호 안 scope는 저장소 이름이 아니라 이 저장소 안에서 변경한 도메인이나 작업 단위를 나타낸다. 예: `feat(trading-review): ...`, `fix(ingestion): ...`. `feat(compute): ...`처럼 저장소 이름을 scope로 쓰지 않는다.
-- PR은 하나의 명확한 목적과 검토 가능한 **완결된 운영/사용자 가치**를 기준으로 구성한다. 그 목적에 직접 필요한 구현·설정·테스트·문서는 함께 묶으며, 단순히 파일 종류가 다르다는 이유로 분리하지 않는다.
-- PR을 기계적으로 미세 분할하지 않는다. 독립적인 deploy/review/rollback 경계가 없으면 직접 의존하는 변경을 한 PR로 유지한다. 계산 의미론, artifact replay 호환성, 외부 계약처럼 별도 합의·승인이 필요한 경계만 분리한다.
+- 큰 작업은 코드를 쓰기 전에 **커밋과 PR의 분할안**을 세운다. API 계약, 입력 검증, 계산 연결, persistence, worker, 결과 전달·운영처럼 독립적으로 검증할 수 있는 경계를 찾고, 각 단계의 테스트와 후속 연결 지점을 명시한다.
+- 커밋 하나에는 설명 가능한 변경 한 가지와 그 검증을 담는다. 구현 전체를 마지막 단일 커밋에 몰지 않는다. 선행 migration, 순수 adapter와 fixed vector 검증, durable job 상태, worker·결과 전달처럼 단계별로 커밋하되 각 커밋에서 관련 테스트가 통과하고 기존 동작이 유지돼야 한다.
+- PR은 기존 동작을 깨지 않고 독립적으로 검토·머지할 수 있는 범위로 만든다. 큰 runtime은 준비 단계가 당장 사용자에게 노출되지 않아도 안전한 계약 검증·additive migration·순수 구성 요소를 먼저 머지할 수 있다. 이때 후속 PR과 아직 연결되지 않은 경계를 본문에 명시한다.
+- API·persistence·worker·delivery 등 여러 경계에 걸쳐 diff가 커질 조짐이 보이면 먼저 여러 커밋과 PR로 나눌 수 있는지 검토한다. 한 PR로 유지해야 하는 원자적 배포·호환성 이유가 있다면 PR 본문에 기록한다.
+- 예를 들어 Analytics Job Runtime이라면 입력 identity·result projection과 fixed vector 검증, durable job API·migration과 DB 테스트, worker·terminal delivery·ACK와 운영 검증을 각각 검토 가능한 단계로 나눌 수 있다. 이 예시를 고정 템플릿으로 적용하지 않고 실제 의존성과 안전한 머지 순서를 확인한다.
+- 파일 종류만을 기준으로 구현과 필수 테스트·문서를 기계적으로 분리하지 않는다. 각 단계의 의미와 검증이 함께 이해되도록 묶고, 불완전한 production 경로를 활성화한 채 머지하지 않는다.
 
 우선순위:
 
