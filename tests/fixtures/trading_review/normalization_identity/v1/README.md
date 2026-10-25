@@ -1,5 +1,7 @@
 # Synthetic V1 normalization identity oracle
 
+`result-integrity-v2.json`은 ADR-070의 별도 synthetic 결과 oracle이다. 기존 V1 파일은 수정하지 않는다. 하나의 ReviewUnit에 두 Allocation, 각각의 execution/fee/PnL canonical 근거, 실제 `0` fee/PnL과 1:1 보충 행을 담는다. `sectionVectors`의 10개 JCS 입력/UTF-8 hex/SHA-256, 기존 투영을 유지한 `manifestVector`, 새 `resultDigestManifestVector`의 전체 result hash 및 `invalidCases`의 참조 실패를 `python scripts/verify-trading-normalization-result-v2.py`로 검증한다. 재생성 명령은 `python scripts/generate-trading-normalization-result-v2-vector.py`다. 생성기는 기대값을 만들고 검증기는 저장된 기대값을 독립 계산한다. 모든 ID/금액은 비민감 synthetic 예시이며 실제 CSV가 아니다.
+
 `result-integrity-v1.json`은 ADR-066의 synthetic 결과 oracle이다. `result-integrity-v1.schema.json`과
 `scripts/verify-trading-normalization-result-integrity.py`가 terminal 공개 DTO, declared count,
 9개 section canonical JSON/UTF-8 hex/SHA-256, 공개 manifest hash와 전체 resultHash를 검증한다.
