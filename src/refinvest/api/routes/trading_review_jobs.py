@@ -81,10 +81,44 @@ class _UniqueIdentityKeysRoute(APIRoute):
                 ):
                     try:
                         body = await request.body()
+                        document: object = {}
                         if body:
-                            json.loads(body, object_pairs_hook=_unique_json_object)
+                            document = json.loads(body, object_pairs_hook=_unique_json_object)
                     except (ValueError, UnicodeDecodeError):
                         return _http_error(422, "REQUEST_INVALID", "Malformed request body.")
+                    if request.url.path == "/trading-review/normalization-jobs":
+                        if not isinstance(document, dict):
+                            return _http_error(422, "REQUEST_INVALID", "Malformed request body.")
+                        version_request = cast(dict[str, object], document)
+                        schema = version_request.get("resultSchemaVersion")
+                        specification = version_request.get("resultHashSpecificationVersion")
+                        if schema is None or specification is None:
+                            return _http_error(
+                                422, "REQUEST_INVALID", "Result version pin is required."
+                            )
+                        known_schema = {
+                            "TRADING_NORMALIZATION_RESULT_V1",
+                            "TRADING_NORMALIZATION_RESULT_V2",
+                        }
+                        known_specification = {
+                            "TRADING_NORMALIZATION_RESULT_HASH_V1",
+                            "TRADING_NORMALIZATION_RESULT_HASH_V2",
+                        }
+                        if (
+                            not isinstance(schema, str)
+                            or not isinstance(specification, str)
+                            or schema not in known_schema
+                            or specification not in known_specification
+                        ):
+                            return _http_error(
+                                422, "RESULT_SCHEMA_UNSUPPORTED", "Result version is unsupported."
+                            )
+                        if schema[-2:] != specification[-2:]:
+                            return _http_error(
+                                422,
+                                "RESULT_VERSION_PAIR_INVALID",
+                                "Result version pair is invalid.",
+                            )
             return await handler(request)
 
         return reject_duplicate_keys
@@ -209,6 +243,8 @@ def _status(view: TradingReviewJobStatusView) -> dict[str, object]:
         "expectedInputSetHash": view.expected_input_set_hash,
         "hashSpecificationVersion": view.hash_specification_version,
         "targetVersionSet": view.target_version_set,
+        "resultSchemaVersion": view.result_schema_version,
+        "resultHashSpecificationVersion": view.result_hash_specification_version,
     }
     if view.terminal_at is not None:
         result["terminalAt"] = view.terminal_at.isoformat()
@@ -272,7 +308,9 @@ def create_trading_normalization_job(
     except TradingReviewIdempotencyConflict:
         _record_submission(http_request, "conflict")
         return _http_error(
-            409, "IDEMPOTENCY_CONFLICT", "Idempotency-Key conflicts with an existing request."
+            409,
+            "IDEMPOTENCY_PAYLOAD_CONFLICT",
+            "Idempotency-Key conflicts with an existing request.",
         )
     except TradingReviewCapacityExceeded:
         _record_submission(http_request, "capacity")
@@ -290,6 +328,9 @@ def create_trading_normalization_job(
         kind=accepted.kind.value,
         status="PENDING",
         createdAt=accepted.created_at,
+        coreNormalizationRunId=accepted.core_normalization_run_id,
+        resultSchemaVersion=accepted.result_schema_version,
+        resultHashSpecificationVersion=accepted.result_hash_specification_version,
     )
 
 

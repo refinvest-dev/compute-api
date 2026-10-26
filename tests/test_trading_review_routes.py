@@ -79,6 +79,9 @@ class MemoryJobs:
                 self.job.kind,
                 self.view.created_at,
                 False,  # type: ignore[union-attr]
+                job.core_normalization_run_id,
+                job.result_schema_version,
+                job.result_hash_specification_version,
             )
         self.job = job
         self.key_hash = key_hash
@@ -102,8 +105,15 @@ class MemoryJobs:
             target_version_set=job.request_payload["inputIdentity"]["targetVersionSet"],
             retry_policy_version=job.retry_policy_version,
             version_set_hash=job.version_set_hash,
+            result_schema_version=job.result_schema_version,
+            result_hash_specification_version=job.result_hash_specification_version,
         )
-        return TradingReviewJobSubmission(job.job_id, job.core_logical_job_id, job.kind, now)
+        return TradingReviewJobSubmission(
+            job.job_id, job.core_logical_job_id, job.kind, now,
+            core_normalization_run_id=job.core_normalization_run_id,
+            result_schema_version=job.result_schema_version,
+            result_hash_specification_version=job.result_hash_specification_version,
+        )
 
     def get(self, job_id: str) -> TradingReviewJobStatusView | None:
         return self.view if self.view is not None and self.view.job_id == job_id else None
@@ -167,6 +177,8 @@ def _body() -> dict[str, object]:
         "coreImportSessionId": "session-1",
         "inputIdentity": identity,
         "expectedInputSetHash": input_set_hash_for(identity),
+        "resultSchemaVersion": "TRADING_NORMALIZATION_RESULT_V1",
+        "resultHashSpecificationVersion": "TRADING_NORMALIZATION_RESULT_HASH_V1",
         "resultDeliveryPolicy": {
             "policyVersion": "RESULT_DELIVERY_V1",
             "mode": "SINGLE_RESOURCE",
@@ -202,6 +214,36 @@ def _body() -> dict[str, object]:
         "deletionGeneration": 0,
         "attemptToken": "attempt-1",
     }
+
+
+def test_normalization_result_version_pin_is_required_exact_and_visible() -> None:
+    with _client(MemoryJobs()) as client:
+        headers = {"X-Internal-Api-Key": "test-internal-key", "Idempotency-Key": "pin-1"}
+        base = "/trading-review/normalization-jobs"
+        for changes, code in (
+            ({"resultSchemaVersion": None}, "REQUEST_INVALID"),
+            (
+                {"resultSchemaVersion": "TRADING_NORMALIZATION_RESULT_V2"},
+                "RESULT_VERSION_PAIR_INVALID",
+            ),
+            ({"resultSchemaVersion": "FUTURE"}, "RESULT_SCHEMA_UNSUPPORTED"),
+        ):
+            body = _body()
+            body.update(changes)
+            response = client.post(base, json=body, headers=headers)
+            assert response.status_code == 422
+            assert response.json()["code"] == code
+        body = _body()
+        body["resultSchemaVersion"] = "TRADING_NORMALIZATION_RESULT_V2"
+        body["resultHashSpecificationVersion"] = "TRADING_NORMALIZATION_RESULT_HASH_V2"
+        response = client.post(base, json=body, headers=headers)
+        assert response.status_code == 202
+        _validate("TradingNormalizationJobAccepted", response.json())
+        assert response.json()["resultSchemaVersion"] == body["resultSchemaVersion"]
+        status = client.get(f"{base}/{response.json()['jobId']}", headers=headers)
+        assert status.json()["resultHashSpecificationVersion"] == body[
+            "resultHashSpecificationVersion"
+        ]
 
 
 @contextmanager

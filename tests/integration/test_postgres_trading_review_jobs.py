@@ -62,6 +62,8 @@ def _job(logical_id: str) -> TradingReviewJob:
         "coreImportSessionId": f"session-{logical_id}",
         "inputIdentity": identity,
         "expectedInputSetHash": input_set_hash,
+        "resultSchemaVersion": "TRADING_NORMALIZATION_RESULT_V1",
+        "resultHashSpecificationVersion": "TRADING_NORMALIZATION_RESULT_HASH_V1",
         "resultDeliveryPolicy": {
             "policyVersion": "RESULT_DELIVERY_V1",
             "mode": "SINGLE_RESOURCE",
@@ -100,11 +102,15 @@ def _job(logical_id: str) -> TradingReviewJob:
     )
 
 
-def _terminal_payload(claim: ClaimedTradingReviewJob | TradingReviewJob) -> bytes:
+def _terminal_payload(
+    claim: ClaimedTradingReviewJob | TradingReviewJob, *, version: str = "v1"
+) -> bytes:
     fixture = json.loads(
         (
             Path(__file__).resolve().parents[1]
-            / "fixtures/trading_review/normalization_identity/v1/result-integrity-v1.json"
+            / "fixtures/trading_review/normalization_identity"
+            / version
+            / f"result-integrity-{version}.json"
         ).read_text(encoding="utf-8")
     )
     payload = fixture["terminalPayload"]
@@ -132,6 +138,103 @@ def _terminal_payload(claim: ClaimedTradingReviewJob | TradingReviewJob) -> byte
             "artifactId"
         ]
     return canonicalize_result(finalize_public_result(payload))
+
+
+def test_v2_pinned_job_persists_descriptor_resource_and_rejects_other_pair() -> None:
+    assert DATABASE_URL is not None
+    repository = PostgresTradingReviewJobRepository(DATABASE_URL, PAYLOAD_KEY)
+    original = _job(str(uuid4()))
+    request = {
+        **original.request_payload,
+        "resultSchemaVersion": "TRADING_NORMALIZATION_RESULT_V2",
+        "resultHashSpecificationVersion": "TRADING_NORMALIZATION_RESULT_HASH_V2",
+    }
+    job = replace(
+        original,
+        request_payload=request,
+        request_fingerprint=normalization_request_fingerprint(request),
+        result_schema_version="TRADING_NORMALIZATION_RESULT_V2",
+        result_hash_specification_version="TRADING_NORMALIZATION_RESULT_HASH_V2",
+    )
+    key = hashlib.sha256(job.job_id.encode()).hexdigest()
+    repository.create_idempotently(job, key)
+    try:
+        status = repository.get(job.job_id)
+        assert status is not None and status.result_schema_version == job.result_schema_version
+        claim = repository.claim_next("v2-worker", timedelta(seconds=30))
+        assert claim is not None
+        assert claim.result_hash_specification_version == job.result_hash_specification_version
+        payload = _terminal_payload(claim, version="v2")
+        payload_hash = hashlib.sha256(payload).hexdigest()
+        assert repository.publish_completed(
+            claim,
+            payload=payload,
+            media_type="application/vnd.refinvest.trading-normalization+json",
+            payload_sha256=payload_hash,
+            input_set_hash=job.expected_input_set_hash,
+            reconciliation_manifest_hash=_manifest_hash(payload),
+            result_hash=_result_hash(payload),
+            retention=timedelta(hours=24),
+        )
+        descriptor = repository.get_result_descriptor(job.job_id)
+        assert descriptor is not None
+        assert descriptor.result_schema_version == job.result_schema_version
+        assert descriptor.result_hash_specification_version == job.result_hash_specification_version
+        assert len(descriptor.section_digests) == 10
+        assert repository.get_terminal_payload(descriptor.payload_id) == payload
+        v1_request = {**request,
+            "resultSchemaVersion": "TRADING_NORMALIZATION_RESULT_V1",
+            "resultHashSpecificationVersion": "TRADING_NORMALIZATION_RESULT_HASH_V1"}
+        v1 = replace(
+            job, request_payload=v1_request,
+            request_fingerprint=normalization_request_fingerprint(v1_request),
+            result_schema_version="TRADING_NORMALIZATION_RESULT_V1",
+            result_hash_specification_version="TRADING_NORMALIZATION_RESULT_HASH_V1",
+        )
+        with pytest.raises(TradingReviewIdempotencyConflict):
+            repository.create_idempotently(v1, key)
+    finally:
+        _delete(job.job_id)
+
+
+def test_legacy_v1_replay_rekeys_fingerprint_without_changing_job_pin() -> None:
+    assert DATABASE_URL is not None
+    repository = PostgresTradingReviewJobRepository(DATABASE_URL, PAYLOAD_KEY)
+    initial = _job(str(uuid4()))
+    job = replace(
+        initial,
+        request_fingerprint=normalization_request_fingerprint(initial.request_payload),
+    )
+    key = hashlib.sha256(job.job_id.encode()).hexdigest()
+    repository.create_idempotently(job, key)
+    try:
+        legacy = {
+            name: value for name, value in job.request_payload.items()
+            if name not in {"resultSchemaVersion", "resultHashSpecificationVersion"}
+        }
+        old_fingerprint = normalization_request_fingerprint(legacy)
+        with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE trading_review_job_idempotency SET request_fingerprint = %s "
+                "WHERE idempotency_key_hash = %s",
+                (old_fingerprint, key),
+            )
+            cursor.execute(
+                "UPDATE trading_review_jobs SET request_fingerprint = %s WHERE job_id = %s",
+                (old_fingerprint, job.job_id),
+            )
+        replay = repository.create_idempotently(job, key)
+        assert replay.job_id == job.job_id and not replay.newly_created
+        assert replay.result_schema_version == "TRADING_NORMALIZATION_RESULT_V1"
+        with connect(DATABASE_URL) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT request_fingerprint FROM trading_review_job_idempotency "
+                "WHERE idempotency_key_hash = %s",
+                (key,),
+            )
+            assert cursor.fetchone()[0] == job.request_fingerprint
+    finally:
+        _delete(job.job_id)
 
 
 def _result_hash(payload: bytes) -> str:

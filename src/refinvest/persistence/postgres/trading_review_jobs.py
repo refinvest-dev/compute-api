@@ -35,6 +35,7 @@ from refinvest.application.trading_review_jobs import (
     TradingReviewJobStatus,
     TradingReviewJobStatusView,
     TradingReviewJobSubmission,
+    normalization_request_fingerprint,
 )
 
 
@@ -85,12 +86,19 @@ class PostgresTradingReviewJobRepository:
     def _create_idempotently(
         self, job: TradingReviewJob, idempotency_key_hash: str
     ) -> TradingReviewJobSubmission:
+        if (
+            job.request_payload.get("resultSchemaVersion") != job.result_schema_version
+            or job.request_payload.get("resultHashSpecificationVersion")
+            != job.result_hash_specification_version
+        ):
+            raise ResultIntegrityError("RESULT_VERSION_PIN_MISMATCH")
         with connect(self._database_url) as connection, connection.cursor() as cursor:
             _lock_key(cursor, idempotency_key_hash)
             cursor.execute(
                 """
                 SELECT i.request_fingerprint, j.job_id, j.core_logical_job_id, j.kind,
-                       j.created_at
+                       j.created_at, j.core_normalization_run_id,
+                       j.result_schema_version, j.result_hash_specification_version
                 FROM trading_review_job_idempotency AS i
                 JOIN trading_review_jobs AS j ON j.job_id = i.job_id
                 WHERE i.idempotency_key_hash = %s
@@ -99,12 +107,33 @@ class PostgresTradingReviewJobRepository:
             )
             existing = cursor.fetchone()
             if existing is not None:
-                fingerprint, job_id, logical_id, kind, created_at = cast(
-                    tuple[str, str, str, str, datetime], existing
-                )
+                (
+                    fingerprint, job_id, logical_id, kind, created_at, run_id, schema,
+                    specification,
+                ) = cast(tuple[str, str, str, str, datetime, str, str, str], existing)
                 if fingerprint != job.request_fingerprint:
-                    raise TradingReviewIdempotencyConflict(
-                        "Idempotency-Key was reused for a different request."
+                    legacy_request = {
+                        key: value for key, value in job.request_payload.items()
+                        if key not in {"resultSchemaVersion", "resultHashSpecificationVersion"}
+                    }
+                    if (
+                        schema != "TRADING_NORMALIZATION_RESULT_V1"
+                        or specification != "TRADING_NORMALIZATION_RESULT_HASH_V1"
+                        or job.result_schema_version != schema
+                        or job.result_hash_specification_version != specification
+                        or fingerprint != normalization_request_fingerprint(legacy_request)
+                    ):
+                        raise TradingReviewIdempotencyConflict(
+                            "Idempotency-Key was reused for a different request."
+                        )
+                    cursor.execute(
+                        "UPDATE trading_review_job_idempotency SET request_fingerprint = %s "
+                        "WHERE idempotency_key_hash = %s",
+                        (job.request_fingerprint, idempotency_key_hash),
+                    )
+                    cursor.execute(
+                        "UPDATE trading_review_jobs SET request_fingerprint = %s WHERE job_id = %s",
+                        (job.request_fingerprint, job_id),
                     )
                 return TradingReviewJobSubmission(
                     str(job_id),
@@ -112,6 +141,9 @@ class PostgresTradingReviewJobRepository:
                     TradingReviewJobKind(kind),
                     created_at,
                     newly_created=False,
+                    core_normalization_run_id=run_id,
+                    result_schema_version=schema,
+                    result_hash_specification_version=specification,
                 )
             _lock_key(cursor, "trading-review-active-capacity")
             cursor.execute(
@@ -143,10 +175,11 @@ class PostgresTradingReviewJobRepository:
                      grant_renewal_cutoff_at, current_grants_encrypted,
                      core_normalization_run_id, input_identity, computed_input_set_hash,
                      hash_specification_version, retry_policy_version, target_version_set,
-                     result_delivery_policy)
+                     result_delivery_policy, result_schema_version,
+                     result_hash_specification_version)
                 VALUES (%s, %s, %s, %s, 'PENDING', %s, %s, %s, %s, %s, %s,
                         CURRENT_TIMESTAMP + (%s * INTERVAL '1 second'), %s,
-                        %s, %s, %s, %s, %s, %s, %s)
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING created_at
                 """,
                 (
@@ -176,6 +209,8 @@ class PostgresTradingReviewJobRepository:
                         )
                     ),
                     Jsonb(job.request_payload["resultDeliveryPolicy"]),
+                    job.result_schema_version,
+                    job.result_hash_specification_version,
                 ),
             )
             row = cursor.fetchone()
@@ -196,7 +231,10 @@ class PostgresTradingReviewJobRepository:
                 (idempotency_key_hash, job.request_fingerprint, job.job_id),
             )
         return TradingReviewJobSubmission(
-            job.job_id, job.core_logical_job_id, job.kind, created_at, newly_created=True
+            job.job_id, job.core_logical_job_id, job.kind, created_at,
+            newly_created=True, core_normalization_run_id=job.core_normalization_run_id,
+            result_schema_version=job.result_schema_version,
+            result_hash_specification_version=job.result_hash_specification_version,
         )
 
     def get(self, job_id: str) -> TradingReviewJobStatusView | None:
@@ -655,7 +693,8 @@ class PostgresTradingReviewJobRepository:
                     j.deletion_generation, j.attempt_token, j.attempt_count, j.created_at,
                     j.grant_revision, j.current_grants_encrypted, j.core_normalization_run_id,
                     j.computed_input_set_hash, j.hash_specification_version,
-                    j.retry_policy_version, j.input_identity, j.result_delivery_policy
+                    j.retry_policy_version, j.input_identity, j.result_delivery_policy,
+                    j.result_schema_version, j.result_hash_specification_version
                 """,
                 (self._max_attempts, worker_id, lease_owner, lease_duration.total_seconds()),
             )
@@ -682,11 +721,15 @@ class PostgresTradingReviewJobRepository:
                     str,
                     dict[str, object],
                     dict[str, object],
+                    str,
+                    str,
                 ],
                 row,
             )
             request_payload = self._with_grant_locators(str(values[0]), values[3], values[11])
             request_payload["resultDeliveryPolicy"] = values[17]
+            request_payload["resultSchemaVersion"] = values[18]
+            request_payload["resultHashSpecificationVersion"] = values[19]
             cursor.execute(
                 """
                 INSERT INTO trading_review_job_attempts
@@ -756,6 +799,8 @@ class PostgresTradingReviewJobRepository:
             created_at=values[9],
             reclaimed_stale_lease=False,
             grant_revision=values[10],
+            result_schema_version=values[18],
+            result_hash_specification_version=values[19],
         )
 
     def heartbeat(
@@ -845,6 +890,15 @@ class PostgresTradingReviewJobRepository:
         if hashlib.sha256(payload).hexdigest() != payload_sha256:
             raise ResultIntegrityError("RESULT_TRANSPORT_HASH_MISMATCH")
         document = parse_result_json_bytes(payload)
+        if (
+            document.get("resultSchemaVersion") != claim.result_schema_version
+            or document.get("resultHashSpecificationVersion")
+            != claim.result_hash_specification_version
+            or claim.request_payload.get("resultSchemaVersion") != claim.result_schema_version
+            or claim.request_payload.get("resultHashSpecificationVersion")
+            != claim.result_hash_specification_version
+        ):
+            raise ResultIntegrityError("RESULT_VERSION_PIN_MISMATCH")
         raw_manifest = document.get("reconciliationManifest")
         manifest = cast(dict[str, object], raw_manifest) if isinstance(raw_manifest, dict) else None
         if (
@@ -879,7 +933,8 @@ class PostgresTradingReviewJobRepository:
                 """
                 SELECT cancellation_requested, grant_revision, expected_input_set_hash,
                        version_set_hash, computed_input_set_hash, core_normalization_run_id,
-                       result_delivery_policy
+                       result_delivery_policy, result_schema_version,
+                       result_hash_specification_version
                 FROM trading_review_jobs
                 WHERE job_id = %s AND status = 'RUNNING' AND lease_owner = %s
                   AND attempt_count = %s AND attempt_token = %s AND deletion_generation = %s
@@ -901,6 +956,8 @@ class PostgresTradingReviewJobRepository:
                 or row[4] != input_set_hash
                 or row[5] != claim.core_normalization_run_id
                 or row[6] != policy
+                or row[7] != claim.result_schema_version
+                or row[8] != claim.result_hash_specification_version
             ):
                 return False
             cursor.execute("SET CONSTRAINTS trading_review_jobs_terminal_payload_fk DEFERRED")
@@ -1084,7 +1141,10 @@ class PostgresTradingReviewJobRepository:
                   AND j.core_normalization_run_id IS NOT NULL AND p.input_set_hash IS NOT NULL
                   AND j.result_delivery_policy IS NOT NULL
                   AND p.expires_at > CURRENT_TIMESTAMP AND p.purged_at IS NULL
-                  AND p.result_schema_version = 'TRADING_NORMALIZATION_RESULT_V1'
+                  AND p.result_schema_version IN
+                      ('TRADING_NORMALIZATION_RESULT_V1', 'TRADING_NORMALIZATION_RESULT_V2')
+                  AND p.result_schema_version = j.result_schema_version
+                  AND p.result_hash_specification_version = j.result_hash_specification_version
                 """,
                 (job_id,),
             )
@@ -1159,7 +1219,10 @@ class PostgresTradingReviewJobRepository:
                 WHERE p.payload_id = %s AND p.expires_at > CURRENT_TIMESTAMP
                   AND p.purged_at IS NULL AND j.status = 'COMPLETED'
                   AND j.core_normalization_run_id IS NOT NULL
-                  AND p.result_schema_version = 'TRADING_NORMALIZATION_RESULT_V1'
+                  AND p.result_schema_version IN
+                      ('TRADING_NORMALIZATION_RESULT_V1', 'TRADING_NORMALIZATION_RESULT_V2')
+                  AND p.result_schema_version = j.result_schema_version
+                  AND p.result_hash_specification_version = j.result_hash_specification_version
                 """,
                 (payload_id,),
             )
@@ -1421,7 +1484,8 @@ SELECT j.job_id, j.core_logical_job_id, j.core_import_session_id, j.kind, j.stat
        j.grant_revision, j.expected_input_set_hash, j.version_set_hash,
        j.grant_action, j.grant_refresh_deadline_at,
        j.core_normalization_run_id, j.computed_input_set_hash,
-       j.hash_specification_version, j.target_version_set, j.retry_policy_version
+       j.hash_specification_version, j.target_version_set, j.retry_policy_version,
+       j.result_schema_version, j.result_hash_specification_version
 FROM trading_review_jobs AS j
 """
 
@@ -1458,6 +1522,8 @@ def _status_view(row: object | None) -> TradingReviewJobStatusView | None:
             str | None,
             dict[str, object] | None,
             str | None,
+            str,
+            str,
         ],
         row,
     )
@@ -1507,6 +1573,8 @@ def _status_view(row: object | None) -> TradingReviewJobStatusView | None:
         version_set_hash=values[19],
         grant_action=values[20],
         grant_refresh_deadline_at=values[21],
+        result_schema_version=values[27],
+        result_hash_specification_version=values[28],
     )
 
 

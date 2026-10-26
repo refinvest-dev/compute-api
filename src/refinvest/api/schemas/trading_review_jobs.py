@@ -55,6 +55,12 @@ class CreateTradingNormalizationJobTransport(StrictTransport):
     result_delivery_policy: NormalizationResultDeliveryPolicyTransport = Field(
         alias="resultDeliveryPolicy"
     )
+    result_schema_version: Literal[
+        "TRADING_NORMALIZATION_RESULT_V1", "TRADING_NORMALIZATION_RESULT_V2"
+    ] = Field(alias="resultSchemaVersion")
+    result_hash_specification_version: Literal[
+        "TRADING_NORMALIZATION_RESULT_HASH_V1", "TRADING_NORMALIZATION_RESULT_HASH_V2"
+    ] = Field(alias="resultHashSpecificationVersion")
     artifact_access_grants: list[ArtifactReadGrantTransport] = Field(
         alias="artifactAccessGrants", min_length=2, max_length=2
     )
@@ -67,6 +73,8 @@ class CreateTradingNormalizationJobTransport(StrictTransport):
 
     @model_validator(mode="after")
     def matching_artifact_identity(self) -> CreateTradingNormalizationJobTransport:
+        if self.result_schema_version[-2:] != self.result_hash_specification_version[-2:]:
+            raise ValueError("Result schema and hash specification versions must match.")
         identity = self.input_identity
         if self.core_import_session_id != identity.source_import_session_ids[0]:
             raise ValueError("Core Import Session identity differs from input identity.")
@@ -101,6 +109,9 @@ class TradingComputeJobAcceptedTransport(StrictTransport):
     kind: Literal["NORMALIZATION_RECONCILIATION"]
     status: Literal["PENDING"]
     created_at: datetime = Field(alias="createdAt")
+    core_normalization_run_id: str = Field(alias="coreNormalizationRunId")
+    result_schema_version: str = Field(alias="resultSchemaVersion")
+    result_hash_specification_version: str = Field(alias="resultHashSpecificationVersion")
 
 
 class TradingStructuredFailureTransport(StrictTransport):
@@ -158,15 +169,19 @@ class ComputeTerminalResultDescriptorTransport(StrictTransport):
         alias="reconciliationManifestHash", pattern=r"^[a-f0-9]{64}$"
     )
     result_hash: str = Field(alias="resultHash", pattern=r"^[a-f0-9]{64}$")
-    result_schema_version: Literal["TRADING_NORMALIZATION_RESULT_V1"] = Field(
+    result_schema_version: Literal[
+        "TRADING_NORMALIZATION_RESULT_V1", "TRADING_NORMALIZATION_RESULT_V2"
+    ] = Field(
         alias="resultSchemaVersion"
     )
-    result_hash_specification_version: Literal["TRADING_NORMALIZATION_RESULT_HASH_V1"] = Field(
+    result_hash_specification_version: Literal[
+        "TRADING_NORMALIZATION_RESULT_HASH_V1", "TRADING_NORMALIZATION_RESULT_HASH_V2"
+    ] = Field(
         alias="resultHashSpecificationVersion"
     )
     counts: dict[str, int]
     section_digests: list[dict[str, object]] = Field(
-        alias="sectionDigests", min_length=9, max_length=9
+        alias="sectionDigests", min_length=9, max_length=10
     )
     created_at: datetime = Field(alias="createdAt")
     expires_at: datetime = Field(alias="expiresAt")
