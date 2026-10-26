@@ -54,6 +54,8 @@
       }
     },
     "expectedInputSetHash": "1122481b2c208afc1cae751f952f1b9a670f446f404d42c1e581a3b83f25552e",
+    "resultSchemaVersion": "TRADING_NORMALIZATION_RESULT_V1",
+    "resultHashSpecificationVersion": "TRADING_NORMALIZATION_RESULT_HASH_V1",
     "artifactAccessGrants": [
       {
         "coreArtifactId": "artifact-trade-example",
@@ -84,6 +86,16 @@
     "retryPolicyVersion": "POLICY_V1",
     "deletionGeneration": 1,
     "attemptToken": "attempt-example"
+  },
+  "accepted": {
+    "jobId": "job-example",
+    "coreLogicalJobId": "logical-example",
+    "coreNormalizationRunId": "run-example",
+    "kind": "NORMALIZATION_RECONCILIATION",
+    "status": "PENDING",
+    "resultSchemaVersion": "TRADING_NORMALIZATION_RESULT_V1",
+    "resultHashSpecificationVersion": "TRADING_NORMALIZATION_RESULT_HASH_V1",
+    "createdAt": "2026-01-01T00:00:00Z"
   },
   "completedDescriptor": {
     "jobId": "job-example",
@@ -222,6 +234,8 @@
     "expectedInputSetHash": "1122481b2c208afc1cae751f952f1b9a670f446f404d42c1e581a3b83f25552e",
     "inputSetHash": "3333333333333333333333333333333333333333333333333333333333333333",
     "hashSpecificationVersion": "TRADING_INPUT_SET_HASH_V1",
+    "resultSchemaVersion": "TRADING_NORMALIZATION_RESULT_V1",
+    "resultHashSpecificationVersion": "TRADING_NORMALIZATION_RESULT_HASH_V1",
     "targetVersionSet": {
       "normalizer": {
         "sourceDialectVersionsByArtifactRole": {

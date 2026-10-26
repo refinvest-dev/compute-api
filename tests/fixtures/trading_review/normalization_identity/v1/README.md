@@ -14,8 +14,9 @@ V1 vector 문자열은 ASCII이므로 Python의 key-sorted compact JSON이 JCS�
 
 `input-identity-v1.json`은 ADR-065의 `TRADING_INPUT_SET_HASH_V1` 고정 oracle이다.
 `input-identity-v1.schema.json`은 fixture 자체의 machine-readable shape를 검증한다.
-`wire-v1.json`은 같은 identity의 Compute create request, 완료 descriptor 및
-입력 불일치 `FAILED` status를 OpenAPI schema로 검증하는 예시다. grant URI는
+`wire-v1.json`은 같은 identity의 Compute create request, accepted, 완료 descriptor 및
+입력 불일치 `FAILED` status에서 V1/V1 결과 pin을 OpenAPI schema로 검증하는 예시다.
+검증기는 누락/교차 결과 쌍을 거절하고 V2/V2 요청도 허용하는지 확인한다. grant URI는
 `example.invalid`의 비작동 synthetic locator이며 서명·credential이 없다.
 `resultDeliveryPolicy`와 descriptor의 policy version/content encoding도 이 wire fixture에서
 검증한다. 예시 `maxAcceptedPayloadBytes=1000`은 synthetic schema 검증값이며 운영 한도가 아니다.

@@ -136,7 +136,10 @@ paths:
         계산 pin과 최초 attemptToken을 포함하고 accessUri/expiresAt을 제외한 canonical
         fingerprint를 사용한다. same key/fingerprint는 최초 202/jobId를 재반환하고
         grant/token은 교체하지 않는다. 최초 grant가 만료된 뒤의 응답 유실 replay도
-        기존 job을 반환한다. 같은 key와 다른 token/계산 입력은 409다(ADR-064).
+        기존 job을 반환한다. 같은 key와 다른 token/계산 입력/결과 pin은
+        409 IDEMPOTENCY_PAYLOAD_CONFLICT다(ADR-064). 신규 요청의 버전 필드 누락은
+        422 REQUEST_INVALID, 알려진 교차 쌍은 422 RESULT_VERSION_PAIR_INVALID,
+        미지원 값/쌍은 422 RESULT_SCHEMA_UNSUPPORTED다.
         같은 coreArtifactId에 다른 rawSha256이면 ARTIFACT_IDENTITY_CONFLICT가
         일반 IDEMPOTENCY_PAYLOAD_CONFLICT보다 우선한다.
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
@@ -146,7 +149,7 @@ paths:
       responses:
         '202':
           description: accepted.
-          content: { application/json: { schema: { $ref: '#/components/schemas/TradingComputeJobAccepted' } } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/TradingNormalizationJobAccepted' } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/Conflict' }
@@ -669,6 +672,7 @@ components:
         - INPUT_HASH_SPECIFICATION_UNSUPPORTED
         - ARTIFACT_IDENTITY_CONFLICT
         - IDEMPOTENCY_CONFLICT
+        - IDEMPOTENCY_PAYLOAD_CONFLICT
         - ARTIFACT_ACCESS_DENIED
         - VERSION_UNAVAILABLE
         - VERSION_INCOMPATIBLE
@@ -683,6 +687,8 @@ components:
         - RESULT_SECTION_HASH_MISMATCH
         - RECONCILIATION_MANIFEST_HASH_MISMATCH
         - RESULT_SCHEMA_UNSUPPORTED
+        - RESULT_VERSION_PAIR_INVALID
+        - RESULT_VERSION_PIN_MISMATCH
         - EVIDENCE_REFERENCE_INVALID
         - RESULT_ITEM_CONFLICT
         - RESULT_PAYLOAD_LIMIT_EXCEEDED
@@ -707,6 +713,15 @@ components:
         kind: { $ref: '#/components/schemas/TradingComputeJobKind' }
         status: { type: string, enum: [PENDING] }
         createdAt: { type: string, format: date-time }
+    TradingNormalizationJobAccepted:
+      allOf:
+        - $ref: '#/components/schemas/TradingComputeJobAccepted'
+        - $ref: '#/components/schemas/NormalizationResultVersionPair'
+        - type: object
+          required: [coreNormalizationRunId]
+          properties:
+            coreNormalizationRunId: { type: string, minLength: 1 }
+      description: 최초 접수와 동일 key/fingerprint 재전송 모두 저장된 Job pin을 반환한다.
     TradingAnalyticsJobAccepted:
       allOf:
         - $ref: '#/components/schemas/TradingComputeJobAccepted'
@@ -800,8 +815,10 @@ components:
             retryAvailable: { type: boolean }
             lastAttemptFailure: { $ref: '#/components/schemas/TradingStructuredFailure' }
     TradingNormalizationRuntimeIdentity:
+      allOf:
+        - $ref: '#/components/schemas/NormalizationResultVersionPair'
       type: object
-      required: [coreNormalizationRunId, attemptToken, deletionGeneration, grantRevision, expectedInputSetHash, hashSpecificationVersion, targetVersionSet]
+      required: [coreNormalizationRunId, attemptToken, deletionGeneration, grantRevision, expectedInputSetHash, hashSpecificationVersion, targetVersionSet, resultSchemaVersion, resultHashSpecificationVersion]
       properties:
         coreNormalizationRunId: { type: string, description: Core NormalizationRun의 opaque ID; 공개 Session 상태와 별개. }
         attemptToken: { type: string, minLength: 1, description: 현재 또는 terminal에 도달한 최종 Core attempt token. }
@@ -811,6 +828,8 @@ components:
         inputSetHash: { $ref: '#/components/schemas/TradingSha256', description: Compute 재계산값. 미지원 규격에서는 존재하지 않는다. COMPLETED에는 필수. }
         hashSpecificationVersion: { type: string, minLength: 1, description: V1 지원값은 TRADING_INPUT_SET_HASH_V1; 알 수 없는 값은 INPUT_HASH_SPECIFICATION_UNSUPPORTED terminal failure. }
         targetVersionSet: { $ref: '#/components/schemas/NormalizationTargetVersionSet' }
+        resultSchemaVersion: { $ref: '#/components/schemas/NormalizationResultSchemaVersion' }
+        resultHashSpecificationVersion: { $ref: '#/components/schemas/NormalizationResultHashSpecificationVersion' }
     TradingNormalizationGrantAction:
       type: string
       enum: [NONE, REPLACE_QUEUED_GRANTS, START_RETRY_ATTEMPT]
@@ -881,6 +900,8 @@ components:
         createdAt: { type: string, format: date-time }
         expiresAt: { type: string, format: date-time, description: terminalAt + 최대 PT24H 이내. }
     NormalizationTerminalResultDescriptor:
+      allOf:
+        - $ref: '#/components/schemas/NormalizationResultVersionPair'
       type: object
       additionalProperties: false
       description: V1/V1 또는 V2/V2 exact schema/hash pair. V1은 9개, V2는 ANALYTICS_INPUT_SUPPLEMENT를 포함한 10개 ordered sectionDigests. V2 보충 singleton itemCount=1, 내부 unit/allocation 행 수는 기존 counts와 일치해야 한다. Manifest hash는 양쪽 모두 V1 projection.
@@ -1159,8 +1180,10 @@ components:
           items: { type: string, enum: [identity] }
           description: V1은 identity만 허용한다.
     CreateTradingNormalizationJobRequest:
+      allOf:
+        - $ref: '#/components/schemas/NormalizationResultVersionPair'
       type: object
-      required: [coreLogicalJobId, coreNormalizationRunId, coreImportSessionId, inputIdentity, expectedInputSetHash, artifactAccessGrants, pinnedInstrumentTerms, resultDeliveryPolicy, retryPolicyVersion, deletionGeneration, attemptToken]
+      required: [coreLogicalJobId, coreNormalizationRunId, coreImportSessionId, inputIdentity, expectedInputSetHash, artifactAccessGrants, pinnedInstrumentTerms, resultDeliveryPolicy, resultSchemaVersion, resultHashSpecificationVersion, retryPolicyVersion, deletionGeneration, attemptToken]
       additionalProperties: false
       description: |
         inputIdentity만 ADR-065 inputSetHash의 RFC 8785 hash 대상이다. Compute는
@@ -1173,8 +1196,11 @@ components:
         resultDeliveryPolicy는 Run 시작 시 pin한 transport 정책이다. inputSetHash와
         semantic resultHash의 입력이 아니며 Compute job에 보존한다. 동일 job의 replay나
         grant update에서 변경하지 않는다.
+        결과 schema/hash exact pair도 Core Run admission의 불변 pin이며 Compute Job에
+        원자적으로 저장한다. V1/V1 및 V2/V2만 허용한다. 재전송/worker 재시작/attempt
+        재시도/grant 갱신으로 바뀌지 않는다. inputIdentity/inputSetHash에는 포함하지 않는다.
         Compute 생성 fingerprint는 immutable 계산 입력, Core IDs, 최초 attemptToken과
-        deletionGeneration을 포함하되 grant accessUri/expiresAt은 제외한다. 같은 key에
+        deletionGeneration 및 두 결과 버전값을 포함하되 grant accessUri/expiresAt은 제외한다. 같은 key에
         다른 coreNormalizationRunId는 409. 갱신된 URI/expiry만 있는 replay는 기존 job.
         생성 replay에서는 먼저 기존 key/fingerprint를 조회해 최초 grant가 만료됐더라도
         최초 202/jobId를 반환하고 저장된 grant/token을 교체하지 않는다.
@@ -1187,6 +1213,8 @@ components:
         inputIdentity: { $ref: '#/components/schemas/NormalizationInputIdentity' }
         expectedInputSetHash: { $ref: '#/components/schemas/TradingSha256' }
         resultDeliveryPolicy: { $ref: '#/components/schemas/NormalizationResultDeliveryPolicy' }
+        resultSchemaVersion: { $ref: '#/components/schemas/NormalizationResultSchemaVersion' }
+        resultHashSpecificationVersion: { $ref: '#/components/schemas/NormalizationResultHashSpecificationVersion' }
         artifactAccessGrants:
           type: array
           minItems: 2
@@ -1617,6 +1645,19 @@ components:
     NormalizationResultHashSpecificationVersion:
       type: string
       enum: [TRADING_NORMALIZATION_RESULT_HASH_V1, TRADING_NORMALIZATION_RESULT_HASH_V2]
+    NormalizationResultVersionPair:
+      description: 두 필드는 함께 필수. 독립 enum의 교차 조합 중 V1/V1과 V2/V2만 유효하다.
+      oneOf:
+        - type: object
+          required: [resultSchemaVersion, resultHashSpecificationVersion]
+          properties:
+            resultSchemaVersion: { type: string, enum: [TRADING_NORMALIZATION_RESULT_V1] }
+            resultHashSpecificationVersion: { type: string, enum: [TRADING_NORMALIZATION_RESULT_HASH_V1] }
+        - type: object
+          required: [resultSchemaVersion, resultHashSpecificationVersion]
+          properties:
+            resultSchemaVersion: { type: string, enum: [TRADING_NORMALIZATION_RESULT_V2] }
+            resultHashSpecificationVersion: { type: string, enum: [TRADING_NORMALIZATION_RESULT_HASH_V2] }
     NormalizationManifestHashSpecificationVersion:
       type: string
       enum: [TRADING_NORMALIZATION_RESULT_HASH_V1]
@@ -1655,6 +1696,8 @@ components:
       items: { $ref: '#/components/schemas/NormalizationResultSectionDigest' }
       description: V1은 기존 9개, V2는 ANALYTICS_INPUT_SUPPLEMENT를 포함한 10개 sectionType을 각각 중복 없이 wire value 오름차순으로 제공. Version별 정확한 집합과 itemCount는 integrity 정본을 따른다.
     NormalizationResultDigestManifest:
+      allOf:
+        - $ref: '#/components/schemas/NormalizationResultVersionPair'
       type: object
       additionalProperties: false
       description: V1/V1과 V2/V2 exact pair. V1 sectionDigests 9개, V2 10개; V2에서 manifest hash는 여전히 V1 투영이다.
