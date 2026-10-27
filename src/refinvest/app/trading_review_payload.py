@@ -6,12 +6,20 @@ import hashlib
 import hmac
 from datetime import UTC, datetime
 from decimal import localcontext
+from typing import cast
 
-from refinvest.app.trading_review_result_integrity import finalize_public_result
+from refinvest.app.trading_review_result_integrity import (
+    RESULT_HASH_SPECIFICATION_V1,
+    RESULT_SCHEMA_V1,
+    RESULT_SCHEMA_V2,
+    ResultIntegrityError,
+    finalize_public_result,
+)
 from refinvest.trading_review.decimal import ScaledDecimal
 from refinvest.trading_review.hashing import stable_id
 from refinvest.trading_review.model import (
     CanonicalRecord,
+    CapabilitySnapshot,
     ExecutionRecord,
     FeeRecord,
     FuturesPositionEpisode,
@@ -71,6 +79,8 @@ def build_normalization_payload(
     created_at: datetime,
     terminal_at: datetime,
     instrument_terms: tuple[InstrumentDescriptor, ...],
+    result_schema_version: str = RESULT_SCHEMA_V1,
+    result_hash_specification_version: str = RESULT_HASH_SPECIFICATION_V1,
 ) -> dict[str, object]:
     """Build complete, evidence-linked terminal payload without source UID/IDs."""
     snapshots = _evidence_snapshots(artifacts, masking_key=masking_key, captured_at=terminal_at)
@@ -114,6 +124,9 @@ def build_normalization_payload(
     review_units = [
         _review_unit(episode, executions, terms_by_instrument) for episode in result.episodes
     ]
+    supplement = None
+    if result_schema_version == RESULT_SCHEMA_V2:
+        supplement = _analytics_input_supplement(result.episodes, review_units)
     manifest = {
         "manifestVersion": result.reconciliation_manifest.manifest_schema_version,
         "inputSetHash": input_set_hash,
@@ -215,6 +228,8 @@ def build_normalization_payload(
         "targetVersionSet": target_version_set,
         "inputSetHash": input_set_hash,
         "hashSpecificationVersion": hash_specification_version,
+        "resultSchemaVersion": result_schema_version,
+        "resultHashSpecificationVersion": result_hash_specification_version,
         "artifactCoverages": coverages,
         "canonicalRecords": records,
         "sourceEvidenceSnapshots": snapshots,
@@ -225,6 +240,8 @@ def build_normalization_payload(
         "createdAt": _timestamp(created_at),
         "terminalAt": _timestamp(terminal_at),
     }
+    if supplement is not None:
+        payload["analyticsInputSupplement"] = supplement
     return finalize_public_result(payload)
 
 
@@ -334,6 +351,11 @@ def _review_unit(
 ) -> dict[str, object]:
     allocations: list[dict[str, object]] = []
     for item in episode.allocations:
+        if (
+            not isinstance(cast(object, item.allocated_fee), MoneyAmount)
+            or not isinstance(cast(object, item.allocated_reported_pnl), MoneyAmount)
+        ):
+            raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
         allocations.append(
             {
                 "allocationId": stable_id(
@@ -403,6 +425,82 @@ def _review_unit(
     }
 
 
+def _analytics_input_supplement(
+    episodes: tuple[FuturesPositionEpisode, ...], review_units: list[dict[str, object]]
+) -> dict[str, object]:
+    public_by_id = {str(unit["reviewUnitId"]): unit for unit in review_units}
+    if len(public_by_id) != len(review_units) or len(episodes) != len(review_units):
+        raise ResultIntegrityError("RESULT_ITEM_CONFLICT")
+    rows: list[dict[str, object]] = []
+    for episode in episodes:
+        if not isinstance(cast(object, episode.capability), CapabilitySnapshot):
+            raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
+        public = public_by_id.get(episode.episode_id)
+        if public is None:
+            raise ResultIntegrityError("EVIDENCE_REFERENCE_INVALID")
+        public_allocations = {
+            str(item["allocationId"]): item
+            for item in cast(list[dict[str, object]], public["allocations"])
+        }
+        if len(public_allocations) != len(episode.allocations):
+            raise ResultIntegrityError("RESULT_ITEM_CONFLICT")
+        allocation_rows: list[dict[str, object]] = []
+        for allocation in episode.allocations:
+            allocation_id = stable_id(
+                "allocation",
+                {
+                    "recordId": allocation.execution_record_id,
+                    "reviewUnitId": episode.episode_id,
+                    "action": allocation.action.value,
+                },
+            )
+            if allocation_id not in public_allocations:
+                raise ResultIntegrityError("EVIDENCE_REFERENCE_INVALID")
+            allocation_rows.append(
+                {
+                    "allocationId": allocation_id,
+                    "evidenceRecordIds": _direct_evidence_ids(allocation.evidence_record_ids),
+                    "allocatedFee": _money(
+                        allocation.allocated_fee.amount, allocation.allocated_fee.asset
+                    ),
+                    "allocatedReportedPnl": _money(
+                        allocation.allocated_reported_pnl.amount,
+                        allocation.allocated_reported_pnl.asset,
+                    ),
+                }
+            )
+        allocation_rows.sort(key=lambda item: _utf16_key(str(item["allocationId"])))
+        rows.append(
+            {
+                "reviewUnitId": episode.episode_id,
+                "evidenceRecordIds": _direct_evidence_ids(episode.evidence_record_ids),
+                "stableEpisodeTimeAvailable": episode.capability.stable_episode_time_available,
+                "allocationEvidence": allocation_rows,
+            }
+        )
+    rows.sort(key=lambda item: _utf16_key(str(item["reviewUnitId"])))
+    return {
+        "schemaVersion": "TRADING_ANALYTICS_INPUT_SUPPLEMENT_V1",
+        "reviewUnitEngineInputs": rows,
+    }
+
+
+def _utf16_key(value: str) -> bytes:
+    return value.encode("utf-16-be")
+
+
+def _direct_evidence_ids(value: object) -> list[str]:
+    if not isinstance(value, tuple) or not value:
+        raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
+    items = cast(tuple[object, ...], value)
+    if any(not isinstance(item, str) or not item for item in items):
+        raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
+    ids = cast(tuple[str, ...], value)
+    if len(ids) != len(set(ids)):
+        raise ResultIntegrityError("RESULT_ITEM_CONFLICT")
+    return sorted(ids, key=_utf16_key)
+
+
 def _quantity_or_price(value: ScaledDecimal | None) -> dict[str, object] | None:
     if value is None:
         return None
@@ -410,6 +508,12 @@ def _quantity_or_price(value: ScaledDecimal | None) -> dict[str, object] | None:
 
 
 def _money(value: ScaledDecimal, currency: str) -> dict[str, object]:
+    if (
+        not isinstance(cast(object, value), ScaledDecimal)
+        or not isinstance(cast(object, currency), str)
+        or not currency
+    ):
+        raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
     return {"amount": value.source_lexeme, "currency": currency, "sourceScale": value.scale}
 
 

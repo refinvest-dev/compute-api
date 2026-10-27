@@ -12,6 +12,12 @@ from typing import cast
 
 RESULT_SCHEMA_V1 = "TRADING_NORMALIZATION_RESULT_V1"
 RESULT_HASH_SPECIFICATION_V1 = "TRADING_NORMALIZATION_RESULT_HASH_V1"
+RESULT_SCHEMA_V2 = "TRADING_NORMALIZATION_RESULT_V2"
+RESULT_HASH_SPECIFICATION_V2 = "TRADING_NORMALIZATION_RESULT_HASH_V2"
+_RESULT_PAIRS = {
+    (RESULT_SCHEMA_V1, RESULT_HASH_SPECIFICATION_V1),
+    (RESULT_SCHEMA_V2, RESULT_HASH_SPECIFICATION_V2),
+}
 _MAX_SAFE_INTEGER = 9_007_199_254_740_991
 _SECTIONS = (
     "ARTIFACT_COVERAGES",
@@ -24,6 +30,16 @@ _SECTIONS = (
     "REVIEW_UNITS",
     "SOURCE_EVIDENCE_SNAPSHOTS",
 )
+_V2_SECTIONS = ("ANALYTICS_INPUT_SUPPLEMENT", *_SECTIONS)
+_V2_ROOT_FIELDS = frozenset({
+    "jobId", "coreLogicalJobId", "coreNormalizationRunId", "coreImportSessionId",
+    "attemptToken", "deletionGeneration", "status", "targetVersionSet", "inputSetHash",
+    "hashSpecificationVersion", "resultSchemaVersion", "resultHashSpecificationVersion",
+    "counts", "sectionDigests", "resultDigestManifest", "artifactCoverages",
+    "canonicalRecords", "sourceEvidenceSnapshots", "reconciliationManifest", "capability",
+    "qualityReport", "analyticsInputSupplement", "ledgerContentHash", "resultHash",
+    "createdAt", "terminalAt",
+})
 _DECIMAL_KEYS = frozenset({"value", "amount", "actual", "expected", "absoluteDelta", "tolerance"})
 _TIMESTAMP_KEYS = frozenset(
     {"earliestObservedAt", "latestObservedAt", "occurredAt", "openedAt", "closedAt"}
@@ -291,10 +307,151 @@ def _validate_references(payload: dict[str, object], manifest: dict[str, object]
             raise ResultIntegrityError("EVIDENCE_REFERENCE_INVALID")
 
 
+def _supplement_ids(value: object, records: dict[str, dict[str, object]]) -> list[str]:
+    if not isinstance(value, list) or not value:
+        raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
+    ids = cast(list[object], value)
+    if any(not isinstance(item, str) or not item for item in ids):
+        raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
+    strings = cast(list[str], ids)
+    if len(strings) != len(set(strings)):
+        raise ResultIntegrityError("RESULT_ITEM_CONFLICT")
+    if strings != sorted(strings, key=_utf16_key):
+        raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
+    if any(item not in records for item in strings):
+        raise ResultIntegrityError("EVIDENCE_REFERENCE_INVALID")
+    return strings
+
+
+def _supplement_money(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
+    money = cast(dict[str, object], value)
+    if set(money) != {"amount", "currency", "sourceScale"}:
+        raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
+    amount, currency, scale = money["amount"], money["currency"], money["sourceScale"]
+    if (
+        not isinstance(amount, str)
+        or not isinstance(currency, str)
+        or not currency
+        or type(scale) is not int
+        or scale < 0
+        or scale > _MAX_SAFE_INTEGER
+    ):
+        raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
+    try:
+        number = Decimal(amount)
+    except InvalidOperation as error:
+        raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED") from error
+    if not number.is_finite() or amount != _decimal(amount):
+        raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
+    exponent = number.as_tuple().exponent
+    if number != 0 and (not isinstance(exponent, int) or exponent < -scale):
+        raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
+    return money
+
+
+def _validate_supplement(public: dict[str, object], manifest: dict[str, object]) -> None:
+    supplement = public.get("analyticsInputSupplement")
+    if not isinstance(supplement, dict):
+        raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
+    typed_supplement = cast(dict[str, object], supplement)
+    if set(typed_supplement) != {
+        "schemaVersion", "reviewUnitEngineInputs"
+    } or typed_supplement["schemaVersion"] != "TRADING_ANALYTICS_INPUT_SUPPLEMENT_V1":
+        raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
+    rows = _items(typed_supplement["reviewUnitEngineInputs"])
+    units = _items(manifest["reviewUnits"])
+    records = {str(item["recordId"]): item for item in _items(public["canonicalRecords"])}
+    if any(
+        not isinstance(item.get("reviewUnitId"), str) or not item["reviewUnitId"]
+        for item in rows
+    ):
+        raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
+    unit_ids = [str(item["reviewUnitId"]) for item in rows]
+    public_unit_ids = [str(item["reviewUnitId"]) for item in units]
+    if len(unit_ids) != len(set(unit_ids)):
+        raise ResultIntegrityError("RESULT_ITEM_CONFLICT")
+    if set(unit_ids) != set(public_unit_ids):
+        raise ResultIntegrityError("EVIDENCE_REFERENCE_INVALID")
+    if unit_ids != public_unit_ids:
+        raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
+    seen_allocations: set[str] = set()
+    matches = _items(manifest["reconciliationMatches"])
+    issues = _items(manifest["reconciliationIssues"])
+    for row, unit in zip(rows, units, strict=True):
+        if set(row) != {
+            "reviewUnitId", "evidenceRecordIds", "stableEpisodeTimeAvailable", "allocationEvidence"
+        } or type(row["stableEpisodeTimeAvailable"]) is not bool:
+            raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
+        unit_evidence = _supplement_ids(row["evidenceRecordIds"], records)
+        instrument = unit["instrumentId"]
+        if any(records[record_id]["instrumentId"] != instrument for record_id in unit_evidence):
+            raise ResultIntegrityError("EVIDENCE_REFERENCE_INVALID")
+        capability = _sorted_strings(unit["capability"])
+        if row["stableEpisodeTimeAvailable"] != ("STABLE_EPISODE_TIME" in capability):
+            raise ResultIntegrityError("EVIDENCE_REFERENCE_INVALID")
+        for record_id in unit_evidence:
+            if records[record_id]["recordType"] == "VENUE_POSITION_SUMMARY" and not any(
+                item.get("summaryRecordId") == record_id
+                and (
+                    item.get("reviewUnitId") == row["reviewUnitId"]
+                    or row["reviewUnitId"]
+                    in cast(list[object], item.get("candidateReviewUnitIds", []))
+                )
+                for item in [*matches, *issues]
+            ):
+                raise ResultIntegrityError("EVIDENCE_REFERENCE_INVALID")
+        allocation_rows = _items(row["allocationEvidence"])
+        allocations = _items(unit["allocations"])
+        row_ids = [item.get("allocationId") for item in allocation_rows]
+        public_ids = [item["allocationId"] for item in allocations]
+        if any(not isinstance(item, str) or not item for item in row_ids):
+            raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
+        if len(row_ids) != len(set(row_ids)) or any(item in seen_allocations for item in row_ids):
+            raise ResultIntegrityError("RESULT_ITEM_CONFLICT")
+        if set(row_ids) != set(public_ids):
+            raise ResultIntegrityError("EVIDENCE_REFERENCE_INVALID")
+        if row_ids != public_ids:
+            raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
+        seen_allocations.update(cast(list[str], row_ids))
+        for allocation_row, allocation in zip(allocation_rows, allocations, strict=True):
+            if set(allocation_row) != {
+                "allocationId", "evidenceRecordIds", "allocatedFee", "allocatedReportedPnl"
+            }:
+                raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
+            evidence = _supplement_ids(allocation_row["evidenceRecordIds"], records)
+            if len(evidence) != 3 or any(item not in unit_evidence for item in evidence):
+                raise ResultIntegrityError("EVIDENCE_REFERENCE_INVALID")
+            typed = {str(records[item]["recordType"]): records[item] for item in evidence}
+            if set(typed) != {"EXECUTION", "FEE", "VENUE_REPORTED_PNL"}:
+                raise ResultIntegrityError("EVIDENCE_REFERENCE_INVALID")
+            execution, fee, pnl = (typed[name] for name in (
+                "EXECUTION", "FEE", "VENUE_REPORTED_PNL"
+            ))
+            if (
+                execution["recordId"] != allocation["recordId"]
+                or len({item["sourceExecutionKey"] for item in (execution, fee, pnl)}) != 1
+                or any(item["instrumentId"] != instrument for item in (execution, fee, pnl))
+            ):
+                raise ResultIntegrityError("EVIDENCE_REFERENCE_INVALID")
+            allocated_fee = _supplement_money(allocation_row["allocatedFee"])
+            allocated_pnl = _supplement_money(allocation_row["allocatedReportedPnl"])
+            if (
+                allocated_fee["currency"]
+                != cast(dict[str, object], fee["sourceAmount"])["currency"]
+                or allocated_pnl["currency"]
+                != cast(dict[str, object], pnl["realizedPnl"])["currency"]
+                or allocation.get("allocatedFee") not in (None, allocated_fee)
+                or allocation.get("allocatedReportedPnl") not in (None, allocated_pnl)
+            ):
+                raise ResultIntegrityError("EVIDENCE_REFERENCE_INVALID")
+
+
 def semantic_section_values(public: dict[str, object]) -> dict[str, object]:
     """Expose the V1 public DTO projection consumed by section hashing."""
     manifest = cast(dict[str, object], public["reconciliationManifest"])
-    return {
+    sections = {
         "ARTIFACT_COVERAGES": public["artifactCoverages"],
         "CANONICAL_RECORDS": [
             {key: value for key, value in record.items() if key != "recordHash"}
@@ -313,16 +470,46 @@ def semantic_section_values(public: dict[str, object]) -> dict[str, object]:
             key: value for key, value in manifest.items() if key != "manifestHash"
         },
     }
+    if public.get("resultSchemaVersion") == RESULT_SCHEMA_V2:
+        sections["ANALYTICS_INPUT_SUPPLEMENT"] = public["analyticsInputSupplement"]
+    return sections
 
 
 def finalize_public_result(payload: dict[str, object]) -> dict[str, object]:
-    """Sort the public DTO, validate its references, and attach all V1 digests."""
+    """Sort the public DTO, validate its references, and attach versioned digests."""
     if payload.get("hashSpecificationVersion") != "TRADING_INPUT_SET_HASH_V1":
         raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
     normalized = normalize_public_value(payload)
     if not isinstance(normalized, dict):
         raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
     public = cast(dict[str, object], normalized)
+    schema_version = public.get("resultSchemaVersion")
+    hash_version = public.get("resultHashSpecificationVersion")
+    if (schema_version, hash_version) not in _RESULT_PAIRS:
+        raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
+    if (schema_version == RESULT_SCHEMA_V1) == ("analyticsInputSupplement" in public):
+        raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
+    if schema_version == RESULT_SCHEMA_V2:
+        raw_manifest = public.get("reconciliationManifest")
+        if not isinstance(raw_manifest, dict):
+            raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
+        raw_units = _items(cast(dict[str, object], raw_manifest).get("reviewUnits"))
+        ids: set[str] = set()
+        allocation_ids: set[str] = set()
+        for unit in raw_units:
+            unit_id = unit.get("reviewUnitId")
+            if not isinstance(unit_id, str) or not unit_id or unit_id in ids:
+                raise ResultIntegrityError("RESULT_ITEM_CONFLICT")
+            ids.add(unit_id)
+            for allocation in _items(unit.get("allocations")):
+                allocation_id = allocation.get("allocationId")
+                if (
+                    not isinstance(allocation_id, str)
+                    or not allocation_id
+                    or allocation_id in allocation_ids
+                ):
+                    raise ResultIntegrityError("RESULT_ITEM_CONFLICT")
+                allocation_ids.add(allocation_id)
     public["artifactCoverages"] = _sorted_unique(
         _items(public.get("artifactCoverages")), "artifactRole"
     )
@@ -348,6 +535,8 @@ def finalize_public_result(payload: dict[str, object]) -> dict[str, object]:
     ):
         raise ResultIntegrityError("RESULT_ITEM_CONFLICT")
     _validate_references(public, manifest)
+    if schema_version == RESULT_SCHEMA_V2:
+        _validate_supplement(public, manifest)
     public.pop("_artifactIdsByRole", None)
 
     units = _items(manifest["reviewUnits"])
@@ -384,7 +573,7 @@ def finalize_public_result(payload: dict[str, object]) -> dict[str, object]:
         return {
             "sectionType": section_type,
             "itemCount": count,
-            "hashSpecificationVersion": RESULT_HASH_SPECIFICATION_V1,
+            "hashSpecificationVersion": hash_version,
             "sectionHash": _hash(value),
         }
 
@@ -415,6 +604,10 @@ def finalize_public_result(payload: dict[str, object]) -> dict[str, object]:
             counts["reconciliationIssueCount"],
         ),
     }
+    if schema_version == RESULT_SCHEMA_V2:
+        digest_by_type["ANALYTICS_INPUT_SUPPLEMENT"] = section(
+            "ANALYTICS_INPUT_SUPPLEMENT", section_values["ANALYTICS_INPUT_SUPPLEMENT"], 1
+        )
     manifest["canonicalRecordSetHash"] = digest_by_type["CANONICAL_RECORDS"]["sectionHash"]
     manifest["qualityReportHash"] = digest_by_type["QUALITY_REPORT"]["sectionHash"]
     manifest["manifestHashSpecificationVersion"] = RESULT_HASH_SPECIFICATION_V1
@@ -424,10 +617,12 @@ def finalize_public_result(payload: dict[str, object]) -> dict[str, object]:
     digest_by_type["RECONCILIATION_MANIFEST"] = section(
         "RECONCILIATION_MANIFEST", manifest_semantic, 1
     )
-    digests = [digest_by_type[name] for name in _SECTIONS]
+    digests = [digest_by_type[name] for name in (
+        _V2_SECTIONS if schema_version == RESULT_SCHEMA_V2 else _SECTIONS
+    )]
     digest_manifest = {
-        "resultHashSpecificationVersion": RESULT_HASH_SPECIFICATION_V1,
-        "resultSchemaVersion": RESULT_SCHEMA_V1,
+        "resultHashSpecificationVersion": hash_version,
+        "resultSchemaVersion": schema_version,
         "inputSetHash": public["inputSetHash"],
         "inputHashSpecificationVersion": public["hashSpecificationVersion"],
         "targetVersionSet": public["targetVersionSet"],
@@ -435,21 +630,22 @@ def finalize_public_result(payload: dict[str, object]) -> dict[str, object]:
         "sectionDigests": digests,
         "reconciliationManifestHash": manifest_hash,
     }
-    public["resultSchemaVersion"] = RESULT_SCHEMA_V1
-    public["resultHashSpecificationVersion"] = RESULT_HASH_SPECIFICATION_V1
+    public["resultSchemaVersion"] = schema_version
+    public["resultHashSpecificationVersion"] = hash_version
     public["sectionDigests"] = digests
     public["resultDigestManifest"] = digest_manifest
     public["ledgerContentHash"] = digest_by_type["CANONICAL_RECORDS"]["sectionHash"]
     public["resultHash"] = _hash(digest_manifest)
+    if schema_version == RESULT_SCHEMA_V2 and set(public) != set(_V2_ROOT_FIELDS):
+        raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
     return public
 
 
 def verify_public_result(payload: dict[str, object]) -> None:
     """Recompute integrity independently from the received public DTO fields."""
     if (
-        payload.get("resultSchemaVersion") != RESULT_SCHEMA_V1
-        or payload.get("resultHashSpecificationVersion") != RESULT_HASH_SPECIFICATION_V1
-    ):
+        payload.get("resultSchemaVersion"), payload.get("resultHashSpecificationVersion")
+    ) not in _RESULT_PAIRS:
         raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
     declared_counts = payload.get("counts")
     declared_sections = payload.get("sectionDigests")
@@ -462,6 +658,11 @@ def verify_public_result(payload: dict[str, object]) -> None:
     declared_digest_manifest = payload.get("resultDigestManifest")
     declared_result_hash = payload.get("resultHash")
     rebuilt = finalize_public_result(payload)
+    if (
+        payload["resultSchemaVersion"] == RESULT_SCHEMA_V2
+        and payload.get("analyticsInputSupplement") != rebuilt["analyticsInputSupplement"]
+    ):
+        raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
     if declared_counts != rebuilt["counts"] or declared_manifest_counts != rebuilt["counts"]:
         raise ResultIntegrityError("RESULT_COUNT_MISMATCH")
     if declared_sections != rebuilt["sectionDigests"]:

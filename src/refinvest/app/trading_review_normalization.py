@@ -83,6 +83,12 @@ def execute_normalization_child(
     """Child entrypoint: download grants, verify bytes, call production engine, serialize."""
     try:
         request = claim.request_payload
+        if (
+            request.get("resultSchemaVersion") != claim.result_schema_version
+            or request.get("resultHashSpecificationVersion")
+            != claim.result_hash_specification_version
+        ):
+            raise ResultIntegrityError("RESULT_VERSION_PIN_MISMATCH")
         identity = NormalizationInputIdentity.model_validate(request["inputIdentity"])
         if identity.hash_specification_version != HASH_SPECIFICATION_V1:
             raise _safe_failure(
@@ -200,6 +206,8 @@ def execute_normalization_child(
             created_at=terminal_at,
             terminal_at=terminal_at,
             instrument_terms=instruments,
+            result_schema_version=claim.result_schema_version,
+            result_hash_specification_version=claim.result_hash_specification_version,
         )
         try:
             payload = canonicalize_result(payload_object)

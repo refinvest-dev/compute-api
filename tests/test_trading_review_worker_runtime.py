@@ -232,6 +232,8 @@ def test_child_reads_verified_artifacts_and_invokes_production_engine(
     input_set_hash = input_set_hash_for(identity)
     request_payload: dict[str, object] = {
         "inputIdentity": identity,
+        "resultSchemaVersion": "TRADING_NORMALIZATION_RESULT_V1",
+        "resultHashSpecificationVersion": "TRADING_NORMALIZATION_RESULT_HASH_V1",
         "resultDeliveryPolicy": {
             "policyVersion": "RESULT_DELIVERY_V1",
             "mode": "SINGLE_RESOURCE",

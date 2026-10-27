@@ -70,5 +70,25 @@ def test_terminal_payload_and_error_shape_validate_against_openapi() -> None:
         instrument_terms=request.instruments,
     )
     _schema("NormalizationTerminalPayload").validate(payload)
+    v2 = build_normalization_payload(
+        result,
+        job_id="job-1",
+        core_logical_job_id="logical-1",
+        core_import_session_id="session-1",
+        core_normalization_run_id="run-1",
+        input_set_hash=input_set_hash_for(identity),
+        hash_specification_version="TRADING_INPUT_SET_HASH_V1",
+        target_version_set=identity["targetVersionSet"],
+        attempt_token="attempt-1",
+        deletion_generation=0,
+        artifacts=request.artifacts,
+        masking_key=b"synthetic-test-masking-key-32chars",
+        created_at=now,
+        terminal_at=now,
+        instrument_terms=request.instruments,
+        result_schema_version="TRADING_NORMALIZATION_RESULT_V2",
+        result_hash_specification_version="TRADING_NORMALIZATION_RESULT_HASH_V2",
+    )
+    _schema("NormalizationTerminalPayload").validate(v2)
     response = _http_error(409, "RESULT_NOT_AVAILABLE", "Result is not available.")
     _schema("ErrorResponse").validate(json.loads(response.body))

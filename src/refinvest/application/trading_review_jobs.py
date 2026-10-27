@@ -51,6 +51,8 @@ class TradingReviewJob:
     version_set_hash: str
     deletion_generation: int
     attempt_token: str
+    result_schema_version: str = "TRADING_NORMALIZATION_RESULT_V1"
+    result_hash_specification_version: str = "TRADING_NORMALIZATION_RESULT_HASH_V1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +62,9 @@ class TradingReviewJobSubmission:
     kind: TradingReviewJobKind
     created_at: datetime
     newly_created: bool = True
+    core_normalization_run_id: str = ""
+    result_schema_version: str = "TRADING_NORMALIZATION_RESULT_V1"
+    result_hash_specification_version: str = "TRADING_NORMALIZATION_RESULT_HASH_V1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +122,8 @@ class TradingReviewJobStatusView:
     version_set_hash: str = ""
     grant_action: str = "NONE"
     grant_refresh_deadline_at: datetime | None = None
+    result_schema_version: str = "TRADING_NORMALIZATION_RESULT_V1"
+    result_hash_specification_version: str = "TRADING_NORMALIZATION_RESULT_HASH_V1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +145,8 @@ class ClaimedTradingReviewJob:
     created_at: datetime
     reclaimed_stale_lease: bool
     grant_revision: int = 0
+    result_schema_version: str = "TRADING_NORMALIZATION_RESULT_V1"
+    result_hash_specification_version: str = "TRADING_NORMALIZATION_RESULT_HASH_V1"
 
 
 class TradingReviewIdempotencyConflict(ValueError):
@@ -279,6 +288,10 @@ def submit_trading_review_job(
         ),
         deletion_generation=_required_integer(request_payload, "deletionGeneration"),
         attempt_token=_required_string(request_payload, "attemptToken"),
+        result_schema_version=_required_string(request_payload, "resultSchemaVersion"),
+        result_hash_specification_version=_required_string(
+            request_payload, "resultHashSpecificationVersion"
+        ),
     )
     return repository.create_idempotently(job, hash_idempotency_key(idempotency_key))
 

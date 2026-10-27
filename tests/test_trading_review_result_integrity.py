@@ -33,10 +33,118 @@ VECTOR = json.loads(
         / "fixtures/trading_review/normalization_identity/v1/result-integrity-v1.json"
     ).read_text(encoding="utf-8")
 )
+V2_VECTOR = json.loads(
+    (
+        Path(__file__).parent
+        / "fixtures/trading_review/normalization_identity/v2/result-integrity-v2.json"
+    ).read_text(encoding="utf-8")
+)
 
 
 def _payload() -> dict[str, object]:
     return copy.deepcopy(VECTOR["terminalPayload"])
+
+
+def _v2_payload() -> dict[str, object]:
+    return copy.deepcopy(V2_VECTOR["terminalPayload"])
+
+
+def test_v2_fixed_vector_matches_all_section_manifest_and_result_hashes() -> None:
+    payload = finalize_public_result(_v2_payload())
+    sections = semantic_section_values(payload)
+    assert len(payload["sectionDigests"]) == 10
+    expected_digests = V2_VECTOR["terminalPayload"]["sectionDigests"]
+    assert payload["sectionDigests"] == expected_digests
+    for digest in payload["sectionDigests"]:
+        name = digest["sectionType"]
+        expected = V2_VECTOR["sectionVectors"][name]
+        assert canonicalize_result(sections[name]) == expected["canonicalJson"].encode("utf-8")
+        assert digest["sectionHash"] == expected["expectedSha256"]
+    assert expected_digests[0]["sectionType"] == "ANALYTICS_INPUT_SUPPLEMENT"
+    assert expected_digests[0]["itemCount"] == 1
+    assert canonicalize_result(sections["RECONCILIATION_MANIFEST"]) == (
+        V2_VECTOR["manifestVector"]["canonicalJson"].encode("utf-8")
+    )
+    assert payload["reconciliationManifest"]["manifestHash"] == (
+        V2_VECTOR["manifestVector"]["expectedSha256"]
+    )
+    assert canonicalize_result(payload["resultDigestManifest"]) == (
+        V2_VECTOR["resultDigestManifestVector"]["canonicalJson"].encode("utf-8")
+    )
+    assert payload["resultHash"] == V2_VECTOR["resultDigestManifestVector"]["expectedSha256"]
+    verify_public_result(payload)
+
+
+@pytest.mark.parametrize("case", V2_VECTOR["invalidCases"], ids=lambda item: item["id"])
+def test_v2_invalid_reference_and_money_cases_fail_with_contract_code(
+    case: dict[str, object],
+) -> None:
+    payload = _v2_payload()
+    mutation = case["mutation"]
+    path = str(mutation["path"]).split("/")[2:]
+    node: object = payload
+    for part in path[:-1]:
+        node = node[int(part)] if isinstance(node, list) else node[part]
+    assert isinstance(node, (dict, list))
+    key = path[-1]
+    if "removeIndex" in mutation:
+        node[key].pop(mutation["removeIndex"])
+    elif isinstance(node, list):
+        node[int(key)] = mutation["value"]
+    else:
+        node[key] = mutation["value"]
+    with pytest.raises(ResultIntegrityError, match=str(case["expectedCode"])):
+        verify_public_result(payload)
+
+
+def test_v2_pair_and_evidence_duplicates_are_rejected_without_v1_reinterpretation() -> None:
+    for schema, specification in (
+        ("TRADING_NORMALIZATION_RESULT_V1", "TRADING_NORMALIZATION_RESULT_HASH_V2"),
+        ("TRADING_NORMALIZATION_RESULT_V2", "TRADING_NORMALIZATION_RESULT_HASH_V1"),
+    ):
+        payload = _v2_payload()
+        payload["resultSchemaVersion"] = schema
+        payload["resultHashSpecificationVersion"] = specification
+        with pytest.raises(ResultIntegrityError, match="RESULT_SCHEMA_UNSUPPORTED"):
+            finalize_public_result(payload)
+    duplicate = _v2_payload()
+    row = duplicate["analyticsInputSupplement"]["reviewUnitEngineInputs"][0]
+    row["evidenceRecordIds"].append(row["evidenceRecordIds"][0])
+    with pytest.raises(ResultIntegrityError, match="RESULT_ITEM_CONFLICT"):
+        finalize_public_result(duplicate)
+    v1_with_supplement = _payload()
+    v1_with_supplement["analyticsInputSupplement"] = _v2_payload()["analyticsInputSupplement"]
+    with pytest.raises(ResultIntegrityError, match="RESULT_SCHEMA_UNSUPPORTED"):
+        finalize_public_result(v1_with_supplement)
+
+
+def test_v2_unit_allocation_identity_and_order_are_checked_before_hashing() -> None:
+    duplicated_unit = _v2_payload()
+    unit = duplicated_unit["reconciliationManifest"]["reviewUnits"][0]
+    duplicated_unit["reconciliationManifest"]["reviewUnits"].append(copy.deepcopy(unit))
+    with pytest.raises(ResultIntegrityError, match="RESULT_ITEM_CONFLICT"):
+        finalize_public_result(duplicated_unit)
+
+    duplicated_allocation = _v2_payload()
+    allocations = duplicated_allocation["reconciliationManifest"]["reviewUnits"][0][
+        "allocations"
+    ]
+    allocations.append(copy.deepcopy(allocations[0]))
+    with pytest.raises(ResultIntegrityError, match="RESULT_ITEM_CONFLICT"):
+        finalize_public_result(duplicated_allocation)
+
+    unsorted = _v2_payload()
+    evidence = unsorted["analyticsInputSupplement"]["reviewUnitEngineInputs"][0][
+        "evidenceRecordIds"
+    ]
+    evidence.reverse()
+    with pytest.raises(ResultIntegrityError, match="RESULT_SCHEMA_UNSUPPORTED"):
+        finalize_public_result(unsorted)
+
+    missing = _v2_payload()
+    missing.pop("analyticsInputSupplement")
+    with pytest.raises(ResultIntegrityError, match="RESULT_SCHEMA_UNSUPPORTED"):
+        finalize_public_result(missing)
 
 
 def test_context_fixed_result_vector_at_every_canonical_boundary() -> None:
