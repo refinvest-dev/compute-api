@@ -55,42 +55,6 @@
   },
   {
     "source_file": "refinvest/api/routes/trading_analytics_jobs.py",
-    "imported_from": "refinvest.app.trading_analytics_identity",
-    "names": [
-      "AnalyticsContractError"
-    ],
-    "remove_in": "AR-03A",
-    "reason": "Move this exact dependency to its planned contract or application boundary in AR-03A."
-  },
-  {
-    "source_file": "refinvest/api/routes/trading_analytics_jobs.py",
-    "imported_from": "refinvest.app.trading_analytics_identity",
-    "names": [
-      "create_fingerprint"
-    ],
-    "remove_in": "AR-03A",
-    "reason": "Move this exact dependency to its planned contract or application boundary in AR-03A."
-  },
-  {
-    "source_file": "refinvest/api/routes/trading_analytics_jobs.py",
-    "imported_from": "refinvest.app.trading_analytics_identity",
-    "names": [
-      "require_supported_version_set"
-    ],
-    "remove_in": "AR-03A",
-    "reason": "Move this exact dependency to its planned contract or application boundary in AR-03A."
-  },
-  {
-    "source_file": "refinvest/api/routes/trading_analytics_jobs.py",
-    "imported_from": "refinvest.app.trading_analytics_identity",
-    "names": [
-      "validate_create_identity"
-    ],
-    "remove_in": "AR-03A",
-    "reason": "Move this exact dependency to its planned contract or application boundary in AR-03A."
-  },
-  {
-    "source_file": "refinvest/api/routes/trading_analytics_jobs.py",
     "imported_from": "refinvest.persistence.postgres.trading_analytics_jobs",
     "names": [
       "AnalyticsJobCapacity"
@@ -169,14 +133,5 @@
     ],
     "remove_in": "AR-03N",
     "reason": "Move this exact dependency to its planned contract or application boundary in AR-03N."
-  },
-  {
-    "source_file": "refinvest/persistence/postgres/trading_analytics_jobs.py",
-    "imported_from": "refinvest.app.trading_analytics_identity",
-    "names": [
-      "jcs_sha256"
-    ],
-    "remove_in": "AR-03A",
-    "reason": "Move this exact dependency to its planned contract or application boundary in AR-03A."
   }
 ]

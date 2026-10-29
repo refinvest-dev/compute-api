@@ -12,16 +12,17 @@ from threading import Event, Thread
 from typing import cast
 
 from refinvest.app.config import Settings, get_settings, trading_review_payload_key
-from refinvest.app.trading_analytics_identity import (
-    AnalyticsContractError,
-    require_supported_version_set,
-)
 from refinvest.app.trading_analytics_input import (
     AnalyticsInputFailure,
     adapt_inputs,
     download_inputs,
 )
-from refinvest.app.trading_analytics_result import SECTION_FIELDS, build_sections, finish_sections
+from refinvest.app.trading_analytics_result import build_sections
+from refinvest.contracts.analytics.identity import (
+    AnalyticsContractError,
+    require_supported_version_set,
+)
+from refinvest.contracts.analytics.result_integrity import SECTION_FIELDS, finish_sections
 from refinvest.persistence.postgres.trading_analytics_jobs import (
     AnalyticsJobConflict,
     PostgresAnalyticsJobRepository,

@@ -19,13 +19,13 @@ from refinvest.api.schemas.trading_analytics_jobs import (
 )
 from refinvest.app.config import Settings, get_settings, trading_review_payload_key
 from refinvest.app.security import require_internal_api_key
-from refinvest.app.trading_analytics_identity import (
+from refinvest.application.trading_review_jobs import hash_idempotency_key
+from refinvest.contracts.analytics.identity import (
     AnalyticsContractError,
     create_fingerprint,
     require_supported_version_set,
     validate_create_identity,
 )
-from refinvest.application.trading_review_jobs import hash_idempotency_key
 from refinvest.persistence.postgres.trading_analytics_jobs import (
     AnalyticsJobCapacity,
     AnalyticsJobConflict,

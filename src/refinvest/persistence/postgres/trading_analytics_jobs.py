@@ -14,7 +14,7 @@ from psycopg import connect
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from refinvest.app.trading_analytics_identity import jcs_sha256
+from refinvest.contracts.analytics.identity import jcs_sha256
 
 
 class AnalyticsJobConflict(ValueError):

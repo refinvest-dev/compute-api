@@ -24,19 +24,20 @@ from refinvest.api.routes.trading_analytics_jobs import (
 from refinvest.api.routes.trading_review_jobs import get_trading_review_repository
 from refinvest.app.config import Settings, get_settings
 from refinvest.app.main import app
-from refinvest.app.trading_analytics_identity import (
-    AnalyticsContractError,
-    analysis_input_hash,
-    canonical_bytes,
-    create_fingerprint,
-)
 from refinvest.app.trading_analytics_input import (
     AnalyticsInputFailure,
     adapt_inputs,
     download_inputs,
 )
-from refinvest.app.trading_analytics_result import build_sections, finish_sections
+from refinvest.app.trading_analytics_result import build_sections
 from refinvest.app.trading_analytics_worker import TradingAnalyticsWorkerHost, _bounded_json
+from refinvest.contracts.analytics.identity import (
+    AnalyticsContractError,
+    analysis_input_hash,
+    canonical_bytes,
+    create_fingerprint,
+)
+from refinvest.contracts.analytics.result_integrity import finish_sections
 from refinvest.persistence.postgres.trading_analytics_jobs import AnalyticsJobConflict
 from refinvest.trading_review.analytics import calculate_behavior_metrics
 

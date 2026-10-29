@@ -12,11 +12,11 @@ from uuid import uuid4
 import pytest
 from psycopg import connect
 
-from refinvest.app.trading_analytics_identity import create_fingerprint
 from refinvest.application.trading_review_jobs import (
     TradingReviewCapacityExceeded,
     hash_idempotency_key,
 )
+from refinvest.contracts.analytics.identity import create_fingerprint
 from refinvest.persistence.postgres.trading_analytics_jobs import (
     AnalyticsJobConflict,
     AnalyticsJobUnavailable,
