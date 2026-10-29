@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from os import getenv
+from threading import Barrier
 from uuid import uuid4
 
 import pytest
@@ -357,3 +359,123 @@ def test_http_application_worker_and_shared_delivery_use_real_store(monkeypatch,
             assert cancelled.status_code == 202 and cancelled.json()["status"] == "CANCELLED"
     finally:
         app.dependency_overrides.clear()
+
+
+def _publication(claim):
+    request = claim["request"]
+    now = datetime.now(UTC).isoformat()
+    vector = json.loads(FIXTURE.with_name("result-integrity-v1.json").read_text())
+    payload = {
+        "createdAt": now,
+        "terminalAt": now,
+        "inputHash": request["expectedInputHash"],
+        "inputHashSpecificationVersion": request["inputHashSpecificationVersion"],
+        "analysisConfigHash": request["analysisConfigHash"],
+        "targetVersionSet": request["targetVersionSet"],
+        "resultSchemaVersion": request["resultSchemaVersion"],
+        "resultHashSpecificationVersion": request["resultHashSpecificationVersion"],
+        "counts": vector["counts"],
+        "sectionDigests": vector["sectionDigests"],
+        "evidenceHash": vector["evidenceHash"],
+        "resultHash": vector["expectedResultHash"],
+    }
+    return payload, json.dumps(payload, separators=(",", ":")).encode()
+
+
+@pytest.mark.parametrize("competitor", ["publication", "cancellation"])
+def test_publication_serializes_with_competing_terminal_command(competitor):
+    repo = _repo()
+    request = _request()
+    accepted, _ = _create(repo, request, str(uuid4()))
+    job_id = accepted["jobId"]
+    claim = repo.claim_next("racing-worker")
+    assert claim is not None and claim["jobId"] == job_id
+    payload, body = _publication(claim)
+    start = Barrier(2)
+
+    def publish():
+        start.wait(timeout=10)
+        return repo.publish_completed(claim, payload, body)
+
+    def compete():
+        start.wait(timeout=10)
+        if competitor == "publication":
+            return repo.publish_completed(claim, payload, body)
+        return repo.cancel(job_id, hash_idempotency_key(str(uuid4())))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, second = pool.submit(publish), pool.submit(compete)
+        published, other = first.result(timeout=30), second.result(timeout=30)
+    if competitor == "publication":
+        assert sorted([published, other]) == [False, True]
+    expected = "COMPLETED" if published or competitor == "publication" else "CANCELLED"
+    status = repo.get(job_id)
+    assert status is not None and status["status"] == expected
+    with connect(DATABASE_URL) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM trading_analytics_payloads WHERE job_id=%s", (job_id,)
+        ).fetchone()[0] == int(expected == "COMPLETED")
+        assert (
+            connection.execute(
+                "SELECT outcome FROM trading_analytics_attempts WHERE job_id=%s", (job_id,)
+            ).fetchone()[0]
+            == expected
+        )
+    assert (repo.result_descriptor(job_id) is not None) is (expected == "COMPLETED")
+
+
+def test_last_publication_write_failure_rolls_back_payload_job_and_attempt(monkeypatch):
+    repo = _repo()
+    accepted, _ = _create(repo, _request(), str(uuid4()))
+    job_id = accepted["jobId"]
+    claim = repo.claim_next("rollback-worker")
+    assert claim is not None and claim["jobId"] == job_id
+    payload, body = _publication(claim)
+    real_connection = repo._connection
+
+    @contextmanager
+    def failing_connection():
+        with real_connection() as connection:
+
+            class Connection:
+                @contextmanager
+                def cursor(self):
+                    with connection.cursor() as cursor:
+
+                        class Cursor:
+                            def execute(self, query, parameters=None):
+                                cursor.execute(query, parameters)
+                                if (
+                                    "UPDATE trading_analytics_attempts SET outcome='COMPLETED'"
+                                    in query
+                                ):
+                                    raise RuntimeError("synthetic final publication write failure")
+
+                            def __getattr__(self, name):
+                                return getattr(cursor, name)
+
+                        yield Cursor()
+
+            yield Connection()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(repo, "_connection", failing_connection)
+        with pytest.raises(RuntimeError, match="synthetic final publication write failure"):
+            repo.publish_completed(claim, payload, body)
+    status = repo.get(job_id)
+    assert status is not None and status["status"] == "RUNNING"
+    assert repo.result_descriptor(job_id) is None
+    with connect(DATABASE_URL) as connection:
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM trading_analytics_payloads WHERE job_id=%s", (job_id,)
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT outcome FROM trading_analytics_attempts WHERE job_id=%s", (job_id,)
+            ).fetchone()[0]
+            is None
+        )
+    assert repo.publish_completed(claim, payload, body)
