@@ -195,8 +195,8 @@ class NormalizationJobRepository(Protocol):
     def get_result_descriptor(self, job_id: str) -> TerminalPayloadDescriptor | None: ...
 
 
-class TradingReviewJobRepository(NormalizationJobRepository, Protocol):
-    """Existing delivery/ACK capabilities retained until AR-04."""
+class NormalizationResultDeliveryRepository(Protocol):
+    """Verified resource retrieval and atomic acknowledgement for Normalization."""
 
     def get_terminal_payload(self, payload_id: str) -> bytes | None: ...
 
@@ -215,6 +215,12 @@ class TradingReviewJobRepository(NormalizationJobRepository, Protocol):
         recorded_at: datetime,
         current_deletion_generation: int | None,
     ) -> bool: ...
+
+
+class TradingReviewJobRepository(
+    NormalizationJobRepository, NormalizationResultDeliveryRepository, Protocol
+):
+    """Composition port implemented by the existing Normalization adapter."""
 
 
 class TradingReviewWorkerRepository(Protocol):
