@@ -18,6 +18,7 @@ from psycopg.types.json import Jsonb
 from refinvest.application.trading_review_jobs import (
     ClaimedTradingReviewJob,
     GrantUpdateReceipt,
+    ResultPayloadLimitExceeded,
     SafeTradingReviewFailure,
     TerminalPayloadDescriptor,
     TradingReviewCapacityExceeded,
@@ -37,10 +38,6 @@ from refinvest.contracts.normalization.result_integrity import (
     parse_result_json_bytes,
     verify_public_result,
 )
-
-
-class ResultPayloadLimitExceeded(ValueError):
-    """The exact entity body exceeds the pinned effective limit."""
 
 
 class PostgresTradingReviewJobRepository:
