@@ -175,7 +175,9 @@ class GrantUpdateReceipt:
     updated_at: datetime
 
 
-class TradingReviewJobRepository(Protocol):
+class NormalizationJobRepository(Protocol):
+    """Atomic admission and job commands/queries used by Normalization use cases."""
+
     def create_idempotently(
         self, job: TradingReviewJob, idempotency_key_hash: str
     ) -> TradingReviewJobSubmission: ...
@@ -191,6 +193,10 @@ class TradingReviewJobRepository(Protocol):
     ) -> TradingReviewJobStatusView | None: ...
 
     def get_result_descriptor(self, job_id: str) -> TerminalPayloadDescriptor | None: ...
+
+
+class TradingReviewJobRepository(NormalizationJobRepository, Protocol):
+    """Existing delivery/ACK capabilities retained until AR-04."""
 
     def get_terminal_payload(self, payload_id: str) -> bytes | None: ...
 
@@ -263,7 +269,7 @@ class TradingReviewWorkerRepository(Protocol):
 def submit_trading_review_job(
     request_payload: dict[str, object],
     idempotency_key: str,
-    repository: TradingReviewJobRepository,
+    repository: NormalizationJobRepository,
     computed_input_set_hash: str | None,
 ) -> TradingReviewJobSubmission:
     """Atomically admit one exact, immutable normalization request."""

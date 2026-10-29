@@ -124,14 +124,5 @@
     ],
     "remove_in": "AR-03A",
     "reason": "Move this exact dependency to its planned contract or application boundary in AR-03A."
-  },
-  {
-    "source_file": "refinvest/api/routes/trading_review_jobs.py",
-    "imported_from": "refinvest.persistence.postgres.trading_review_jobs",
-    "names": [
-      "PostgresTradingReviewJobRepository"
-    ],
-    "remove_in": "AR-03N",
-    "reason": "Move this exact dependency to its planned contract or application boundary in AR-03N."
   }
 ]

@@ -5,40 +5,51 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Coroutine
-from datetime import timedelta
 from hmac import compare_digest
 from typing import Annotated, Any, cast
 from uuid import uuid4
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, Request, status
 from fastapi.responses import JSONResponse, Response
 from fastapi.routing import APIRoute
 
+from refinvest.api.dependencies.trading_review_jobs import get_trading_review_repository
 from refinvest.api.routes.trading_analytics_jobs import get_optional_analytics_repository
 from refinvest.api.schemas.trading_analytics_jobs import AcknowledgeAnalyticsTransport
 from refinvest.api.schemas.trading_review_jobs import (
     AcknowledgeTradingReviewJobTransport,
+    ArtifactReadGrantTransport,
     CreateTradingNormalizationJobTransport,
     TradingComputeJobAcceptedTransport,
     UpdateTradingNormalizationJobGrantsTransport,
 )
-from refinvest.app.config import Settings, get_settings, trading_review_payload_key
+from refinvest.app.config import Settings, get_settings
 from refinvest.app.security import require_internal_api_key
+from refinvest.application.normalization_jobs import (
+    NormalizationArtifactGrant,
+    NormalizationInstrumentTerms,
+    NormalizationJobIdentityUnavailable,
+    NormalizationJobNotFound,
+    NormalizationRequestInvalid,
+    NormalizationResultUnavailable,
+    SubmitNormalizationJob,
+    UpdateNormalizationGrants,
+    cancel_normalization_job,
+    get_normalization_job_status,
+    get_normalization_result,
+    submit_normalization_job,
+    update_normalization_grants,
+)
 from refinvest.application.trading_review_jobs import (
+    NormalizationJobRepository,
     TradingReviewCapacityExceeded,
     TradingReviewGrantInvalid,
     TradingReviewIdempotencyConflict,
+    TradingReviewJobRepository,
     TradingReviewJobStateConflict,
     TradingReviewJobStatus,
     TradingReviewJobStatusView,
     hash_idempotency_key,
-    submit_trading_review_job,
-)
-from refinvest.contracts.normalization.identity import (
-    HASH_SPECIFICATION_V1,
-    calculate_input_set_hash,
-    supports_target_version_set,
 )
 from refinvest.contracts.normalization.result_delivery import MEDIA_TYPE
 from refinvest.contracts.normalization.result_integrity import ResultIntegrityError
@@ -48,9 +59,6 @@ from refinvest.persistence.postgres.trading_analytics_jobs import (
     AnalyticsJobUnavailable,
     PostgresAnalyticsJobRepository,
 )
-from refinvest.persistence.postgres.trading_review_jobs import PostgresTradingReviewJobRepository
-from refinvest.trading_review.decimal import ScaledDecimal
-from refinvest.trading_review.errors import TradingReviewError
 
 
 def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -132,32 +140,6 @@ router = APIRouter(
 _KEY = re.compile(r"^[A-Za-z0-9._~-]{1,128}$")
 
 
-def get_trading_review_repository(
-    settings: Annotated[Settings, Depends(get_settings)],
-) -> PostgresTradingReviewJobRepository:
-    if settings.database_url is None:
-        raise HTTPException(status_code=503, detail="Job store is unavailable.")
-    if settings.trading_review_active_job_limit is None:
-        raise HTTPException(status_code=503, detail="Trading Review capacity is unavailable.")
-    try:
-        key = trading_review_payload_key(settings)
-    except ValueError as error:
-        raise HTTPException(
-            status_code=503, detail="Terminal payload key is unavailable."
-        ) from error
-    return PostgresTradingReviewJobRepository(
-        settings.database_url,
-        key,
-        active_job_limit=settings.trading_review_active_job_limit,
-        grant_renewal_cutoff=timedelta(
-            seconds=settings.trading_review_grant_renewal_cutoff_seconds
-        ),
-        grant_refresh_wait=timedelta(seconds=settings.trading_review_grant_refresh_wait_seconds),
-        max_attempts=settings.trading_review_max_attempts,
-        max_payload_bytes=settings.trading_review_max_payload_bytes,
-    )
-
-
 def _http_error(code: int, reason: str, message: str, retryable: bool = False) -> JSONResponse:
     return JSONResponse(
         status_code=code,
@@ -174,55 +156,38 @@ def _key(value: str | None) -> str | None:
     return value if value is not None and _KEY.fullmatch(value) else None
 
 
-def _supported(request: CreateTradingNormalizationJobTransport) -> bool:
-    return supports_target_version_set(
-        request.input_identity.target_version_set,
-        {
-            item.instrument_id: item.instrument_terms_version
-            for item in request.pinned_instrument_terms
-        },
+def _artifact_grants(
+    grants: list[ArtifactReadGrantTransport],
+) -> tuple[NormalizationArtifactGrant, ...]:
+    return tuple(
+        NormalizationArtifactGrant(
+            grant.core_artifact_id,
+            grant.role,
+            bool(
+                grant.access_uri.username or grant.access_uri.password or grant.access_uri.fragment
+            ),
+        )
+        for grant in grants
     )
 
 
-def _semantic_request_error(body: CreateTradingNormalizationJobTransport) -> JSONResponse | None:
-    if {item.role for item in body.artifact_access_grants} != {"TRADE_HISTORY", "POSITION_HISTORY"}:
-        return _http_error(422, "FILE_FORMAT_INVALID", "Exactly one artifact per role is required.")
-    if len({item.core_artifact_id for item in body.artifact_access_grants}) != 2:
-        return _http_error(422, "FILE_FORMAT_INVALID", "Artifact identities must be distinct.")
-    for artifact in body.artifact_access_grants:
-        if (
-            artifact.access_uri.username
-            or artifact.access_uri.password
-            or artifact.access_uri.fragment
-        ):
-            return _http_error(422, "ARTIFACT_ACCESS_DENIED", "Artifact grant URI is invalid.")
-    for timezone_name in (body.input_identity.source_timezone, body.input_identity.review_timezone):
-        try:
-            ZoneInfo(timezone_name)
-        except (ZoneInfoNotFoundError, ValueError):
-            return _http_error(422, "FILE_FORMAT_INVALID", "Timezone is unsupported.")
-    if not body.pinned_instrument_terms or len(
-        {item.instrument_id for item in body.pinned_instrument_terms}
-    ) != len(body.pinned_instrument_terms):
-        return _http_error(
-            422, "INSTRUMENT_TERMS_UNAVAILABLE", "Pinned instrument terms are required."
-        )
-    for item in body.pinned_instrument_terms:
-        if item.settlement_asset != body.input_identity.declared_product.settlement_asset:
-            return _http_error(
-                422, "INSTRUMENT_TERMS_UNAVAILABLE", "Instrument settlement asset is invalid."
+def _submission_command(body: CreateTradingNormalizationJobTransport) -> SubmitNormalizationJob:
+    return SubmitNormalizationJob(
+        payload=body.model_dump(mode="json", by_alias=True),
+        identity=body.input_identity,
+        artifacts=_artifact_grants(body.artifact_access_grants),
+        terms=tuple(
+            NormalizationInstrumentTerms(
+                item.instrument_id,
+                item.instrument_terms_version,
+                item.settlement_asset,
+                item.quantity_step,
+                item.price_tick,
+                item.contract_multiplier,
             )
-        try:
-            if any(
-                ScaledDecimal.parse(value).value <= 0
-                for value in (item.quantity_step, item.price_tick, item.contract_multiplier)
-            ):
-                return _http_error(
-                    422, "INSTRUMENT_TERMS_UNAVAILABLE", "Instrument grid is invalid."
-                )
-        except (ValueError, TradingReviewError):
-            return _http_error(422, "INSTRUMENT_TERMS_UNAVAILABLE", "Instrument grid is invalid.")
-    return None
+            for item in body.pinned_instrument_terms
+        ),
+    )
 
 
 def _status(view: TradingReviewJobStatusView) -> dict[str, object]:
@@ -278,33 +243,16 @@ def create_trading_normalization_job(
     body: CreateTradingNormalizationJobTransport,
     http_request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
-    repository: Annotated[
-        PostgresTradingReviewJobRepository, Depends(get_trading_review_repository)
-    ],
+    repository: Annotated[NormalizationJobRepository, Depends(get_trading_review_repository)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> TradingComputeJobAcceptedTransport | JSONResponse:
     key = _key(idempotency_key)
     if key is None:
         return _http_error(400, "REQUEST_INVALID", "Invalid Idempotency-Key.")
-    if body.input_identity.hash_specification_version == HASH_SPECIFICATION_V1 and not _supported(
-        body
-    ):
-        return _http_error(422, "VERSION_INCOMPATIBLE", "Normalizer VersionSet is unsupported.")
-    request_error = _semantic_request_error(body)
-    if request_error is not None:
-        return request_error
     try:
-        computed_input_set_hash = (
-            calculate_input_set_hash(body.input_identity)
-            if body.input_identity.hash_specification_version == HASH_SPECIFICATION_V1
-            else None
-        )
-        accepted = submit_trading_review_job(
-            body.model_dump(mode="json", by_alias=True),
-            key,
-            repository,
-            computed_input_set_hash,
-        )
+        accepted = submit_normalization_job(_submission_command(body), key, repository)
+    except NormalizationRequestInvalid as error:
+        return _http_error(422, error.code, str(error))
     except TradingReviewIdempotencyConflict:
         _record_submission(http_request, "conflict")
         return _http_error(
@@ -343,25 +291,24 @@ def update_trading_normalization_job_grants(
     jobId: str,
     body: UpdateTradingNormalizationJobGrantsTransport,
     http_request: Request,
-    repository: Annotated[
-        PostgresTradingReviewJobRepository, Depends(get_trading_review_repository)
-    ],
+    repository: Annotated[NormalizationJobRepository, Depends(get_trading_review_repository)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict[str, object] | JSONResponse:
     key = _key(idempotency_key)
     if key is None:
         return _http_error(400, "REQUEST_INVALID", "Invalid Idempotency-Key.")
-    for artifact in body.artifact_access_grants:
-        if (
-            artifact.access_uri.username
-            or artifact.access_uri.password
-            or artifact.access_uri.fragment
-        ):
-            return _http_error(422, "ARTIFACT_ACCESS_DENIED", "Artifact grant URI is invalid.")
     try:
-        receipt = repository.update_grants(
-            jobId, hash_idempotency_key(key), body.model_dump(mode="json", by_alias=True)
+        receipt = update_normalization_grants(
+            jobId,
+            UpdateNormalizationGrants(
+                body.model_dump(mode="json", by_alias=True),
+                _artifact_grants(body.artifact_access_grants),
+            ),
+            key,
+            repository,
         )
+    except NormalizationRequestInvalid as error:
+        return _http_error(422, error.code, str(error))
     except TradingReviewIdempotencyConflict:
         _record_grant_update(http_request, "conflict")
         return _http_error(409, "IDEMPOTENCY_CONFLICT", "Grant update key conflicts.")
@@ -390,13 +337,11 @@ def update_trading_normalization_job_grants(
 )
 def get_trading_normalization_job_status(
     jobId: str,
-    repository: Annotated[
-        PostgresTradingReviewJobRepository, Depends(get_trading_review_repository)
-    ],
+    repository: Annotated[NormalizationJobRepository, Depends(get_trading_review_repository)],
 ) -> dict[str, object] | JSONResponse:
     try:
-        view = repository.get(jobId)
-    except TradingReviewJobStateConflict:
+        view = get_normalization_job_status(jobId, repository)
+    except NormalizationJobIdentityUnavailable:
         return _http_error(409, "VERSION_INCOMPATIBLE", "Job identity is unavailable.")
     return (
         _status(view)
@@ -412,20 +357,15 @@ def get_trading_normalization_job_status(
 )
 def get_trading_normalization_job_result(
     jobId: str,
-    repository: Annotated[
-        PostgresTradingReviewJobRepository, Depends(get_trading_review_repository)
-    ],
+    repository: Annotated[NormalizationJobRepository, Depends(get_trading_review_repository)],
 ) -> dict[str, object] | JSONResponse:
     try:
-        view = repository.get(jobId)
-    except TradingReviewJobStateConflict:
+        descriptor = get_normalization_result(jobId, repository)
+    except NormalizationJobIdentityUnavailable:
         return _http_error(409, "VERSION_INCOMPATIBLE", "Job identity is unavailable.")
-    if view is None:
+    except NormalizationJobNotFound:
         return _http_error(404, "JOB_NOT_FOUND", "Job was not found.")
-    if view.status is not TradingReviewJobStatus.COMPLETED:
-        return _http_error(409, "RESULT_NOT_AVAILABLE", "Completed result is not available.")
-    descriptor = repository.get_result_descriptor(jobId)
-    if descriptor is None:
+    except NormalizationResultUnavailable:
         return _http_error(409, "RESULT_NOT_AVAILABLE", "Completed result is not available.")
     return {
         "jobId": descriptor.job_id,
@@ -462,16 +402,14 @@ def get_trading_normalization_job_result(
 )
 def cancel_trading_normalization_job(
     jobId: str,
-    repository: Annotated[
-        PostgresTradingReviewJobRepository, Depends(get_trading_review_repository)
-    ],
+    repository: Annotated[NormalizationJobRepository, Depends(get_trading_review_repository)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict[str, object] | JSONResponse:
     key = _key(idempotency_key)
     if key is None:
         return _http_error(400, "REQUEST_INVALID", "Invalid Idempotency-Key.")
     try:
-        view = repository.request_cancellation(jobId, hash_idempotency_key(key))
+        view = cancel_normalization_job(jobId, key, repository)
     except TradingReviewIdempotencyConflict:
         return _http_error(
             409, "IDEMPOTENCY_CONFLICT", "Idempotency-Key conflicts with an existing request."
@@ -491,9 +429,7 @@ def cancel_trading_normalization_job(
 )
 def download_trading_review_terminal_payload(
     payloadId: str,
-    repository: Annotated[
-        PostgresTradingReviewJobRepository, Depends(get_trading_review_repository)
-    ],
+    repository: Annotated[TradingReviewJobRepository, Depends(get_trading_review_repository)],
     analytics_repository: Annotated[
         PostgresAnalyticsJobRepository | None, Depends(get_optional_analytics_repository)
     ],
@@ -533,9 +469,7 @@ def download_trading_review_terminal_payload(
 def acknowledge_trading_review_job_result(
     jobId: str,
     body: AcknowledgeTradingReviewJobTransport | AcknowledgeAnalyticsTransport,
-    repository: Annotated[
-        PostgresTradingReviewJobRepository, Depends(get_trading_review_repository)
-    ],
+    repository: Annotated[TradingReviewJobRepository, Depends(get_trading_review_repository)],
     analytics_repository: Annotated[
         PostgresAnalyticsJobRepository | None, Depends(get_optional_analytics_repository)
     ],

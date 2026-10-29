@@ -17,11 +17,11 @@ import yaml
 from jsonschema import Draft202012Validator, FormatChecker
 from starlette.testclient import TestClient
 
+from refinvest.api.dependencies.trading_review_jobs import get_trading_review_repository
 from refinvest.api.routes.trading_analytics_jobs import (
     get_analytics_repository,
     get_optional_analytics_repository,
 )
-from refinvest.api.routes.trading_review_jobs import get_trading_review_repository
 from refinvest.app.config import Settings, get_settings
 from refinvest.app.main import app
 from refinvest.app.trading_analytics_input import (
