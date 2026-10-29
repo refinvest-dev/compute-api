@@ -26,8 +26,6 @@ from refinvest.api.schemas.trading_review_jobs import (
 from refinvest.app.config import Settings, get_settings
 from refinvest.app.security import require_internal_api_key
 from refinvest.application.analytics_jobs import (
-    AnalyticsJobConflict,
-    AnalyticsJobUnavailable,
     AnalyticsResultDeliveryRepository,
 )
 from refinvest.application.normalization_jobs import (
@@ -45,19 +43,24 @@ from refinvest.application.normalization_jobs import (
     submit_normalization_job,
     update_normalization_grants,
 )
+from refinvest.application.terminal_delivery import (
+    AnalyticsAcknowledgement,
+    DeliveryFailureKind,
+    NormalizationAcknowledgement,
+    TerminalDeliveryFailure,
+    acknowledge_terminal_result,
+    get_terminal_payload,
+)
 from refinvest.application.trading_review_jobs import (
     NormalizationJobRepository,
+    NormalizationResultDeliveryRepository,
     TradingReviewCapacityExceeded,
     TradingReviewGrantInvalid,
     TradingReviewIdempotencyConflict,
-    TradingReviewJobRepository,
     TradingReviewJobStateConflict,
     TradingReviewJobStatus,
     TradingReviewJobStatusView,
-    hash_idempotency_key,
 )
-from refinvest.contracts.normalization.result_delivery import MEDIA_TYPE
-from refinvest.contracts.normalization.result_integrity import ResultIntegrityError
 from refinvest.observability.metrics import ApiMetrics, safe_record
 
 
@@ -429,32 +432,20 @@ def cancel_trading_normalization_job(
 )
 def download_trading_review_terminal_payload(
     payloadId: str,
-    repository: Annotated[TradingReviewJobRepository, Depends(get_trading_review_repository)],
+    repository: Annotated[
+        NormalizationResultDeliveryRepository, Depends(get_trading_review_repository)
+    ],
     analytics_repository: Annotated[
         AnalyticsResultDeliveryRepository | None, Depends(get_optional_analytics_repository)
     ],
 ) -> Response:
     try:
-        payload = repository.get_terminal_payload(payloadId)
-    except ResultIntegrityError as error:
-        return _http_error(409, error.code, "Terminal result integrity failed.")
-    if payload is None:
-        if analytics_repository is None:
-            return _http_error(404, "PAYLOAD_NOT_FOUND", "Payload was not found.")
-        try:
-            analytics_payload = analytics_repository.payload_bytes(payloadId)
-        except AnalyticsJobUnavailable:
-            return _http_error(404, "RESULT_PAYLOAD_EXPIRED", "Payload has expired.")
-        if analytics_payload is None:
-            return _http_error(404, "PAYLOAD_NOT_FOUND", "Payload was not found.")
-        return Response(
-            content=analytics_payload,
-            media_type="application/vnd.refinvest.trading-analytics+json; charset=utf-8",
-            headers={"Content-Encoding": "identity"},
-        )
+        payload = get_terminal_payload(payloadId, repository, analytics_repository)
+    except TerminalDeliveryFailure as error:
+        return _delivery_error(error)
     return Response(
-        content=payload,
-        media_type=f"{MEDIA_TYPE}; charset=utf-8",
+        content=payload.content,
+        media_type=f"{payload.media_type}; charset=utf-8",
         headers={"Content-Encoding": "identity"},
     )
 
@@ -469,7 +460,9 @@ def download_trading_review_terminal_payload(
 def acknowledge_trading_review_job_result(
     jobId: str,
     body: AcknowledgeTradingReviewJobTransport | AcknowledgeAnalyticsTransport,
-    repository: Annotated[TradingReviewJobRepository, Depends(get_trading_review_repository)],
+    repository: Annotated[
+        NormalizationResultDeliveryRepository, Depends(get_trading_review_repository)
+    ],
     analytics_repository: Annotated[
         AnalyticsResultDeliveryRepository | None, Depends(get_optional_analytics_repository)
     ],
@@ -478,42 +471,13 @@ def acknowledge_trading_review_job_result(
     key = _key(idempotency_key)
     if key is None:
         return _http_error(400, "REQUEST_INVALID", "Invalid Idempotency-Key.")
+    command: NormalizationAcknowledgement | AnalyticsAcknowledgement
     if isinstance(body, AcknowledgeAnalyticsTransport):
-        if analytics_repository is None:
-            return _http_error(
-                503, "TEMPORARY_DEPENDENCY_FAILURE", "Job store is unavailable.", True
-            )
-        try:
-            analytics_repository.acknowledge(
-                jobId, body.model_dump(mode="json", by_alias=True, exclude_none=True)
-            )
-        except AnalyticsJobUnavailable as error:
-            code = (
-                "RESULT_PAYLOAD_EXPIRED"
-                if str(error) == "RESULT_PAYLOAD_EXPIRED"
-                else "JOB_NOT_FOUND"
-            )
-            return _http_error(404, code, "Job or payload was not found.")
-        except AnalyticsJobConflict:
-            return _http_error(409, "RESULT_HASH_MISMATCH", "Acknowledgement conflicts.")
-        return Response(status_code=204)
-    recorded_at = body.persisted_at if body.disposition == "PERSISTED" else body.discarded_at
-    if (
-        recorded_at is None
-        or (
-            body.disposition == "PERSISTED"
-            and (body.discarded_at is not None or body.current_deletion_generation is not None)
+        command = AnalyticsAcknowledgement(
+            body.model_dump(mode="json", by_alias=True, exclude_none=True)
         )
-        or (
-            body.disposition == "DISCARDED_STALE"
-            and (body.persisted_at is not None or body.current_deletion_generation is None)
-        )
-    ):
-        return _http_error(422, "REQUEST_INVALID", "Acknowledgement shape is invalid.")
-    try:
-        accepted = repository.acknowledge(
-            jobId,
-            idempotency_key_hash=hash_idempotency_key(key),
+    else:
+        command = NormalizationAcknowledgement(
             core_aggregate_id=body.core_aggregate_id,
             payload_id=body.payload_id,
             payload_sha256=body.payload_sha256,
@@ -521,16 +485,25 @@ def acknowledge_trading_review_job_result(
             attempt_token=body.attempt_token,
             deletion_generation=body.deletion_generation,
             disposition=body.disposition,
-            recorded_at=recorded_at,
+            persisted_at=body.persisted_at,
+            discarded_at=body.discarded_at,
             current_deletion_generation=body.current_deletion_generation,
         )
-    except (TradingReviewIdempotencyConflict, TradingReviewJobStateConflict):
-        return _http_error(
-            409, "RESULT_HASH_MISMATCH", "Acknowledgement conflicts with the result."
-        )
-    if not accepted:
-        return _http_error(404, "JOB_NOT_FOUND", "Job or payload was not found.")
+    try:
+        acknowledge_terminal_result(jobId, command, key, repository, analytics_repository)
+    except TerminalDeliveryFailure as error:
+        return _delivery_error(error)
     return Response(status_code=204)
+
+
+def _delivery_error(error: TerminalDeliveryFailure) -> JSONResponse:
+    status_code = {
+        DeliveryFailureKind.NOT_FOUND: 404,
+        DeliveryFailureKind.CONFLICT: 409,
+        DeliveryFailureKind.INVALID: 422,
+        DeliveryFailureKind.UNAVAILABLE: 503,
+    }[error.kind]
+    return _http_error(status_code, error.code, str(error), error.retryable)
 
 
 def _record_submission(request: Request, outcome: str) -> None:

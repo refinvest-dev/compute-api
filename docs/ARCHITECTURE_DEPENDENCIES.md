@@ -13,7 +13,7 @@ Application 전체의 multiprocessing·subprocess 금지는 기존 Backtest exec
 예외는 정확한 파일·import 심볼·제거 단계·이유를 명시한다. glob·wildcard·중복·새 심볼·stale 예외는 실패한다.
 후속 단계에서 예외를 새로 추가해 검사를 통과시키지 않는다.
 
-현재 구현: AR03A까지. 남은 legacy import는 6개다.
+현재 구현: AR04까지. 남은 legacy import는 6개다.
 
 | 파일 | 심볼 | 제거 단계 |
 |---|---|---|
