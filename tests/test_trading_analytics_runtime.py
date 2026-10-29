@@ -17,11 +17,11 @@ import yaml
 from jsonschema import Draft202012Validator, FormatChecker
 from starlette.testclient import TestClient
 
-from refinvest.api.dependencies.trading_review_jobs import get_trading_review_repository
-from refinvest.api.routes.trading_analytics_jobs import (
+from refinvest.api.dependencies.trading_analytics_jobs import (
     get_analytics_repository,
     get_optional_analytics_repository,
 )
+from refinvest.api.dependencies.trading_review_jobs import get_trading_review_repository
 from refinvest.app.config import Settings, get_settings
 from refinvest.app.main import app
 from refinvest.app.trading_analytics_input import (
@@ -31,6 +31,7 @@ from refinvest.app.trading_analytics_input import (
 )
 from refinvest.app.trading_analytics_result import build_sections
 from refinvest.app.trading_analytics_worker import TradingAnalyticsWorkerHost, _bounded_json
+from refinvest.application.analytics_jobs import AnalyticsJobConflict
 from refinvest.contracts.analytics.identity import (
     AnalyticsContractError,
     analysis_input_hash,
@@ -38,7 +39,6 @@ from refinvest.contracts.analytics.identity import (
     create_fingerprint,
 )
 from refinvest.contracts.analytics.result_integrity import finish_sections
-from refinvest.persistence.postgres.trading_analytics_jobs import AnalyticsJobConflict
 from refinvest.trading_review.analytics import calculate_behavior_metrics
 
 FIXTURE = (

@@ -14,19 +14,12 @@ from psycopg import connect
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from refinvest.application.analytics_jobs import (
+    AnalyticsJobCapacity,
+    AnalyticsJobConflict,
+    AnalyticsJobUnavailable,
+)
 from refinvest.contracts.analytics.identity import jcs_sha256
-
-
-class AnalyticsJobConflict(ValueError):
-    pass
-
-
-class AnalyticsJobCapacity(ValueError):
-    pass
-
-
-class AnalyticsJobUnavailable(ValueError):
-    pass
 
 
 def _db_time(cursor: Any) -> datetime:

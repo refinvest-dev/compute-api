@@ -18,15 +18,13 @@ from refinvest.app.trading_analytics_input import (
     download_inputs,
 )
 from refinvest.app.trading_analytics_result import build_sections
+from refinvest.application.analytics_jobs import AnalyticsJobConflict
 from refinvest.contracts.analytics.identity import (
     AnalyticsContractError,
     require_supported_version_set,
 )
 from refinvest.contracts.analytics.result_integrity import SECTION_FIELDS, finish_sections
-from refinvest.persistence.postgres.trading_analytics_jobs import (
-    AnalyticsJobConflict,
-    PostgresAnalyticsJobRepository,
-)
+from refinvest.persistence.postgres.trading_analytics_jobs import PostgresAnalyticsJobRepository
 from refinvest.trading_review.analytics import calculate_behavior_metrics
 from refinvest.trading_review.model import CanonicalRecord, FuturesPositionEpisode
 
