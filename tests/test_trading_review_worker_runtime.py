@@ -342,7 +342,7 @@ def test_child_reads_verified_artifacts_and_invokes_production_engine(
     assert failed_sender.outcome.failure.code == "INPUT_HASH_SPECIFICATION_UNSUPPORTED"
     assert len(opened) == before
 
-    from refinvest.app.trading_review_result_integrity import ResultIntegrityError
+    from refinvest.contracts.normalization.result_integrity import ResultIntegrityError
 
     def invalid_public_result(*_: object, **__: object) -> dict[str, object]:
         raise ResultIntegrityError("RESULT_HASH_MISMATCH")

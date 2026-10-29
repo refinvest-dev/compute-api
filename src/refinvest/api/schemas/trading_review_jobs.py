@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
-from refinvest.app.trading_review_identity import NormalizationInputIdentity, TargetVersionSet
+from refinvest.contracts.normalization.identity import NormalizationInputIdentity, TargetVersionSet
 
 
 class StrictTransport(BaseModel):

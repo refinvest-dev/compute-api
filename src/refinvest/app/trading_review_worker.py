@@ -15,8 +15,8 @@ from refinvest.app.trading_review_normalization import (
     CompletedNormalization,
     ProcessIsolatedNormalizationExecutor,
 )
-from refinvest.app.trading_review_result_integrity import ResultIntegrityError
 from refinvest.application.trading_review_jobs import SafeTradingReviewFailure
+from refinvest.contracts.normalization.result_integrity import ResultIntegrityError
 from refinvest.observability.metrics import TradingReviewWorkerMetrics, safe_record, serve_metrics
 from refinvest.persistence.postgres.trading_review_jobs import (
     PostgresTradingReviewJobRepository,

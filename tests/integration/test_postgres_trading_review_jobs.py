@@ -16,11 +16,6 @@ import pytest
 from psycopg import connect
 from psycopg.errors import RaiseException
 
-from refinvest.app.trading_review_result_integrity import (
-    ResultIntegrityError,
-    canonicalize_result,
-    finalize_public_result,
-)
 from refinvest.application.trading_review_jobs import (
     ClaimedTradingReviewJob,
     SafeTradingReviewFailure,
@@ -31,6 +26,11 @@ from refinvest.application.trading_review_jobs import (
     TradingReviewJobStateConflict,
     TradingReviewJobStatus,
     normalization_request_fingerprint,
+)
+from refinvest.contracts.normalization.result_integrity import (
+    ResultIntegrityError,
+    canonicalize_result,
+    finalize_public_result,
 )
 from refinvest.persistence.postgres.trading_review_jobs import (
     PostgresTradingReviewJobRepository,

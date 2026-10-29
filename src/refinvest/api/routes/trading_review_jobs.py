@@ -25,13 +25,6 @@ from refinvest.api.schemas.trading_review_jobs import (
 )
 from refinvest.app.config import Settings, get_settings, trading_review_payload_key
 from refinvest.app.security import require_internal_api_key
-from refinvest.app.trading_review_identity import (
-    HASH_SPECIFICATION_V1,
-    calculate_input_set_hash,
-    supports_target_version_set,
-)
-from refinvest.app.trading_review_payload import MEDIA_TYPE
-from refinvest.app.trading_review_result_integrity import ResultIntegrityError
 from refinvest.application.trading_review_jobs import (
     TradingReviewCapacityExceeded,
     TradingReviewGrantInvalid,
@@ -42,6 +35,13 @@ from refinvest.application.trading_review_jobs import (
     hash_idempotency_key,
     submit_trading_review_job,
 )
+from refinvest.contracts.normalization.identity import (
+    HASH_SPECIFICATION_V1,
+    calculate_input_set_hash,
+    supports_target_version_set,
+)
+from refinvest.contracts.normalization.result_delivery import MEDIA_TYPE
+from refinvest.contracts.normalization.result_integrity import ResultIntegrityError
 from refinvest.observability.metrics import ApiMetrics, safe_record
 from refinvest.persistence.postgres.trading_analytics_jobs import (
     AnalyticsJobConflict,

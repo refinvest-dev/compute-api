@@ -15,12 +15,6 @@ from psycopg import connect
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Jsonb
 
-from refinvest.app.trading_review_result_delivery import effective_payload_limit
-from refinvest.app.trading_review_result_integrity import (
-    ResultIntegrityError,
-    parse_result_json_bytes,
-    verify_public_result,
-)
 from refinvest.application.trading_review_jobs import (
     ClaimedTradingReviewJob,
     GrantUpdateReceipt,
@@ -36,6 +30,12 @@ from refinvest.application.trading_review_jobs import (
     TradingReviewJobStatusView,
     TradingReviewJobSubmission,
     normalization_request_fingerprint,
+)
+from refinvest.contracts.normalization.result_delivery import effective_payload_limit
+from refinvest.contracts.normalization.result_integrity import (
+    ResultIntegrityError,
+    parse_result_json_bytes,
+    verify_public_result,
 )
 
 

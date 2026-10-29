@@ -8,8 +8,8 @@ import pytest
 from pydantic import ValidationError
 
 from refinvest.api.schemas.trading_review_jobs import CreateTradingNormalizationJobTransport
-from refinvest.app.trading_review_result_delivery import effective_payload_limit
 from refinvest.application.trading_review_jobs import normalization_request_fingerprint
+from refinvest.contracts.normalization.result_delivery import effective_payload_limit
 from tests.test_trading_normalization_input_identity import WIRE
 
 

@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from refinvest.app.trading_review_payload import build_normalization_payload
-from refinvest.app.trading_review_result_integrity import (
+from refinvest.contracts.normalization.result_integrity import (
     RESULT_HASH_SPECIFICATION_V1,
     ResultIntegrityError,
     canonicalize_result,

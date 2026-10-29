@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from decimal import localcontext
 from typing import cast
 
-from refinvest.app.trading_review_result_integrity import (
+from refinvest.contracts.normalization.result_integrity import (
     RESULT_HASH_SPECIFICATION_V1,
     RESULT_SCHEMA_V1,
     RESULT_SCHEMA_V2,
@@ -32,8 +32,6 @@ from refinvest.trading_review.model import (
     VenueReportedPnlRecord,
 )
 from refinvest.trading_review.parser import parse_artifact
-
-MEDIA_TYPE = "application/vnd.refinvest.trading-normalization+json"
 
 _TRADE_EVIDENCE_FIELDS = (
     ("Time", "Time"),
