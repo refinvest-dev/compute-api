@@ -45,8 +45,13 @@ def price_entry_execution_schedules(
 ) -> tuple[EntryExecution, ...]:
     """Price only schedules admitted by the single-position policy."""
     return tuple(
-        _price_entry_execution(market_data, slippage, schedule.candidate, schedule.execution_asset,
-                               schedule.execution_session)
+        _price_entry_execution(
+            market_data,
+            slippage,
+            schedule.candidate,
+            schedule.execution_asset,
+            schedule.execution_session,
+        )
         for schedule in schedules
     )
 

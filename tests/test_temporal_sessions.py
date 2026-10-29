@@ -40,9 +40,9 @@ def test_lag_uses_primary_signal_asset_sessions(calendar: StaticCalendar) -> Non
 
 
 def test_holding_period_uses_primary_signal_asset_sessions(calendar: StaticCalendar) -> None:
-    assert resolve_holding_exit_signal_session(
-        calendar, "BTCUSDT", date(2025, 1, 3), 2
-    ) == date(2025, 1, 5)
+    assert resolve_holding_exit_signal_session(calendar, "BTCUSDT", date(2025, 1, 3), 2) == date(
+        2025, 1, 5
+    )
 
 
 def test_btc_weekend_signal_uses_next_qqq_session(calendar: StaticCalendar) -> None:

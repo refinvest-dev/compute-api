@@ -63,7 +63,8 @@ def test_v2_production_supplement_preserves_direct_evidence_and_real_zero() -> N
     assert len(row["allocationEvidence"]) == payload["counts"]["positionAllocationCount"] == 2
     for allocation in episode.allocations:
         evidence = next(
-            item for item in row["allocationEvidence"]
+            item
+            for item in row["allocationEvidence"]
             if item["evidenceRecordIds"] == sorted(allocation.evidence_record_ids)
         )
         assert evidence["allocatedFee"]["sourceScale"] == allocation.allocated_fee.amount.scale
@@ -71,8 +72,7 @@ def test_v2_production_supplement_preserves_direct_evidence_and_real_zero() -> N
             allocation.allocated_reported_pnl.amount.scale
         )
     assert any(
-        evidence["allocatedReportedPnl"]["amount"] == "0"
-        for evidence in row["allocationEvidence"]
+        evidence["allocatedReportedPnl"]["amount"] == "0" for evidence in row["allocationEvidence"]
     )
     verify_public_result(payload)
     assert _v2_payload_for(request)["resultHash"] == payload["resultHash"]

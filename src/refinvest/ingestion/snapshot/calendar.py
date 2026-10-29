@@ -105,13 +105,13 @@ def _component_records(components: Sequence[CalendarComponent]) -> list[dict[str
     for component in components:
         records.append(
             {
-            "calendar": component.calendar.value,
-            "assets": sorted(component.assets),
-            "provenance": {
-                "source": component.provenance.source,
-                "version": component.provenance.version,
-                "contentHash": component.provenance.content_hash,
-            },
+                "calendar": component.calendar.value,
+                "assets": sorted(component.assets),
+                "provenance": {
+                    "source": component.provenance.source,
+                    "version": component.provenance.version,
+                    "contentHash": component.provenance.content_hash,
+                },
             }
         )
     return sorted(records, key=lambda item: str(item["calendar"]))

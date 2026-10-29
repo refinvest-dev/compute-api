@@ -108,12 +108,19 @@ class PostgresTradingReviewJobRepository:
             existing = cursor.fetchone()
             if existing is not None:
                 (
-                    fingerprint, job_id, logical_id, kind, created_at, run_id, schema,
+                    fingerprint,
+                    job_id,
+                    logical_id,
+                    kind,
+                    created_at,
+                    run_id,
+                    schema,
                     specification,
                 ) = cast(tuple[str, str, str, str, datetime, str, str, str], existing)
                 if fingerprint != job.request_fingerprint:
                     legacy_request = {
-                        key: value for key, value in job.request_payload.items()
+                        key: value
+                        for key, value in job.request_payload.items()
                         if key not in {"resultSchemaVersion", "resultHashSpecificationVersion"}
                     }
                     if (
@@ -231,8 +238,12 @@ class PostgresTradingReviewJobRepository:
                 (idempotency_key_hash, job.request_fingerprint, job.job_id),
             )
         return TradingReviewJobSubmission(
-            job.job_id, job.core_logical_job_id, job.kind, created_at,
-            newly_created=True, core_normalization_run_id=job.core_normalization_run_id,
+            job.job_id,
+            job.core_logical_job_id,
+            job.kind,
+            created_at,
+            newly_created=True,
+            core_normalization_run_id=job.core_normalization_run_id,
             result_schema_version=job.result_schema_version,
             result_hash_specification_version=job.result_hash_specification_version,
         )

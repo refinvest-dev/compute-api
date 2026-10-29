@@ -159,9 +159,7 @@ def _calculate_metrics(
         win_rate=_win_rate(trades),
         trade_count=len(trades),
         avg_trade_return=_mean(tuple(trade.return_pct for trade in trades)),
-        avg_holding_period=_mean(
-            tuple(Decimal(trade.holding_signal_sessions) for trade in trades)
-        ),
+        avg_holding_period=_mean(tuple(Decimal(trade.holding_signal_sessions) for trade in trades)),
         profit_factor=_profit_factor(trades),
     )
 
@@ -230,15 +228,13 @@ def _mean(values: tuple[Decimal, ...]) -> Decimal:
         return sum(values, Decimal(0)) / Decimal(len(values))
 
 
-def _sample_standard_deviation(
-    values: tuple[Decimal, ...], average: Decimal
-) -> Decimal | None:
+def _sample_standard_deviation(values: tuple[Decimal, ...], average: Decimal) -> Decimal | None:
     if len(values) < 2:
         return None
     with localcontext(EXECUTION_DECIMAL_CONTEXT):
-        variance = sum(
-            ((value - average) ** 2 for value in values), Decimal(0)
-        ) / Decimal(len(values) - 1)
+        variance = sum(((value - average) ** 2 for value in values), Decimal(0)) / Decimal(
+            len(values) - 1
+        )
         return variance.sqrt()
 
 

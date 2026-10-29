@@ -65,8 +65,9 @@ def test_v2_fixed_vector_matches_all_section_manifest_and_result_hashes() -> Non
     assert canonicalize_result(sections["RECONCILIATION_MANIFEST"]) == (
         V2_VECTOR["manifestVector"]["canonicalJson"].encode("utf-8")
     )
-    assert payload["reconciliationManifest"]["manifestHash"] == (
-        V2_VECTOR["manifestVector"]["expectedSha256"]
+    assert (
+        payload["reconciliationManifest"]["manifestHash"]
+        == (V2_VECTOR["manifestVector"]["expectedSha256"])
     )
     assert canonicalize_result(payload["resultDigestManifest"]) == (
         V2_VECTOR["resultDigestManifestVector"]["canonicalJson"].encode("utf-8")
@@ -126,9 +127,7 @@ def test_v2_unit_allocation_identity_and_order_are_checked_before_hashing() -> N
         finalize_public_result(duplicated_unit)
 
     duplicated_allocation = _v2_payload()
-    allocations = duplicated_allocation["reconciliationManifest"]["reviewUnits"][0][
-        "allocations"
-    ]
+    allocations = duplicated_allocation["reconciliationManifest"]["reviewUnits"][0]["allocations"]
     allocations.append(copy.deepcopy(allocations[0]))
     with pytest.raises(ResultIntegrityError, match="RESULT_ITEM_CONFLICT"):
         finalize_public_result(duplicated_allocation)

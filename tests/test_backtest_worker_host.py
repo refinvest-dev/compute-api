@@ -37,9 +37,7 @@ class FakeJobs:
         self.retries: list[tuple[str, str, timedelta, str]] = []
         self.completed: list[tuple[str, str, dict[str, object], Period, str]] = []
 
-    def claim_next(
-        self, worker_id: str, lease_duration: timedelta
-    ) -> ClaimedBacktestJob | None:
+    def claim_next(self, worker_id: str, lease_duration: timedelta) -> ClaimedBacktestJob | None:
         return self.claims.pop(0) if self.claims else None
 
     def heartbeat(self, run_id: str, worker_id: str, lease_duration: timedelta) -> bool:
@@ -53,7 +51,11 @@ class FakeJobs:
         return True
 
     def mark_completed(
-        self, run_id: str, worker_id: str, result_payload: dict[str, object], actual_period: Period,
+        self,
+        run_id: str,
+        worker_id: str,
+        result_payload: dict[str, object],
+        actual_period: Period,
         engine_version: str,
     ) -> bool:
         self.completed.append((run_id, worker_id, result_payload, actual_period, engine_version))
@@ -75,7 +77,8 @@ class FakeExecutor:
         self.executed: list[str] = []
 
     def execute(
-        self, job: object,
+        self,
+        job: object,
     ) -> CompletedBacktestExecution | TerminalBacktestFailure | RetryableBacktestFailure:
         self.executed.append(job.claim.run_id)  # type: ignore[attr-defined]
         return self.outcome
@@ -83,7 +86,8 @@ class FakeExecutor:
 
 class WaitingExecutor(FakeExecutor):
     def execute(
-        self, job: object,
+        self,
+        job: object,
     ) -> TerminalBacktestFailure | RetryableBacktestFailure:
         sleep(0.03)
         return super().execute(job)
@@ -162,9 +166,7 @@ def test_terminal_failure_emits_structured_error_code_and_counter(
     assert failure["run_id"] == "run-1"
     assert failure["snapshot_id"] == "snapshot-1"
     counter = next(
-        event
-        for event in events
-        if event.get("metric_name") == "backtest_runs_failed_total"
+        event for event in events if event.get("metric_name") == "backtest_runs_failed_total"
     )
     assert counter == {
         "error_code": "CALENDAR_RESOLUTION_FAILED",
@@ -189,9 +191,7 @@ def test_retry_exhaustion_uses_unspecified_error_code_for_failure_counter(
     assert failure["run_status"] == "FAILED"
     assert failure["error_code"] == "UNSPECIFIED"
     counter = next(
-        event
-        for event in events
-        if event.get("metric_name") == "backtest_runs_failed_total"
+        event for event in events if event.get("metric_name") == "backtest_runs_failed_total"
     )
     assert counter["error_code"] == "UNSPECIFIED"
     assert "database unavailable" not in caplog.text
@@ -233,9 +233,7 @@ def test_retryable_failure_uses_the_existing_retry_policy() -> None:
     worker = host(jobs, FakeExecutor(RetryableBacktestFailure("database unavailable")))
     assert worker.process_once()
     assert jobs.failed == []
-    assert jobs.retries == [
-        ("run-1", "worker-1", timedelta(minutes=2), "database unavailable")
-    ]
+    assert jobs.retries == [("run-1", "worker-1", timedelta(minutes=2), "database unavailable")]
 
 
 def test_unexpected_executor_exception_uses_the_retry_policy() -> None:
@@ -300,7 +298,8 @@ def test_shutdown_stops_after_current_job_without_claiming_another() -> None:
 
     class ShutdownExecutor(FakeExecutor):
         def execute(
-            self, job: object,
+            self,
+            job: object,
         ) -> TerminalBacktestFailure | RetryableBacktestFailure:
             stop_requested.set()
             return super().execute(job)

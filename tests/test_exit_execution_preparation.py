@@ -88,11 +88,13 @@ def test_exit_calendar_or_market_data_gaps_fail_fast() -> None:
     with pytest.raises(MissingRequiredMarketDataError):
         prepare_exit_executions(
             StaticCalendar({"TQQQ": (date(2025, 1, 7),)}),
-            StaticMarketData({
-                AssetSession("TQQQ", date(2025, 1, 7)): DailyBarLookup(
-                    DailyBarAvailability.MISSING_EXPECTED_SESSION
-                )
-            }),
+            StaticMarketData(
+                {
+                    AssetSession("TQQQ", date(2025, 1, 7)): DailyBarLookup(
+                        DailyBarAvailability.MISSING_EXPECTED_SESSION
+                    )
+                }
+            ),
             AssetSymbol.TQQQ,
             Decimal("0"),
             (candidate,),

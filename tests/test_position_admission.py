@@ -66,8 +66,13 @@ def test_duplicate_candidates_do_not_trigger_daily_bar_reads() -> None:
     )
     accepted_schedule = positions[0].entry
     accepted_bar = DailyBar(
-        "TQQQ", accepted_schedule.execution_session, Decimal("100"), Decimal("101"),
-        Decimal("99"), Decimal("100"), 1
+        "TQQQ",
+        accepted_schedule.execution_session,
+        Decimal("100"),
+        Decimal("101"),
+        Decimal("99"),
+        Decimal("100"),
+        1,
     )
 
     class AcceptedOnlyMarketData:

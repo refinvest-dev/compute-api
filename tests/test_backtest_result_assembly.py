@@ -36,8 +36,15 @@ def performance(trade_count: int = 1) -> PerformanceReport:
         metrics = PerformanceMetrics(None, None, None, None, None, 0, None, None, None)
     else:
         metrics = PerformanceMetrics(
-            Decimal("0.1"), Decimal("0.1"), Decimal("0"), Decimal("1"), Decimal("1"),
-            trade_count, Decimal("0.1"), Decimal("2"), None,
+            Decimal("0.1"),
+            Decimal("0.1"),
+            Decimal("0"),
+            Decimal("1"),
+            Decimal("1"),
+            trade_count,
+            Decimal("0.1"),
+            Decimal("2"),
+            None,
         )
     return PerformanceReport((EquityCurvePoint(date(2025, 1, 3), Decimal("1.1")),), metrics)
 

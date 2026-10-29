@@ -109,7 +109,10 @@ class MemoryJobs:
             result_hash_specification_version=job.result_hash_specification_version,
         )
         return TradingReviewJobSubmission(
-            job.job_id, job.core_logical_job_id, job.kind, now,
+            job.job_id,
+            job.core_logical_job_id,
+            job.kind,
+            now,
             core_normalization_run_id=job.core_normalization_run_id,
             result_schema_version=job.result_schema_version,
             result_hash_specification_version=job.result_hash_specification_version,
@@ -241,9 +244,10 @@ def test_normalization_result_version_pin_is_required_exact_and_visible() -> Non
         _validate("TradingNormalizationJobAccepted", response.json())
         assert response.json()["resultSchemaVersion"] == body["resultSchemaVersion"]
         status = client.get(f"{base}/{response.json()['jobId']}", headers=headers)
-        assert status.json()["resultHashSpecificationVersion"] == body[
-            "resultHashSpecificationVersion"
-        ]
+        assert (
+            status.json()["resultHashSpecificationVersion"]
+            == body["resultHashSpecificationVersion"]
+        )
 
 
 @contextmanager
