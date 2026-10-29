@@ -20,4 +20,15 @@ Core polls `GET /trading-review/analytics-jobs/{jobId}`, obtains the Analytics s
 
 ## Verification
 
+Contract ownership and the AR-02A compatibility checks are documented in
+[Analytics contracts](ANALYTICS_CONTRACTS.md). Engine-to-public projection and verified input adaptation now live in application; identity and digest
+construction live in `contracts/analytics`. Worker coordination, Artifact HTTP adapter boundaries and
+AR-05A verification are described in [Analytics worker](ANALYTICS_WORKER_APPLICATION.md).
+The app worker module retains configuration, composition, signal handling and the CLI entrypoint.
+
+Job orchestration, application-owned errors, repository ports and the database-backed HTTP/worker
+smoke are described in [Analytics application](ANALYTICS_APPLICATION.md). Providers live in
+`api/dependencies/trading_analytics_jobs.py`. Shared payload/ACK routing delegates to the
+[terminal delivery application](TERMINAL_DELIVERY_APPLICATION.md).
+
 Run `python -m pytest -q tests/test_trading_analytics_runtime.py` for fixed vector Engine and API delivery coverage. Set `REFINVEST_TEST_DATABASE_URL` to an isolated PostgreSQL database with migrations 0010–0016 applied, then run `python -m pytest -q tests/integration/test_postgres_trading_analytics_jobs.py`. The test database must be separate from production. Run the full Compute suite and `integration/scripts/verify-contract-sync.ps1 -IncludeWeb` from the sibling Integration checkout before release.

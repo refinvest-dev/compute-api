@@ -232,7 +232,10 @@ def test_http_application_worker_and_shared_delivery_use_real_store(monkeypatch,
 
     from refinvest.app.config import Settings, get_settings
     from refinvest.app.main import app
-    from refinvest.app.trading_analytics_worker import TradingAnalyticsWorkerHost
+    from refinvest.application.analytics_worker import (
+        AnalyticsWorkerSettings,
+        TradingAnalyticsWorkerHost,
+    )
     from tests.test_trading_analytics_runtime import _vector
 
     assert DATABASE_URL is not None
@@ -283,11 +286,15 @@ def test_http_application_worker_and_shared_delivery_use_real_store(monkeypatch,
                 headers={**headers, "Idempotency-Key": str(uuid4())},
             )
             assert receipt.status_code == 200 and receipt.json()["grantRevision"] == 1
-            monkeypatch.setattr(
-                "refinvest.app.trading_analytics_worker.download_inputs", fixed_download
-            )
             assert TradingAnalyticsWorkerHost(
-                _repo(), settings, worker_id="ar03a-worker"
+                _repo(),
+                AnalyticsWorkerSettings(
+                    settings.trading_review_artifact_hosts,
+                    settings.trading_analytics_implementation_digest,
+                    settings.trading_analytics_max_input_bytes,
+                ),
+                worker_id="ar05a-worker",
+                download_inputs=fixed_download,
             ).run_once()
             descriptor = client.get(f"{base}/{job_id}/result", headers=headers)
             assert descriptor.status_code == 200
