@@ -17,21 +17,21 @@ from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from refinvest.app.config import Settings
-from refinvest.app.trading_review_identity import (
+from refinvest.app.trading_review_payload import build_normalization_payload
+from refinvest.application.trading_review_jobs import (
+    ClaimedTradingReviewJob,
+    SafeTradingReviewFailure,
+)
+from refinvest.contracts.normalization.identity import (
     HASH_SPECIFICATION_V1,
     NormalizationInputIdentity,
     calculate_input_set_hash,
     supports_target_version_set,
 )
-from refinvest.app.trading_review_payload import MEDIA_TYPE, build_normalization_payload
-from refinvest.app.trading_review_result_delivery import effective_payload_limit
-from refinvest.app.trading_review_result_integrity import (
+from refinvest.contracts.normalization.result_delivery import MEDIA_TYPE, effective_payload_limit
+from refinvest.contracts.normalization.result_integrity import (
     ResultIntegrityError,
     canonicalize_result,
-)
-from refinvest.application.trading_review_jobs import (
-    ClaimedTradingReviewJob,
-    SafeTradingReviewFailure,
 )
 from refinvest.trading_review.decimal import ScaledDecimal
 from refinvest.trading_review.errors import TradingReviewError

@@ -7,12 +7,12 @@ from datetime import UTC, datetime
 import pytest
 
 from refinvest.app.trading_review_payload import build_normalization_payload
-from refinvest.app.trading_review_result_integrity import (
+from refinvest.application.trading_review_jobs import normalization_request_fingerprint
+from refinvest.contracts.normalization.result_integrity import (
     ResultIntegrityError,
     canonicalize_result,
     verify_public_result,
 )
-from refinvest.application.trading_review_jobs import normalization_request_fingerprint
 from refinvest.trading_review import normalize_and_reconstruct
 from refinvest.trading_review.model import NormalizationRequest, NormalizationResult
 from tests.trading_review_support import (

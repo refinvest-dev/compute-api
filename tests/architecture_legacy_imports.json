@@ -136,51 +136,6 @@
   },
   {
     "source_file": "refinvest/api/routes/trading_review_jobs.py",
-    "imported_from": "refinvest.app.trading_review_identity",
-    "names": [
-      "HASH_SPECIFICATION_V1"
-    ],
-    "remove_in": "AR-02N",
-    "reason": "Move this exact dependency to its planned contract or application boundary in AR-02N."
-  },
-  {
-    "source_file": "refinvest/api/routes/trading_review_jobs.py",
-    "imported_from": "refinvest.app.trading_review_identity",
-    "names": [
-      "calculate_input_set_hash"
-    ],
-    "remove_in": "AR-02N",
-    "reason": "Move this exact dependency to its planned contract or application boundary in AR-02N."
-  },
-  {
-    "source_file": "refinvest/api/routes/trading_review_jobs.py",
-    "imported_from": "refinvest.app.trading_review_identity",
-    "names": [
-      "supports_target_version_set"
-    ],
-    "remove_in": "AR-02N",
-    "reason": "Move this exact dependency to its planned contract or application boundary in AR-02N."
-  },
-  {
-    "source_file": "refinvest/api/routes/trading_review_jobs.py",
-    "imported_from": "refinvest.app.trading_review_payload",
-    "names": [
-      "MEDIA_TYPE"
-    ],
-    "remove_in": "AR-02N",
-    "reason": "Move this exact dependency to its planned contract or application boundary in AR-02N."
-  },
-  {
-    "source_file": "refinvest/api/routes/trading_review_jobs.py",
-    "imported_from": "refinvest.app.trading_review_result_integrity",
-    "names": [
-      "ResultIntegrityError"
-    ],
-    "remove_in": "AR-02N",
-    "reason": "Move this exact dependency to its planned contract or application boundary in AR-02N."
-  },
-  {
-    "source_file": "refinvest/api/routes/trading_review_jobs.py",
     "imported_from": "refinvest.persistence.postgres.trading_analytics_jobs",
     "names": [
       "AnalyticsJobConflict"
@@ -216,24 +171,6 @@
     "reason": "Move this exact dependency to its planned contract or application boundary in AR-03N."
   },
   {
-    "source_file": "refinvest/api/schemas/trading_review_jobs.py",
-    "imported_from": "refinvest.app.trading_review_identity",
-    "names": [
-      "NormalizationInputIdentity"
-    ],
-    "remove_in": "AR-02N",
-    "reason": "Move this exact dependency to its planned contract or application boundary in AR-02N."
-  },
-  {
-    "source_file": "refinvest/api/schemas/trading_review_jobs.py",
-    "imported_from": "refinvest.app.trading_review_identity",
-    "names": [
-      "TargetVersionSet"
-    ],
-    "remove_in": "AR-02N",
-    "reason": "Move this exact dependency to its planned contract or application boundary in AR-02N."
-  },
-  {
     "source_file": "refinvest/persistence/postgres/trading_analytics_jobs.py",
     "imported_from": "refinvest.app.trading_analytics_identity",
     "names": [
@@ -241,41 +178,5 @@
     ],
     "remove_in": "AR-03A",
     "reason": "Move this exact dependency to its planned contract or application boundary in AR-03A."
-  },
-  {
-    "source_file": "refinvest/persistence/postgres/trading_review_jobs.py",
-    "imported_from": "refinvest.app.trading_review_result_delivery",
-    "names": [
-      "effective_payload_limit"
-    ],
-    "remove_in": "AR-02N",
-    "reason": "Move this exact dependency to its planned contract or application boundary in AR-02N."
-  },
-  {
-    "source_file": "refinvest/persistence/postgres/trading_review_jobs.py",
-    "imported_from": "refinvest.app.trading_review_result_integrity",
-    "names": [
-      "ResultIntegrityError"
-    ],
-    "remove_in": "AR-02N",
-    "reason": "Move this exact dependency to its planned contract or application boundary in AR-02N."
-  },
-  {
-    "source_file": "refinvest/persistence/postgres/trading_review_jobs.py",
-    "imported_from": "refinvest.app.trading_review_result_integrity",
-    "names": [
-      "parse_result_json_bytes"
-    ],
-    "remove_in": "AR-02N",
-    "reason": "Move this exact dependency to its planned contract or application boundary in AR-02N."
-  },
-  {
-    "source_file": "refinvest/persistence/postgres/trading_review_jobs.py",
-    "imported_from": "refinvest.app.trading_review_result_integrity",
-    "names": [
-      "verify_public_result"
-    ],
-    "remove_in": "AR-02N",
-    "reason": "Move this exact dependency to its planned contract or application boundary in AR-02N."
   }
 ]

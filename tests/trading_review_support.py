@@ -5,7 +5,7 @@ import hashlib
 import io
 from decimal import Decimal
 
-from refinvest.app.trading_review_identity import (
+from refinvest.contracts.normalization.identity import (
     NormalizationInputIdentity,
     calculate_input_set_hash,
 )

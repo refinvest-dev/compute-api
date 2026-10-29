@@ -12,7 +12,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 from pydantic import ValidationError
 
 from refinvest.api.schemas.trading_review_jobs import CreateTradingNormalizationJobTransport
-from refinvest.app.trading_review_identity import (
+from refinvest.contracts.normalization.identity import (
     NormalizationInputIdentity,
     calculate_input_set_hash,
     canonicalize_input_identity,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+MEDIA_TYPE = "application/vnd.refinvest.trading-normalization+json"
+
 
 def effective_payload_limit(policy: dict[str, object], configured_maximum: int) -> tuple[int, str]:
     """Return the byte limit and the party whose limit is effective."""
