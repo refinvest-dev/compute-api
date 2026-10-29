@@ -2,7 +2,7 @@
 
 작성일: 2026-10-28. 검토 기준: Compute `0701c4a`, OpenAPI `0.6.0`.
 
-상태: AR00까지 구현·검증했다. 후속 단계는 이 브랜치에 포함하지 않는다.
+상태: AR01까지 구현·검증했다. 후속 단계는 이 브랜치에 포함하지 않는다.
 
 ## 1. 목표와 범위
 
@@ -77,7 +77,7 @@ AR-08~10을 앞당기되 선행 검증을 생략하지 않는다.
 PR이 main에 머지되기 전에는 후속 PR을 main 기준으로 독립 머지하지 않는다.
 
 - [x] AR00: architecture-baseline — [ARCHITECTURE_BASELINE_AR00.md](ARCHITECTURE_BASELINE_AR00.md)
-- [ ] AR01: dependency-guards
+- [x] AR01: dependency-guards — [ARCHITECTURE_DEPENDENCIES.md](ARCHITECTURE_DEPENDENCIES.md)
 - [ ] AR02N: normalization-contracts
 - [ ] AR02A: analytics-contracts
 - [ ] AR03N: normalization-application
