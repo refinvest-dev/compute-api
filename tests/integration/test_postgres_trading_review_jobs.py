@@ -18,6 +18,7 @@ from psycopg.errors import RaiseException
 
 from refinvest.application.trading_review_jobs import (
     ClaimedTradingReviewJob,
+    ResultPayloadLimitExceeded,
     SafeTradingReviewFailure,
     TradingReviewCapacityExceeded,
     TradingReviewIdempotencyConflict,
@@ -34,7 +35,6 @@ from refinvest.contracts.normalization.result_integrity import (
 )
 from refinvest.persistence.postgres.trading_review_jobs import (
     PostgresTradingReviewJobRepository,
-    ResultPayloadLimitExceeded,
 )
 from tests.trading_review_support import (
     input_set_hash_for,
@@ -138,6 +138,80 @@ def _terminal_payload(
             "artifactId"
         ]
     return canonicalize_result(finalize_public_result(payload))
+
+
+@pytest.mark.parametrize("mode", ["COMPLETED", "CANCELLED", "LEASE_LOST", "PAYLOAD_LIMIT"])
+def test_application_worker_uses_atomic_repository_port(mode) -> None:
+    from refinvest.application.normalization_execution import (
+        CompletedNormalization,
+        FailedNormalization,
+    )
+    from refinvest.application.normalization_worker import TradingReviewWorkerHost
+
+    assert DATABASE_URL is not None
+    repository = PostgresTradingReviewJobRepository(
+        DATABASE_URL, PAYLOAD_KEY, max_payload_bytes=1 if mode == "PAYLOAD_LIMIT" else 52_428_800
+    )
+    job = _job(str(uuid4()))
+    repository.create_idempotently(job, hashlib.sha256(job.job_id.encode()).hexdigest())
+
+    class Executor:
+        def execute(self, claim, should_stop):
+            if mode == "CANCELLED":
+                repository.request_cancellation(claim.job_id, "c" * 64)
+                assert should_stop()
+                return FailedNormalization(
+                    SafeTradingReviewFailure("JOB_CANCELLED", "cancelled", False, "CANCELLATION"),
+                    False,
+                )
+            payload = _terminal_payload(claim)
+            document = json.loads(payload)
+            if mode == "LEASE_LOST":
+                with connect(DATABASE_URL) as connection:
+                    connection.execute(
+                        "UPDATE trading_review_jobs SET lease_owner='another-worker' "
+                        "WHERE job_id=%s",
+                        (claim.job_id,),
+                    )
+            return CompletedNormalization(
+                payload,
+                "application/vnd.refinvest.trading-normalization+json",
+                hashlib.sha256(payload).hexdigest(),
+                claim.computed_input_set_hash,
+                document["reconciliationManifest"]["manifestHash"],
+                document["resultHash"],
+            )
+
+    try:
+        worker = TradingReviewWorkerHost(
+            repository,
+            Executor(),
+            worker_id="application-worker",
+            lease_duration=timedelta(seconds=60),
+            heartbeat_interval=timedelta(seconds=15),
+            retention=timedelta(hours=24),
+        )
+        assert worker.run_once()
+        view = repository.get(job.job_id)
+        assert view is not None
+        expected = (
+            "RUNNING" if mode == "LEASE_LOST" else "FAILED" if mode == "PAYLOAD_LIMIT" else mode
+        )
+        assert view.status.value == expected
+        descriptor = repository.get_result_descriptor(job.job_id)
+        if mode == "COMPLETED":
+            assert descriptor is not None
+            payload = repository.get_terminal_payload(descriptor.payload_id)
+            assert (
+                payload is not None
+                and hashlib.sha256(payload).hexdigest() == descriptor.payload_sha256
+            )
+        else:
+            assert descriptor is None
+        if mode == "PAYLOAD_LIMIT":
+            assert view.failure is not None and view.failure.code == "RESULT_PAYLOAD_LIMIT_EXCEEDED"
+    finally:
+        _delete(job.job_id)
 
 
 def test_v2_pinned_job_persists_descriptor_resource_and_rejects_other_pair() -> None:

@@ -1,4 +1,4 @@
-"""Keep the normalization runtime independent of Core, Web, and test harnesses."""
+"""Keep the normalization and Analytics runtimes independent of Core, Web, and test harnesses."""
 
 import ast
 from pathlib import Path
@@ -8,8 +8,11 @@ RUNTIME_FILES = (
     ROOT / "application/trading_review_jobs.py",
     ROOT / "persistence/postgres/trading_review_jobs.py",
     ROOT / "api/routes/trading_review_jobs.py",
-    ROOT / "app/trading_review_normalization.py",
-    ROOT / "app/trading_review_payload.py",
+    ROOT / "application/normalization_execution.py",
+    ROOT / "application/normalization_worker.py",
+    ROOT / "adapters/normalization/artifacts.py",
+    ROOT / "adapters/normalization/process_executor.py",
+    ROOT / "application/normalization_payload.py",
     ROOT / "app/trading_review_worker.py",
 )
 

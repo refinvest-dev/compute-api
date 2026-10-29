@@ -8,15 +8,15 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from refinvest.app.config import Settings
-from refinvest.app.trading_review_normalization import (
+from refinvest.adapters.normalization.artifacts import download_normalization_artifact
+from refinvest.adapters.normalization.process_executor import execute_normalization_child
+from refinvest.application.normalization_execution import (
     CompletedNormalization,
     FailedNormalization,
-    _download_artifact,
-    _SafeExecutionError,
-    execute_normalization_child,
+    NormalizationExecutionError,
+    NormalizationExecutionSettings,
 )
-from refinvest.app.trading_review_worker import TradingReviewWorkerHost
+from refinvest.application.normalization_worker import TradingReviewWorkerHost
 from refinvest.application.trading_review_jobs import (
     ClaimedTradingReviewJob,
     SafeTradingReviewFailure,
@@ -170,8 +170,8 @@ def test_artifact_hash_mismatch_is_rejected_before_engine(monkeypatch: pytest.Mo
         def open(self, *_: object, **__: object) -> Response:
             return Response()
 
-    normalization = importlib.import_module("refinvest.app.trading_review_normalization")
-    monkeypatch.setattr(normalization, "build_opener", lambda *_: Opener())
+    artifacts = importlib.import_module("refinvest.adapters.normalization.artifacts")
+    monkeypatch.setattr(artifacts, "build_opener", lambda *_: Opener())
     grant: dict[str, object] = {
         "accessUri": "https://internal.example/artifact",
         "expiresAt": (datetime.now(UTC) + timedelta(minutes=1)).isoformat(),
@@ -179,16 +179,18 @@ def test_artifact_hash_mismatch_is_rejected_before_engine(monkeypatch: pytest.Mo
         "contentType": "text/csv",
         "rawSha256": "0" * 64,
     }
-    with pytest.raises(_SafeExecutionError) as raised:
-        _download_artifact(grant, ("internal.example",))
+    with pytest.raises(NormalizationExecutionError) as raised:
+        download_normalization_artifact(grant, ("internal.example",))
     assert raised.value.failure.code == "SOURCE_CONTENT_HASH_MISMATCH"
-    with pytest.raises(_SafeExecutionError) as wrong_type:
-        _download_artifact(
+    with pytest.raises(NormalizationExecutionError) as wrong_type:
+        download_normalization_artifact(
             dict(grant, contentType="application/vnd.ms-excel"), ("internal.example",)
         )
     assert wrong_type.value.failure.code == "ARTIFACT_ACCESS_DENIED"
-    with pytest.raises(_SafeExecutionError) as untrusted:
-        _download_artifact(dict(grant, accessUri="file:///private/raw.csv"), ("internal.example",))
+    with pytest.raises(NormalizationExecutionError) as untrusted:
+        download_normalization_artifact(
+            dict(grant, accessUri="file:///private/raw.csv"), ("internal.example",)
+        )
     assert untrusted.value.failure.code == "ARTIFACT_ACCESS_DENIED"
 
 
@@ -225,9 +227,10 @@ def test_child_reads_verified_artifacts_and_invokes_production_engine(
             opened.append(role)
             return Response(content_by_role[role])
 
-    normalization = importlib.import_module("refinvest.app.trading_review_normalization")
+    normalization = importlib.import_module("refinvest.application.normalization_execution")
+    artifacts = importlib.import_module("refinvest.adapters.normalization.artifacts")
     opened: list[str] = []
-    monkeypatch.setattr(normalization, "build_opener", lambda *_: Opener())
+    monkeypatch.setattr(artifacts, "build_opener", lambda *_: Opener())
     identity = normalization_identity_for(engine_request)
     input_set_hash = input_set_hash_for(identity)
     request_payload: dict[str, object] = {
@@ -273,8 +276,8 @@ def test_child_reads_verified_artifacts_and_invokes_production_engine(
         computed_input_set_hash=input_set_hash,
         version_set_hash=identity["targetVersionSet"]["versionSetHash"],
     )
-    settings = Settings(
-        internal_api_key=None,
+    settings = NormalizationExecutionSettings(
+        trading_review_max_payload_bytes=512 * 1024 * 1024,
         trading_review_timezone_database_version=engine_request.timezone_database_version,
         trading_review_identity_key=engine_request.stable_identity_key.decode(),
         trading_review_masking_key="synthetic-masking-secret-at-least-32-bytes",

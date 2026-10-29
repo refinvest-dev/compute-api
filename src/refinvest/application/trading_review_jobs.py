@@ -149,6 +149,10 @@ class ClaimedTradingReviewJob:
     result_hash_specification_version: str = "TRADING_NORMALIZATION_RESULT_HASH_V1"
 
 
+class ResultPayloadLimitExceeded(ValueError):
+    """The exact entity body exceeds the pinned effective limit."""
+
+
 class TradingReviewIdempotencyConflict(ValueError):
     """One idempotency key was reused for a different canonical request."""
 

@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from refinvest.app.trading_review_payload import build_normalization_payload
+from refinvest.application.normalization_payload import build_normalization_payload
 from refinvest.application.trading_review_jobs import normalization_request_fingerprint
 from refinvest.contracts.normalization.result_integrity import (
     ResultIntegrityError,
