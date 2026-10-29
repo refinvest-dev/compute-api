@@ -31,15 +31,36 @@ _SECTIONS = (
     "SOURCE_EVIDENCE_SNAPSHOTS",
 )
 _V2_SECTIONS = ("ANALYTICS_INPUT_SUPPLEMENT", *_SECTIONS)
-_V2_ROOT_FIELDS = frozenset({
-    "jobId", "coreLogicalJobId", "coreNormalizationRunId", "coreImportSessionId",
-    "attemptToken", "deletionGeneration", "status", "targetVersionSet", "inputSetHash",
-    "hashSpecificationVersion", "resultSchemaVersion", "resultHashSpecificationVersion",
-    "counts", "sectionDigests", "resultDigestManifest", "artifactCoverages",
-    "canonicalRecords", "sourceEvidenceSnapshots", "reconciliationManifest", "capability",
-    "qualityReport", "analyticsInputSupplement", "ledgerContentHash", "resultHash",
-    "createdAt", "terminalAt",
-})
+_V2_ROOT_FIELDS = frozenset(
+    {
+        "jobId",
+        "coreLogicalJobId",
+        "coreNormalizationRunId",
+        "coreImportSessionId",
+        "attemptToken",
+        "deletionGeneration",
+        "status",
+        "targetVersionSet",
+        "inputSetHash",
+        "hashSpecificationVersion",
+        "resultSchemaVersion",
+        "resultHashSpecificationVersion",
+        "counts",
+        "sectionDigests",
+        "resultDigestManifest",
+        "artifactCoverages",
+        "canonicalRecords",
+        "sourceEvidenceSnapshots",
+        "reconciliationManifest",
+        "capability",
+        "qualityReport",
+        "analyticsInputSupplement",
+        "ledgerContentHash",
+        "resultHash",
+        "createdAt",
+        "terminalAt",
+    }
+)
 _DECIMAL_KEYS = frozenset({"value", "amount", "actual", "expected", "absoluteDelta", "tolerance"})
 _TIMESTAMP_KEYS = frozenset(
     {"earliestObservedAt", "latestObservedAt", "occurredAt", "openedAt", "closedAt"}
@@ -356,16 +377,16 @@ def _validate_supplement(public: dict[str, object], manifest: dict[str, object])
     if not isinstance(supplement, dict):
         raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
     typed_supplement = cast(dict[str, object], supplement)
-    if set(typed_supplement) != {
-        "schemaVersion", "reviewUnitEngineInputs"
-    } or typed_supplement["schemaVersion"] != "TRADING_ANALYTICS_INPUT_SUPPLEMENT_V1":
+    if (
+        set(typed_supplement) != {"schemaVersion", "reviewUnitEngineInputs"}
+        or typed_supplement["schemaVersion"] != "TRADING_ANALYTICS_INPUT_SUPPLEMENT_V1"
+    ):
         raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
     rows = _items(typed_supplement["reviewUnitEngineInputs"])
     units = _items(manifest["reviewUnits"])
     records = {str(item["recordId"]): item for item in _items(public["canonicalRecords"])}
     if any(
-        not isinstance(item.get("reviewUnitId"), str) or not item["reviewUnitId"]
-        for item in rows
+        not isinstance(item.get("reviewUnitId"), str) or not item["reviewUnitId"] for item in rows
     ):
         raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
     unit_ids = [str(item["reviewUnitId"]) for item in rows]
@@ -380,9 +401,16 @@ def _validate_supplement(public: dict[str, object], manifest: dict[str, object])
     matches = _items(manifest["reconciliationMatches"])
     issues = _items(manifest["reconciliationIssues"])
     for row, unit in zip(rows, units, strict=True):
-        if set(row) != {
-            "reviewUnitId", "evidenceRecordIds", "stableEpisodeTimeAvailable", "allocationEvidence"
-        } or type(row["stableEpisodeTimeAvailable"]) is not bool:
+        if (
+            set(row)
+            != {
+                "reviewUnitId",
+                "evidenceRecordIds",
+                "stableEpisodeTimeAvailable",
+                "allocationEvidence",
+            }
+            or type(row["stableEpisodeTimeAvailable"]) is not bool
+        ):
             raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
         unit_evidence = _supplement_ids(row["evidenceRecordIds"], records)
         instrument = unit["instrumentId"]
@@ -417,7 +445,10 @@ def _validate_supplement(public: dict[str, object], manifest: dict[str, object])
         seen_allocations.update(cast(list[str], row_ids))
         for allocation_row, allocation in zip(allocation_rows, allocations, strict=True):
             if set(allocation_row) != {
-                "allocationId", "evidenceRecordIds", "allocatedFee", "allocatedReportedPnl"
+                "allocationId",
+                "evidenceRecordIds",
+                "allocatedFee",
+                "allocatedReportedPnl",
             }:
                 raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
             evidence = _supplement_ids(allocation_row["evidenceRecordIds"], records)
@@ -426,9 +457,9 @@ def _validate_supplement(public: dict[str, object], manifest: dict[str, object])
             typed = {str(records[item]["recordType"]): records[item] for item in evidence}
             if set(typed) != {"EXECUTION", "FEE", "VENUE_REPORTED_PNL"}:
                 raise ResultIntegrityError("EVIDENCE_REFERENCE_INVALID")
-            execution, fee, pnl = (typed[name] for name in (
-                "EXECUTION", "FEE", "VENUE_REPORTED_PNL"
-            ))
+            execution, fee, pnl = (
+                typed[name] for name in ("EXECUTION", "FEE", "VENUE_REPORTED_PNL")
+            )
             if (
                 execution["recordId"] != allocation["recordId"]
                 or len({item["sourceExecutionKey"] for item in (execution, fee, pnl)}) != 1
@@ -617,9 +648,10 @@ def finalize_public_result(payload: dict[str, object]) -> dict[str, object]:
     digest_by_type["RECONCILIATION_MANIFEST"] = section(
         "RECONCILIATION_MANIFEST", manifest_semantic, 1
     )
-    digests = [digest_by_type[name] for name in (
-        _V2_SECTIONS if schema_version == RESULT_SCHEMA_V2 else _SECTIONS
-    )]
+    digests = [
+        digest_by_type[name]
+        for name in (_V2_SECTIONS if schema_version == RESULT_SCHEMA_V2 else _SECTIONS)
+    ]
     digest_manifest = {
         "resultHashSpecificationVersion": hash_version,
         "resultSchemaVersion": schema_version,
@@ -644,7 +676,8 @@ def finalize_public_result(payload: dict[str, object]) -> dict[str, object]:
 def verify_public_result(payload: dict[str, object]) -> None:
     """Recompute integrity independently from the received public DTO fields."""
     if (
-        payload.get("resultSchemaVersion"), payload.get("resultHashSpecificationVersion")
+        payload.get("resultSchemaVersion"),
+        payload.get("resultHashSpecificationVersion"),
     ) not in _RESULT_PAIRS:
         raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
     declared_counts = payload.get("counts")

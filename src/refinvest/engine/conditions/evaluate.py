@@ -25,9 +25,7 @@ def evaluate_condition_group(
     """Evaluate every condition before combining one validated MVP group."""
     combinator = _group_combinator(conditions)
     results = tuple(
-        _evaluate_condition(
-            calendar, market_data, primary_signal_asset, signal_session, condition
-        )
+        _evaluate_condition(calendar, market_data, primary_signal_asset, signal_session, condition)
         for condition in conditions
     )
     if combinator is None:

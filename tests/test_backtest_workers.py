@@ -82,8 +82,7 @@ def test_claim_reuses_the_same_pinned_snapshot_on_retry() -> None:
 def test_missing_pinned_snapshot_is_terminal_and_not_retried() -> None:
     jobs = FakeWorkerJobs(claim())
     assert (
-        claim_executable_backtest("worker-1", timedelta(minutes=1), jobs, FakeSnapshots([]))
-        is None
+        claim_executable_backtest("worker-1", timedelta(minutes=1), jobs, FakeSnapshots([])) is None
     )
     assert jobs.failed == [
         (

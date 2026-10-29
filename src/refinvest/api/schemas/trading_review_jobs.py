@@ -171,14 +171,10 @@ class ComputeTerminalResultDescriptorTransport(StrictTransport):
     result_hash: str = Field(alias="resultHash", pattern=r"^[a-f0-9]{64}$")
     result_schema_version: Literal[
         "TRADING_NORMALIZATION_RESULT_V1", "TRADING_NORMALIZATION_RESULT_V2"
-    ] = Field(
-        alias="resultSchemaVersion"
-    )
+    ] = Field(alias="resultSchemaVersion")
     result_hash_specification_version: Literal[
         "TRADING_NORMALIZATION_RESULT_HASH_V1", "TRADING_NORMALIZATION_RESULT_HASH_V2"
-    ] = Field(
-        alias="resultHashSpecificationVersion"
-    )
+    ] = Field(alias="resultHashSpecificationVersion")
     counts: dict[str, int]
     section_digests: list[dict[str, object]] = Field(
         alias="sectionDigests", min_length=9, max_length=10

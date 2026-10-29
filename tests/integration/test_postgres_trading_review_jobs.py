@@ -182,11 +182,14 @@ def test_v2_pinned_job_persists_descriptor_resource_and_rejects_other_pair() -> 
         assert descriptor.result_hash_specification_version == job.result_hash_specification_version
         assert len(descriptor.section_digests) == 10
         assert repository.get_terminal_payload(descriptor.payload_id) == payload
-        v1_request = {**request,
+        v1_request = {
+            **request,
             "resultSchemaVersion": "TRADING_NORMALIZATION_RESULT_V1",
-            "resultHashSpecificationVersion": "TRADING_NORMALIZATION_RESULT_HASH_V1"}
+            "resultHashSpecificationVersion": "TRADING_NORMALIZATION_RESULT_HASH_V1",
+        }
         v1 = replace(
-            job, request_payload=v1_request,
+            job,
+            request_payload=v1_request,
             request_fingerprint=normalization_request_fingerprint(v1_request),
             result_schema_version="TRADING_NORMALIZATION_RESULT_V1",
             result_hash_specification_version="TRADING_NORMALIZATION_RESULT_HASH_V1",
@@ -209,7 +212,8 @@ def test_legacy_v1_replay_rekeys_fingerprint_without_changing_job_pin() -> None:
     repository.create_idempotently(job, key)
     try:
         legacy = {
-            name: value for name, value in job.request_payload.items()
+            name: value
+            for name, value in job.request_payload.items()
             if name not in {"resultSchemaVersion", "resultHashSpecificationVersion"}
         }
         old_fingerprint = normalization_request_fingerprint(legacy)

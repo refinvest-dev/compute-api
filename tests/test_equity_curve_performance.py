@@ -50,8 +50,15 @@ def market_data(
         {
             AssetSession(asset.value, session): DailyBarLookup(
                 DailyBarAvailability.AVAILABLE,
-                DailyBar(asset.value, session, Decimal(close), Decimal(close), Decimal(close),
-                         Decimal(close), 1),
+                DailyBar(
+                    asset.value,
+                    session,
+                    Decimal(close),
+                    Decimal(close),
+                    Decimal(close),
+                    Decimal(close),
+                    1,
+                ),
             )
             for session, close in zip(sessions(), closes, strict=True)
         }
@@ -92,9 +99,7 @@ def test_builds_close_marked_curve_and_metrics_from_realized_trade() -> None:
     with localcontext(EXECUTION_DECIMAL_CONTEXT):
         entry_close_value = (Decimal(100) / Decimal(101)) * Decimal("0.99")
         final_value = Decimal("108.9") / Decimal(101)
-        expected_cagr = (
-            (final_value.ln() * (Decimal("365.25") / Decimal(5))).exp() - Decimal(1)
-        )
+        expected_cagr = (final_value.ln() * (Decimal("365.25") / Decimal(5))).exp() - Decimal(1)
     assert result.equity_curve == (
         result.equity_curve[0].__class__(date(2025, 1, 2), entry_close_value),
         result.equity_curve[1].__class__(date(2025, 1, 3), final_value),
@@ -111,14 +116,14 @@ def test_builds_close_marked_curve_and_metrics_from_realized_trade() -> None:
 
 
 def test_profit_factor_uses_sequential_normalized_realized_pnl() -> None:
-    first_trade = trade(
-        date(2025, 1, 2), date(2025, 1, 3), Decimal("100"), Decimal("110"), 1
-    )
-    second_trade = trade(
-        date(2025, 1, 6), date(2025, 1, 7), Decimal("100"), Decimal("90"), 1
-    )
+    first_trade = trade(date(2025, 1, 2), date(2025, 1, 3), Decimal("100"), Decimal("110"), 1)
+    second_trade = trade(date(2025, 1, 6), date(2025, 1, 7), Decimal("100"), Decimal("90"), 1)
     result = evaluate_performance(
-        calendar(), market_data(), AssetSymbol.TQQQ, fee_model("0"), period(),
+        calendar(),
+        market_data(),
+        AssetSymbol.TQQQ,
+        fee_model("0"),
+        period(),
         (first_trade, second_trade),
     )
 
@@ -154,19 +159,31 @@ def test_expected_session_gap_fails_fast_even_while_flat() -> None:
 def test_non_positive_close_is_dataset_corruption() -> None:
     with pytest.raises(DatasetCorruptionError):
         evaluate_performance(
-            calendar(), market_data(("0", "110", "110", "120")), AssetSymbol.TQQQ,
-            fee_model(), period(), (),
+            calendar(),
+            market_data(("0", "110", "110", "120")),
+            AssetSymbol.TQQQ,
+            fee_model(),
+            period(),
+            (),
         )
 
 
 def test_sharpe_uses_execution_asset_calendar_annualization() -> None:
     result_equity = evaluate_performance(
-        calendar(AssetSymbol.QQQ), market_data(asset=AssetSymbol.QQQ), AssetSymbol.QQQ,
-        fee_model("0"), period(), (trade(),),
+        calendar(AssetSymbol.QQQ),
+        market_data(asset=AssetSymbol.QQQ),
+        AssetSymbol.QQQ,
+        fee_model("0"),
+        period(),
+        (trade(),),
     )
     result_crypto = evaluate_performance(
-        calendar(AssetSymbol.BTCUSDT), market_data(asset=AssetSymbol.BTCUSDT), AssetSymbol.BTCUSDT,
-        fee_model("0"), period(), (trade(),),
+        calendar(AssetSymbol.BTCUSDT),
+        market_data(asset=AssetSymbol.BTCUSDT),
+        AssetSymbol.BTCUSDT,
+        fee_model("0"),
+        period(),
+        (trade(),),
     )
 
     assert result_equity.metrics.sharpe is not None

@@ -351,9 +351,8 @@ def _review_unit(
 ) -> dict[str, object]:
     allocations: list[dict[str, object]] = []
     for item in episode.allocations:
-        if (
-            not isinstance(cast(object, item.allocated_fee), MoneyAmount)
-            or not isinstance(cast(object, item.allocated_reported_pnl), MoneyAmount)
+        if not isinstance(cast(object, item.allocated_fee), MoneyAmount) or not isinstance(
+            cast(object, item.allocated_reported_pnl), MoneyAmount
         ):
             raise ResultIntegrityError("RESULT_SCHEMA_UNSUPPORTED")
         allocations.append(

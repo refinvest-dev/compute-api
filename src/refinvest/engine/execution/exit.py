@@ -42,8 +42,13 @@ def price_exit_execution_schedules(
 ) -> tuple[ExitExecution, ...]:
     """Price only exit schedules belonging to admitted positions."""
     return tuple(
-        _price_exit_execution(market_data, slippage, schedule.candidate, schedule.execution_asset,
-                              schedule.execution_session)
+        _price_exit_execution(
+            market_data,
+            slippage,
+            schedule.candidate,
+            schedule.execution_asset,
+            schedule.execution_session,
+        )
         for schedule in schedules
     )
 
