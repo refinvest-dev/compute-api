@@ -97,6 +97,8 @@ RULES = (
             "refinvest.marketdata.adapters",
             *NETWORK_PACKAGES,
             "os",
+            "multiprocessing",
+            "subprocess",
         ),
         (
             "refinvest.application",
@@ -323,6 +325,8 @@ def test_architecture_check_reports_absolute_relative_and_external_violations(
         ("adapters/analytics/new.py", "from refinvest.app.config import Settings\n"),
         ("adapters/analytics/new.py", "import psycopg\n"),
         ("adapters/analytics/new.py", "from refinvest.application.analytics_worker import Host\n"),
+        ("application/new.py", "from multiprocessing import get_context\n"),
+        ("application/new.py", "import subprocess\n"),
         ("adapters/backtest/new.py", "from refinvest.app.worker import factory\n"),
         ("adapters/backtest/new.py", "import psycopg\n"),
         ("adapters/backtest/new.py", "from refinvest.persistence.postgres import Jobs\n"),

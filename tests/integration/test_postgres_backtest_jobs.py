@@ -257,7 +257,10 @@ def test_cleanup_removes_only_expired_terminal_jobs() -> None:
             )
 
 
-def test_worker_completes_a_manifest_backed_zero_trade_backtest(tmp_path: Path) -> None:
+@pytest.mark.parametrize("isolated", [False, True])
+def test_worker_completes_a_manifest_backed_zero_trade_backtest(
+    tmp_path: Path, isolated: bool
+) -> None:
     assert DATABASE_URL is not None
     run_id = str(uuid4())
     snapshot_id = f"snapshot-{uuid4()}"
@@ -293,6 +296,20 @@ def test_worker_completes_a_manifest_backed_zero_trade_backtest(tmp_path: Path) 
             PostgresDatasetSnapshotRepository(DATABASE_URL),
             DailyBarBacktestExecutor(FilesystemSnapshotExecutionDataLoader(), "integration-v1"),
         )
+        if isolated:
+            from refinvest.app.config import Settings
+            from refinvest.app.worker import create_backtest_worker
+
+            worker = create_backtest_worker(
+                Settings(
+                    None,
+                    database_url=DATABASE_URL,
+                    engine_version="integration-v1",
+                    worker_id="worker-a",
+                    worker_lease_seconds=30,
+                    worker_heartbeat_seconds=10,
+                )
+            )
 
         assert worker.process_once()
         status = jobs.get(run_id)
