@@ -3,14 +3,10 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from datetime import datetime, timedelta
-from os import urandom
 from typing import cast
 from uuid import uuid4
 
-from cryptography.exceptions import InvalidTag
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from psycopg import connect
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Jsonb
@@ -38,6 +34,29 @@ from refinvest.contracts.normalization.result_integrity import (
     parse_result_json_bytes,
     verify_public_result,
 )
+from refinvest.persistence.postgres.normalization_grants import (
+    close_artifact_leases,
+    fresh_grants,
+    insert_grant_revision,
+)
+from refinvest.persistence.postgres.normalization_payloads import (
+    create_payload_cipher,
+    decode_terminal_payload,
+    encrypt_grants,
+    encrypt_terminal_payload,
+    require_terminal_cipher,
+    with_grant_locators,
+)
+from refinvest.persistence.postgres.normalization_rows import (
+    ack_fingerprint,
+    canonical_hash,
+    claim_identity,
+    failure_json,
+    grant_receipt,
+    status_view,
+    terminal_descriptor,
+    without_grant_locators,
+)
 
 
 class PostgresTradingReviewJobRepository:
@@ -54,10 +73,8 @@ class PostgresTradingReviewJobRepository:
         max_attempts: int = 3,
         max_payload_bytes: int = 512 * 1024 * 1024,
     ) -> None:
-        if payload_encryption_key is not None and len(payload_encryption_key) != 32:
-            raise ValueError("Trading Review payload encryption key must be 32 bytes.")
+        self._payload_cipher = create_payload_cipher(payload_encryption_key)
         self._database_url = database_url
-        self._payload_cipher = AESGCM(payload_encryption_key) if payload_encryption_key else None
         if active_job_limit <= 0 or max_attempts <= 0:
             raise ValueError("Job capacity and attempt budget must be positive.")
         if grant_renewal_cutoff <= timedelta(0) or grant_refresh_wait <= timedelta(0):
@@ -166,10 +183,10 @@ class PostgresTradingReviewJobRepository:
             )
             if len(grants) != 2:
                 raise ValueError("Exactly two artifact grants are required.")
-            if not _fresh_grants(grants, cursor):
+            if not fresh_grants(grants, cursor):
                 raise TradingReviewGrantInvalid("New admission requires fresh grants.")
-            stored_payload = _without_grant_locators(job.request_payload)
-            encrypted_grants = self._encrypt_grants(job.job_id, grants)
+            stored_payload = without_grant_locators(job.request_payload)
+            encrypted_grants = encrypt_grants(self._payload_cipher, job.job_id, grants)
             cursor.execute(
                 """
                 INSERT INTO trading_review_jobs
@@ -225,7 +242,7 @@ class PostgresTradingReviewJobRepository:
                 "INSERT INTO trading_review_attempt_tokens (job_id, attempt_token) VALUES (%s, %s)",
                 (job.job_id, job.attempt_token),
             )
-            _insert_grant_revision(cursor, job.job_id, 0, job.attempt_token, grants)
+            insert_grant_revision(cursor, job.job_id, 0, job.attempt_token, grants)
             cursor.execute(
                 """
                 INSERT INTO trading_review_job_idempotency
@@ -250,25 +267,7 @@ class PostgresTradingReviewJobRepository:
             self._reconcile_job(cursor, job_id)
             cursor.execute(_STATUS_QUERY + " WHERE j.job_id = %s", (job_id,))
             row = cursor.fetchone()
-        return _status_view(row)
-
-    def _encrypt_grants(self, job_id: str, grants: list[dict[str, object]]) -> bytes:
-        if self._payload_cipher is None:
-            raise RuntimeError("Trading Review encryption is not configured.")
-        nonce = urandom(12)
-        raw = json.dumps(grants, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        return nonce + self._payload_cipher.encrypt(nonce, raw, job_id.encode())
-
-    def _with_grant_locators(
-        self, job_id: str, payload: dict[str, object], encrypted: bytes | None
-    ) -> dict[str, object]:
-        if encrypted is None:
-            return payload  # Live jobs created before migration 0011 retain their original grants.
-        if self._payload_cipher is None:
-            raise RuntimeError("Trading Review encryption is not configured.")
-        raw = bytes(encrypted)
-        grants = json.loads(self._payload_cipher.decrypt(raw[:12], raw[12:], job_id.encode()))
-        return {**payload, "artifactAccessGrants": grants}
+        return status_view(row)
 
     def _reconcile_job(self, cursor: object, job_id: str) -> None:
         """Observe expiry with the DB clock even when all workers have stopped."""
@@ -321,7 +320,7 @@ class PostgresTradingReviewJobRepository:
                    WHERE job_id = %s AND attempt_number = %s AND completed_at IS NULL""",
                 (job_id, attempt),
             )
-            _close_artifact_leases(cursor, job_id, attempt, "EXPIRED")
+            close_artifact_leases(cursor, job_id, attempt, "EXPIRED")
             cursor.execute(  # type: ignore[attr-defined]
                 """UPDATE trading_review_jobs SET lease_owner = NULL, claimed_worker = NULL,
                           lease_expires_at = NULL, heartbeat_at = NULL,
@@ -384,13 +383,13 @@ class PostgresTradingReviewJobRepository:
                           grant_action = 'NONE', grant_refresh_deadline_at = NULL,
                           current_grants_encrypted = NULL,
                           updated_at = CURRENT_TIMESTAMP WHERE job_id = %s""",
-                (Jsonb(_failure_json(failure)), job_id),
+                (Jsonb(failure_json(failure)), job_id),
             )
 
     def update_grants(
         self, job_id: str, idempotency_key_hash: str, payload: dict[str, object]
     ) -> GrantUpdateReceipt | None:
-        fingerprint = _canonical_hash(payload)
+        fingerprint = canonical_hash(payload)
         with connect(self._database_url) as connection, connection.cursor() as cursor:
             _lock_key(cursor, idempotency_key_hash)
             cursor.execute(
@@ -403,7 +402,7 @@ class PostgresTradingReviewJobRepository:
             if existing is not None:
                 if str(existing[0]) != job_id or existing[1] != fingerprint:
                     raise TradingReviewIdempotencyConflict("Grant update key was reused.")
-                return _grant_receipt(cast(dict[str, object], existing[2]))
+                return grant_receipt(cast(dict[str, object], existing[2]))
             self._reconcile_job(cursor, job_id)
             cursor.execute(
                 """SELECT status, grant_action, grant_revision, attempt_token,
@@ -486,9 +485,9 @@ class PostgresTradingReviewJobRepository:
                 != sorted(tuple(g.get(k) for k in fields) for g in pinned)
             ):
                 raise TradingReviewJobStateConflict("Replacement grants are invalid.")
-            if not _fresh_grants(grants, cursor):
+            if not fresh_grants(grants, cursor):
                 raise TradingReviewGrantInvalid("Replacement grants are expired.")
-            prior = self._with_grant_locators(job_id, request, encrypted)
+            prior = with_grant_locators(self._payload_cipher, job_id, request, encrypted)
             old = cast(list[dict[str, object]], prior["artifactAccessGrants"])
             if any(
                 next(g for g in grants if g["role"] == old_grant["role"]).get("accessUri")
@@ -511,7 +510,7 @@ class PostgresTradingReviewJobRepository:
                 (job_id, revision),
             )
             new_revision = int(revision) + 1
-            _insert_grant_revision(cursor, job_id, new_revision, str(next_token), grants)
+            insert_grant_revision(cursor, job_id, new_revision, str(next_token), grants)
             cursor.execute(
                 """UPDATE trading_review_jobs
                    SET grant_revision = %s, attempt_token = %s,
@@ -523,8 +522,8 @@ class PostgresTradingReviewJobRepository:
                 (
                     new_revision,
                     next_token,
-                    self._encrypt_grants(job_id, grants),
-                    Jsonb(_without_grant_locators(prior | {"artifactAccessGrants": grants})),
+                    encrypt_grants(self._payload_cipher, job_id, grants),
+                    Jsonb(without_grant_locators(prior | {"artifactAccessGrants": grants})),
                     "QUEUED" if mode == "REPLACE_QUEUED_GRANTS" else "RETRY_READY",
                     job_id,
                 ),
@@ -547,7 +546,7 @@ class PostgresTradingReviewJobRepository:
                    VALUES (%s, %s, %s, %s)""",
                 (idempotency_key_hash, job_id, fingerprint, Jsonb(receipt)),
             )
-        return _grant_receipt(receipt)
+        return grant_receipt(receipt)
 
     def request_cancellation(
         self, job_id: str, idempotency_key_hash: str
@@ -620,7 +619,7 @@ class PostgresTradingReviewJobRepository:
                         """,
                         (job_id, cancelled[0]),
                     )
-                    _close_artifact_leases(cursor, job_id, int(cancelled[0]), "CANCELLED")
+                    close_artifact_leases(cursor, job_id, int(cancelled[0]), "CANCELLED")
                 else:
                     cursor.execute(
                         """
@@ -634,7 +633,7 @@ class PostgresTradingReviewJobRepository:
                     )
             cursor.execute(_STATUS_QUERY + " WHERE j.job_id = %s", (job_id,))
             row = cursor.fetchone()
-        return _status_view(row)
+        return status_view(row)
 
     def claim_next(
         self, worker_id: str, lease_duration: timedelta
@@ -734,7 +733,9 @@ class PostgresTradingReviewJobRepository:
                 ],
                 row,
             )
-            request_payload = self._with_grant_locators(str(values[0]), values[3], values[11])
+            request_payload = with_grant_locators(
+                self._payload_cipher, str(values[0]), values[3], values[11]
+            )
             request_payload["resultDeliveryPolicy"] = values[17]
             request_payload["resultSchemaVersion"] = values[18]
             request_payload["resultHashSpecificationVersion"] = values[19]
@@ -929,13 +930,9 @@ class PostgresTradingReviewJobRepository:
         counts = cast(dict[str, int], document["counts"])
         section_digests = cast(list[dict[str, object]], document["sectionDigests"])
         digest_manifest = cast(dict[str, object], document["resultDigestManifest"])
-        if self._payload_cipher is None:
-            raise RuntimeError("Terminal payload encryption is not configured.")
+        cipher = require_terminal_cipher(self._payload_cipher)
         payload_id = str(uuid4())
-        nonce = urandom(12)
-        encrypted_payload = nonce + self._payload_cipher.encrypt(
-            nonce, payload, payload_id.encode()
-        )
+        encrypted_payload = encrypt_terminal_payload(cipher, payload_id, payload)
         with connect(self._database_url) as connection, connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -949,7 +946,7 @@ class PostgresTradingReviewJobRepository:
                   AND lease_expires_at > CURRENT_TIMESTAMP
                 FOR UPDATE
                 """,
-                _claim_identity(claim),
+                claim_identity(claim),
             )
             row = cursor.fetchone()
             if row is None:
@@ -1015,7 +1012,7 @@ class PostgresTradingReviewJobRepository:
                   AND attempt_count = %s AND attempt_token = %s AND deletion_generation = %s
                   AND lease_expires_at > CURRENT_TIMESTAMP AND grant_revision = %s
                 """,
-                (payload_id, result_hash, *_claim_identity(claim), claim.grant_revision),
+                (payload_id, result_hash, *claim_identity(claim), claim.grant_revision),
             )
             if cursor.rowcount != 1:
                 raise RuntimeError("Locked Trading Review job lost its lease unexpectedly.")
@@ -1035,7 +1032,7 @@ class PostgresTradingReviewJobRepository:
                   AND lease_expires_at > CURRENT_TIMESTAMP
                 FOR UPDATE
                 """,
-                _claim_identity(claim),
+                claim_identity(claim),
             )
             row = cursor.fetchone()
             if row is None:
@@ -1057,8 +1054,8 @@ class PostgresTradingReviewJobRepository:
                 """,
                 (
                     failure.stage,
-                    Jsonb(_failure_json(failure)),
-                    *_claim_identity(claim),
+                    Jsonb(failure_json(failure)),
+                    *claim_identity(claim),
                 ),
             )
             if cursor.rowcount != 1:
@@ -1076,7 +1073,7 @@ class PostgresTradingReviewJobRepository:
                   AND lease_expires_at > CURRENT_TIMESTAMP
                 FOR UPDATE
                 """,
-                _claim_identity(claim),
+                claim_identity(claim),
             )
             if cursor.fetchone() is None:
                 return False
@@ -1102,7 +1099,7 @@ class PostgresTradingReviewJobRepository:
                   AND lease_expires_at > CURRENT_TIMESTAMP
                 FOR UPDATE
                 """,
-                _claim_identity(claim),
+                claim_identity(claim),
             )
             row = cursor.fetchone()
             if row is None:
@@ -1125,7 +1122,7 @@ class PostgresTradingReviewJobRepository:
                   AND attempt_count = %s AND attempt_token = %s AND deletion_generation = %s
                   AND lease_expires_at > CURRENT_TIMESTAMP
                 """,
-                (self._grant_refresh_wait.total_seconds(), *_claim_identity(claim)),
+                (self._grant_refresh_wait.total_seconds(), *claim_identity(claim)),
             )
             if cursor.rowcount != 1:
                 return False
@@ -1159,63 +1156,11 @@ class PostgresTradingReviewJobRepository:
             row = cursor.fetchone()
         if row is None:
             return None
-        if self._payload_cipher is None:
-            raise RuntimeError("Terminal payload encryption is not configured.")
-        values = cast(
-            tuple[
-                str,
-                str,
-                str,
-                str,
-                str,
-                int,
-                str,
-                str,
-                str,
-                dict[str, object],
-                str,
-                str,
-                datetime,
-                datetime,
-                str,
-                int,
-                str,
-                str,
-                dict[str, int],
-                list[dict[str, object]],
-                dict[str, object],
-            ],
-            row,
-        )
-        return TerminalPayloadDescriptor(
-            job_id=str(values[0]),
-            core_logical_job_id=values[1],
-            core_normalization_run_id=values[2],
-            payload_id=str(values[3]),
-            media_type=values[4],
-            byte_size=values[5],
-            payload_sha256=values[6],
-            input_set_hash=values[7],
-            hash_specification_version=values[8],
-            target_version_set=values[9],
-            reconciliation_manifest_hash=values[10],
-            result_hash=values[11],
-            created_at=values[12],
-            expires_at=values[13],
-            attempt_token=values[14],
-            deletion_generation=values[15],
-            result_schema_version=values[16],
-            result_hash_specification_version=values[17],
-            counts=values[18],
-            section_digests=values[19],
-            result_delivery_policy_version=cast(str, values[20]["policyVersion"]),
-            content_encoding=cast(list[str], values[20]["acceptedContentEncodings"])[0],
-        )
+        require_terminal_cipher(self._payload_cipher)
+        return terminal_descriptor(row)
 
     def get_terminal_payload(self, payload_id: str) -> bytes | None:
-        cipher = self._payload_cipher
-        if cipher is None:
-            raise RuntimeError("Terminal payload encryption is not configured.")
+        cipher = require_terminal_cipher(self._payload_cipher)
         with connect(self._database_url) as connection, connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -1237,27 +1182,7 @@ class PostgresTradingReviewJobRepository:
             row = cursor.fetchone()
         if row is None:
             return None
-        encrypted = bytes(row[0])
-        if len(encrypted) < 28:
-            raise ResultIntegrityError("RESULT_TRANSPORT_HASH_MISMATCH")
-        try:
-            payload = cipher.decrypt(encrypted[:12], encrypted[12:], payload_id.encode())
-        except InvalidTag as error:
-            raise ResultIntegrityError("RESULT_TRANSPORT_HASH_MISMATCH") from error
-        if len(payload) != row[2] or hashlib.sha256(payload).hexdigest() != row[1]:
-            raise ResultIntegrityError("RESULT_TRANSPORT_HASH_MISMATCH")
-        document = parse_result_json_bytes(payload)
-        verify_public_result(document)
-        manifest = cast(dict[str, object], document["reconciliationManifest"])
-        if document["counts"] != row[3]:
-            raise ResultIntegrityError("RESULT_COUNT_MISMATCH")
-        if document["sectionDigests"] != row[4]:
-            raise ResultIntegrityError("RESULT_SECTION_HASH_MISMATCH")
-        if document["resultDigestManifest"] != row[5] or document["resultHash"] != row[7]:
-            raise ResultIntegrityError("RESULT_HASH_MISMATCH")
-        if manifest["manifestHash"] != row[6]:
-            raise ResultIntegrityError("RECONCILIATION_MANIFEST_HASH_MISMATCH")
-        return payload
+        return decode_terminal_payload(cipher, payload_id, row)
 
     def acknowledge(
         self,
@@ -1274,7 +1199,7 @@ class PostgresTradingReviewJobRepository:
         recorded_at: datetime,
         current_deletion_generation: int | None,
     ) -> bool:
-        fingerprint = _ack_fingerprint(
+        fingerprint = ack_fingerprint(
             core_aggregate_id,
             payload_id,
             payload_sha256,
@@ -1459,7 +1384,7 @@ class PostgresTradingReviewJobRepository:
             ),
         )
         lease_status = "CONSUMED" if outcome == "COMPLETED" else "CANCELLED"
-        _close_artifact_leases(cursor, claim.job_id, claim.attempt_number, lease_status)
+        close_artifact_leases(cursor, claim.job_id, claim.attempt_number, lease_status)
 
     @classmethod
     def _cancel_locked(cls, cursor: object, claim: ClaimedTradingReviewJob) -> bool:
@@ -1476,7 +1401,7 @@ class PostgresTradingReviewJobRepository:
               AND attempt_count = %s AND attempt_token = %s AND deletion_generation = %s
               AND lease_expires_at > CURRENT_TIMESTAMP
             """,
-            _claim_identity(claim),
+            claim_identity(claim),
         )
         if cursor.rowcount != 1:  # type: ignore[attr-defined]
             return False
@@ -1498,214 +1423,7 @@ FROM trading_review_jobs AS j
 """
 
 
-def _status_view(row: object | None) -> TradingReviewJobStatusView | None:
-    if row is None:
-        return None
-    values = cast(
-        tuple[
-            str,
-            str,
-            str,
-            str,
-            str,
-            str,
-            int,
-            str,
-            int,
-            datetime,
-            datetime,
-            datetime | None,
-            datetime | None,
-            dict[str, object] | None,
-            str | None,
-            str | None,
-            bool,
-            int,
-            str,
-            str,
-            str,
-            datetime | None,
-            str | None,
-            str | None,
-            str | None,
-            dict[str, object] | None,
-            str | None,
-            str,
-            str,
-        ],
-        row,
-    )
-    failure_data = values[13]
-    if values[22] is None or values[24] is None or values[25] is None or values[26] is None:
-        raise TradingReviewJobStateConflict("Legacy normalization identity is unavailable.")
-    failure = None
-    if failure_data is not None:
-        raw_details = failure_data.get("details", [])
-        details = (
-            tuple(cast(dict[str, object], item) for item in cast(list[object], raw_details))
-            if isinstance(raw_details, list)
-            else ()
-        )
-        failure = SafeTradingReviewFailure(
-            code=str(failure_data["code"]),
-            message=str(failure_data["message"]),
-            retryable=bool(failure_data["retryable"]),
-            stage=str(failure_data["stage"]),
-            details=cast(tuple[dict[str, object], ...], details),
-        )
-    return TradingReviewJobStatusView(
-        job_id=str(values[0]),
-        core_logical_job_id=values[1],
-        core_import_session_id=values[2],
-        core_normalization_run_id=values[22],
-        kind=TradingReviewJobKind(values[3]),
-        status=TradingReviewJobStatus(values[4]),
-        progress_stage=values[5],
-        attempt=values[6],
-        attempt_token=values[7],
-        deletion_generation=values[8],
-        created_at=values[9],
-        updated_at=values[10],
-        started_at=values[11],
-        terminal_at=values[12],
-        failure=failure,
-        terminal_payload_id=str(values[14]) if values[14] is not None else None,
-        result_hash=values[15],
-        cancellation_requested=values[16],
-        grant_revision=values[17],
-        expected_input_set_hash=values[18],
-        computed_input_set_hash=values[23],
-        hash_specification_version=values[24],
-        target_version_set=values[25],
-        retry_policy_version=values[26],
-        version_set_hash=values[19],
-        grant_action=values[20],
-        grant_refresh_deadline_at=values[21],
-        result_schema_version=values[27],
-        result_hash_specification_version=values[28],
-    )
-
-
-def _claim_identity(claim: ClaimedTradingReviewJob) -> tuple[object, ...]:
-    return (
-        claim.job_id,
-        claim.lease_owner,
-        claim.attempt_number,
-        claim.attempt_token,
-        claim.deletion_generation,
-    )
-
-
-def _failure_json(failure: SafeTradingReviewFailure) -> dict[str, object]:
-    return {
-        "code": failure.code,
-        "message": failure.message,
-        "retryable": failure.retryable,
-        "stage": failure.stage,
-        "details": list(failure.details),
-    }
-
-
 def _lock_key(cursor: object, key_hash: str) -> None:
     cursor.execute(  # type: ignore[attr-defined]
         "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (key_hash,)
-    )
-
-
-def _ack_fingerprint(
-    core_aggregate_id: str,
-    payload_id: str,
-    payload_sha256: str,
-    terminal_result_hash: str,
-    attempt_token: str,
-    deletion_generation: int,
-    disposition: str,
-    recorded_at: datetime,
-    current_deletion_generation: int | None,
-) -> str:
-    payload = {
-        "coreAggregateId": core_aggregate_id,
-        "payloadId": payload_id,
-        "payloadSha256": payload_sha256,
-        "terminalResultHash": terminal_result_hash,
-        "attemptToken": attempt_token,
-        "deletionGeneration": deletion_generation,
-        "disposition": disposition,
-        "recordedAt": recorded_at.isoformat(),
-        "currentDeletionGeneration": current_deletion_generation,
-    }
-    encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def _close_artifact_leases(cursor: object, job_id: str, attempt_number: int, status: str) -> None:
-    cursor.execute(  # type: ignore[attr-defined]
-        """
-        UPDATE trading_review_artifact_leases
-        SET status = %s, closed_at = CURRENT_TIMESTAMP
-        WHERE job_id = %s AND attempt_number = %s AND status = 'ACTIVE'
-        """,
-        (status, job_id, attempt_number),
-    )
-
-
-def _without_grant_locators(payload: dict[str, object]) -> dict[str, object]:
-    return {
-        **payload,
-        "artifactAccessGrants": [
-            {key: value for key, value in grant.items() if key != "accessUri"}
-            for grant in cast(list[dict[str, object]], payload["artifactAccessGrants"])
-        ],
-    }
-
-
-def _canonical_hash(payload: dict[str, object]) -> str:
-    data = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(data.encode("utf-8")).hexdigest()
-
-
-def _fresh_grants(grants: list[dict[str, object]], cursor: object) -> bool:
-    if {str(item.get("role")) for item in grants} != {"TRADE_HISTORY", "POSITION_HISTORY"}:
-        return False
-    cursor.execute("SELECT CURRENT_TIMESTAMP")  # type: ignore[attr-defined]
-    now = cursor.fetchone()[0]  # type: ignore[attr-defined]
-    for grant in grants:
-        try:
-            expiry = datetime.fromisoformat(str(grant["expiresAt"]).replace("Z", "+00:00"))
-        except (KeyError, ValueError):
-            return False
-        if expiry.tzinfo is None or not now < expiry <= now + timedelta(minutes=5):
-            return False
-    return True
-
-
-def _insert_grant_revision(
-    cursor: object, job_id: str, revision: int, token: str, grants: list[dict[str, object]]
-) -> None:
-    for grant in grants:
-        cursor.execute(  # type: ignore[attr-defined]
-            """INSERT INTO trading_review_grant_revisions
-                   (job_id, grant_revision, artifact_role, core_artifact_id,
-                    raw_sha256, grant_expires_at, attempt_token, status)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, 'ACTIVE')""",
-            (
-                job_id,
-                revision,
-                grant["role"],
-                grant["coreArtifactId"],
-                grant["rawSha256"],
-                grant["expiresAt"],
-                token,
-            ),
-        )
-
-
-def _grant_receipt(payload: dict[str, object]) -> GrantUpdateReceipt:
-    return GrantUpdateReceipt(
-        str(payload["jobId"]),
-        str(payload["mode"]),
-        int(str(payload["grantRevision"])),
-        str(payload["attemptToken"]),
-        str(payload["status"]),
-        datetime.fromisoformat(str(payload["updatedAt"]).replace("Z", "+00:00")),
     )

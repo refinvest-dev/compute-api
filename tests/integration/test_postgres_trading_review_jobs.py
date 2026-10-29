@@ -6,10 +6,12 @@ Set REFINVEST_TEST_DATABASE_URL to an isolated database with migration 0012 appl
 import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from os import getenv
 from pathlib import Path
+from threading import Barrier
 from uuid import uuid4
 
 import pytest
@@ -1022,5 +1024,119 @@ def test_acknowledgement_requires_final_token_and_stale_discard_generation() -> 
         repository.delete_cleanup_candidates(10)
         assert repository.get_terminal_payload(descriptor.payload_id) is None
         assert repository.get(job.job_id) is not None
+    finally:
+        _delete(job.job_id)
+
+
+def _publish_claim(repository, claim):
+    payload = _terminal_payload(claim)
+    return repository.publish_completed(
+        claim,
+        payload=payload,
+        media_type="application/vnd.refinvest.trading-normalization+json",
+        payload_sha256=hashlib.sha256(payload).hexdigest(),
+        input_set_hash=claim.expected_input_set_hash,
+        reconciliation_manifest_hash=_manifest_hash(payload),
+        result_hash=_result_hash(payload),
+        retention=timedelta(hours=24),
+    )
+
+
+@pytest.mark.parametrize("competitor", ["publication", "cancellation"])
+def test_terminal_publication_serializes_with_competing_command(competitor):
+    repository = PostgresTradingReviewJobRepository(DATABASE_URL, PAYLOAD_KEY)
+    job = _job(str(uuid4()))
+    repository.create_idempotently(job, hashlib.sha256(job.job_id.encode()).hexdigest())
+    try:
+        claim = repository.claim_next("worker", timedelta(seconds=60))
+        assert claim is not None and claim.job_id == job.job_id
+        start = Barrier(2)
+
+        def publish():
+            start.wait(timeout=10)
+            return _publish_claim(repository, claim)
+
+        def compete():
+            start.wait(timeout=10)
+            if competitor == "publication":
+                return _publish_claim(repository, claim)
+            return repository.request_cancellation(job.job_id, "cancel-" + job.job_id)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(publish)
+            second = pool.submit(compete)
+            published, other = first.result(timeout=30), second.result(timeout=30)
+        if competitor == "publication":
+            assert sorted([published, other]) == [False, True]
+        status = repository.get(job.job_id)
+        assert status is not None
+        expected = (
+            TradingReviewJobStatus.COMPLETED
+            if published or competitor == "publication"
+            else TradingReviewJobStatus.CANCELLED
+        )
+        assert status.status is expected
+        with connect(DATABASE_URL) as connection:
+            count = connection.execute(
+                "SELECT count(*) FROM trading_review_terminal_payloads WHERE job_id=%s",
+                (job.job_id,),
+            ).fetchone()[0]
+        assert count == int(status.status is TradingReviewJobStatus.COMPLETED)
+        descriptor = repository.get_result_descriptor(job.job_id)
+        assert (descriptor is not None) is (count == 1)
+    finally:
+        _delete(job.job_id)
+
+
+def test_payload_insert_failure_rolls_back_terminal_publication(monkeypatch):
+    import importlib
+
+    module = importlib.import_module("refinvest.persistence.postgres.trading_review_jobs")
+    repository = PostgresTradingReviewJobRepository(DATABASE_URL, PAYLOAD_KEY)
+    job = _job(str(uuid4()))
+    repository.create_idempotently(job, hashlib.sha256(job.job_id.encode()).hexdigest())
+    try:
+        claim = repository.claim_next("worker", timedelta(seconds=60))
+        assert claim is not None and claim.job_id == job.job_id
+
+        @contextmanager
+        def failing_connection(*args, **kwargs):
+            with connect(*args, **kwargs) as connection:
+
+                class Connection:
+                    @contextmanager
+                    def cursor(self):
+                        with connection.cursor() as cursor:
+
+                            class Cursor:
+                                def execute(self, query, parameters=None):
+                                    cursor.execute(query, parameters)
+                                    if "INSERT INTO trading_review_terminal_payloads" in query:
+                                        raise RuntimeError("synthetic failure after payload insert")
+
+                                def __getattr__(self, name):
+                                    return getattr(cursor, name)
+
+                            yield Cursor()
+
+                yield Connection()
+
+        with monkeypatch.context() as patch:
+            patch.setattr(module, "connect", failing_connection)
+            with pytest.raises(RuntimeError, match="synthetic failure after payload insert"):
+                _publish_claim(repository, claim)
+        status = repository.get(job.job_id)
+        assert status is not None and status.status is TradingReviewJobStatus.RUNNING
+        assert status.terminal_payload_id is None
+        assert repository.get_result_descriptor(job.job_id) is None
+        with connect(DATABASE_URL) as connection:
+            assert (
+                connection.execute(
+                    "SELECT count(*) FROM trading_review_terminal_payloads WHERE job_id=%s",
+                    (job.job_id,),
+                ).fetchone()[0]
+                == 0
+            )
+        assert _publish_claim(repository, claim)
     finally:
         _delete(job.job_id)
