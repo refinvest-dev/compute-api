@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from refinvest.app.trading_analytics_identity import AnalyticsContractError, jcs_sha256, strict_json
+from refinvest.contracts.analytics.identity import AnalyticsContractError, jcs_sha256, strict_json
 from refinvest.trading_review.analytics.model import (
     AnalysisConfig,
     AnalysisPeriod,
