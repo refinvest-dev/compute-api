@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Protocol, cast
 
 from refinvest.application.trading_review_jobs import hash_idempotency_key
@@ -136,3 +137,15 @@ def update_analytics_grants(
     repository: AnalyticsJobRepository,
 ) -> dict[str, object]:
     return repository.update_grants(job_id, payload, hash_idempotency_key(idempotency_key))
+
+
+class AnalyticsWorkerRepository(Protocol):
+    @property
+    def max_payload_bytes(self) -> int: ...
+
+    def claim_next(self, worker_id: str, lease: timedelta) -> dict[str, object] | None: ...
+    def heartbeat(self, claim: dict[str, object], lease: timedelta) -> bool: ...
+    def fail_attempt(self, claim: dict[str, object], code: str, *, retryable: bool) -> bool: ...
+    def publish_completed(
+        self, claim: dict[str, object], payload: dict[str, object], body: bytes
+    ) -> bool: ...

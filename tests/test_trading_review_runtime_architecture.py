@@ -14,6 +14,12 @@ RUNTIME_FILES = (
     ROOT / "adapters/normalization/process_executor.py",
     ROOT / "application/normalization_payload.py",
     ROOT / "app/trading_review_worker.py",
+    ROOT / "application/analytics_input.py",
+    ROOT / "application/analytics_result.py",
+    ROOT / "application/analytics_worker.py",
+    ROOT / "application/analytics_jobs.py",
+    ROOT / "adapters/analytics/artifacts.py",
+    ROOT / "app/trading_analytics_worker.py",
 )
 
 

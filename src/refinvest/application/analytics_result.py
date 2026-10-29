@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import cast
@@ -414,3 +415,48 @@ def build_sections(
         if len({str(item[identity]) for item in items}) != len(items):
             raise AnalyticsContractError("RESULT_ITEM_CONFLICT")
     return sections
+
+
+def bounded_analytics_json(payload: dict[str, object], maximum: int) -> bytes:
+    """Measure each UTF-8 chunk before retaining it; never create an oversized result."""
+    if maximum < 1:
+        raise ValueError("A positive payload limit is required.")
+    output = bytearray()
+    encoder = json.JSONEncoder(ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    for text in encoder.iterencode(payload):
+        chunk = text.encode("utf-8")
+        if len(output) + len(chunk) > maximum:
+            raise AnalyticsContractError("RESULT_PAYLOAD_TOO_LARGE")
+        output.extend(chunk)
+    return bytes(output)
+
+
+def build_analytics_payload(
+    claim: dict[str, object],
+    request: dict[str, object],
+    sections: dict[str, list[dict[str, object]]],
+    digests: dict[str, object],
+    *,
+    terminal_at: datetime,
+) -> dict[str, object]:
+    job_id = cast(str, claim["jobId"])
+    now = terminal_at.isoformat().replace("+00:00", "Z")
+    created = cast(datetime, claim["createdAt"]).astimezone(UTC).isoformat().replace("+00:00", "Z")
+    return {
+        "jobId": job_id,
+        "coreLogicalJobId": request["coreLogicalJobId"],
+        "coreAnalysisRunId": request["coreAnalysisRunId"],
+        "attemptToken": claim["attemptToken"],
+        "deletionGeneration": claim["deletionGeneration"],
+        "status": "COMPLETED",
+        "targetVersionSet": request["targetVersionSet"],
+        "analysisConfigHash": request["analysisConfigHash"],
+        "inputHash": request["expectedInputHash"],
+        "inputHashSpecificationVersion": request["inputHashSpecificationVersion"],
+        "resultSchemaVersion": request["resultSchemaVersion"],
+        "resultHashSpecificationVersion": request["resultHashSpecificationVersion"],
+        **digests,
+        **{field: sections[name] for name, (field, _, _) in SECTION_FIELDS.items()},
+        "createdAt": created,
+        "terminalAt": now,
+    }
