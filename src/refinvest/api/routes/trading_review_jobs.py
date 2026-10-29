@@ -13,8 +13,8 @@ from fastapi import APIRouter, Depends, Header, Request, status
 from fastapi.responses import JSONResponse, Response
 from fastapi.routing import APIRoute
 
+from refinvest.api.dependencies.trading_analytics_jobs import get_optional_analytics_repository
 from refinvest.api.dependencies.trading_review_jobs import get_trading_review_repository
-from refinvest.api.routes.trading_analytics_jobs import get_optional_analytics_repository
 from refinvest.api.schemas.trading_analytics_jobs import AcknowledgeAnalyticsTransport
 from refinvest.api.schemas.trading_review_jobs import (
     AcknowledgeTradingReviewJobTransport,
@@ -25,6 +25,11 @@ from refinvest.api.schemas.trading_review_jobs import (
 )
 from refinvest.app.config import Settings, get_settings
 from refinvest.app.security import require_internal_api_key
+from refinvest.application.analytics_jobs import (
+    AnalyticsJobConflict,
+    AnalyticsJobUnavailable,
+    AnalyticsResultDeliveryRepository,
+)
 from refinvest.application.normalization_jobs import (
     NormalizationArtifactGrant,
     NormalizationInstrumentTerms,
@@ -54,11 +59,6 @@ from refinvest.application.trading_review_jobs import (
 from refinvest.contracts.normalization.result_delivery import MEDIA_TYPE
 from refinvest.contracts.normalization.result_integrity import ResultIntegrityError
 from refinvest.observability.metrics import ApiMetrics, safe_record
-from refinvest.persistence.postgres.trading_analytics_jobs import (
-    AnalyticsJobConflict,
-    AnalyticsJobUnavailable,
-    PostgresAnalyticsJobRepository,
-)
 
 
 def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -431,7 +431,7 @@ def download_trading_review_terminal_payload(
     payloadId: str,
     repository: Annotated[TradingReviewJobRepository, Depends(get_trading_review_repository)],
     analytics_repository: Annotated[
-        PostgresAnalyticsJobRepository | None, Depends(get_optional_analytics_repository)
+        AnalyticsResultDeliveryRepository | None, Depends(get_optional_analytics_repository)
     ],
 ) -> Response:
     try:
@@ -471,7 +471,7 @@ def acknowledge_trading_review_job_result(
     body: AcknowledgeTradingReviewJobTransport | AcknowledgeAnalyticsTransport,
     repository: Annotated[TradingReviewJobRepository, Depends(get_trading_review_repository)],
     analytics_repository: Annotated[
-        PostgresAnalyticsJobRepository | None, Depends(get_optional_analytics_repository)
+        AnalyticsResultDeliveryRepository | None, Depends(get_optional_analytics_repository)
     ],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> Response:
