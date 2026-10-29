@@ -3,20 +3,18 @@
 import signal
 from datetime import timedelta
 from functools import partial
-from multiprocessing.connection import Connection
 from os import getpid
 from socket import gethostname
 from threading import Event
 
+from refinvest.adapters.backtest.process_executor import (
+    ProcessIsolatedBacktestExecutor,
+    execute_backtest_child,
+)
 from refinvest.app.config import Settings, get_settings
 from refinvest.app.snapshot_storage import create_snapshot_execution_data_loader
 from refinvest.application.backtest_executor import DailyBarBacktestExecutor
-from refinvest.application.backtest_process_executor import ProcessIsolatedBacktestExecutor
-from refinvest.application.backtest_worker_host import (
-    BacktestWorkerHost,
-    RetryableBacktestFailure,
-)
-from refinvest.application.backtest_workers import ExecutableBacktestJob
+from refinvest.application.backtest_worker_host import BacktestWorkerHost
 from refinvest.observability.job_repository import ObservedWorkerRepository
 from refinvest.observability.metrics import WorkerMetrics, serve_metrics
 from refinvest.persistence.postgres.backtest_jobs import PostgresBacktestJobRepository
@@ -42,7 +40,7 @@ def create_backtest_worker(
     snapshots = PostgresDatasetSnapshotRepository(settings.database_url)
     executor = ProcessIsolatedBacktestExecutor(
         timedelta(seconds=settings.backtest_execution_timeout_seconds),
-        partial(_execute_daily_bar_in_child, settings),
+        partial(execute_backtest_child, partial(_create_daily_bar_executor, settings)),
     )
     return BacktestWorkerHost(
         settings.worker_id or _default_worker_id(),
@@ -55,19 +53,11 @@ def create_backtest_worker(
     )
 
 
-def _execute_daily_bar_in_child(
-    settings: Settings, job: ExecutableBacktestJob, sender: Connection
-) -> None:
-    """Build storage clients only inside the isolated child process."""
-    try:
-        outcome = DailyBarBacktestExecutor(
-            create_snapshot_execution_data_loader(settings), settings.engine_version
-        ).execute(job)
-        sender.send(outcome)
-    except Exception:
-        sender.send(RetryableBacktestFailure("Backtest execution process failed unexpectedly."))
-    finally:
-        sender.close()
+def _create_daily_bar_executor(settings: Settings) -> DailyBarBacktestExecutor:
+    """Compose storage clients and the pure pipeline only inside the spawned child."""
+    return DailyBarBacktestExecutor(
+        create_snapshot_execution_data_loader(settings), settings.engine_version
+    )
 
 
 def run_backtest_worker(settings: Settings, stop_requested: Event | None = None) -> None:
