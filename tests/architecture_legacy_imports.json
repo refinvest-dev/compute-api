@@ -1,0 +1,281 @@
+[
+  {
+    "source_file": "refinvest/api/routes/assets.py",
+    "imported_from": "refinvest.app.snapshot_storage",
+    "names": [
+      "create_snapshot_execution_data_loader"
+    ],
+    "remove_in": "AR-07",
+    "reason": "Move snapshot query composition to a dependency provider and application boundary."
+  },
+  {
+    "source_file": "refinvest/api/routes/assets.py",
+    "imported_from": "refinvest.persistence.object_storage.s3_snapshot_artifacts",
+    "names": [
+      "SnapshotStorageExecutionDataLoader"
+    ],
+    "remove_in": "AR-07",
+    "reason": "Replace the concrete loader annotation with the query port."
+  },
+  {
+    "source_file": "refinvest/api/routes/assets.py",
+    "imported_from": "refinvest.persistence.postgres.dataset_snapshots",
+    "names": [
+      "PostgresDatasetSnapshotRepository"
+    ],
+    "remove_in": "AR-07",
+    "reason": "Use the snapshot query port from the HTTP handler."
+  },
+  {
+    "source_file": "refinvest/api/routes/series.py",
+    "imported_from": "refinvest.app.snapshot_storage",
+    "names": [
+      "create_snapshot_execution_data_loader"
+    ],
+    "remove_in": "AR-07",
+    "reason": "Move snapshot query composition to a dependency provider."
+  },
+  {
+    "source_file": "refinvest/api/routes/series.py",
+    "imported_from": "refinvest.persistence.object_storage.snapshot_artifacts",
+    "names": [
+      "SnapshotArtifactError"
+    ],
+    "remove_in": "AR-07",
+    "reason": "Translate storage failures at the query application boundary."
+  },
+  {
+    "source_file": "refinvest/api/routes/series.py",
+    "imported_from": "refinvest.persistence.postgres.dataset_snapshots",
+    "names": [
+      "PostgresDatasetSnapshotRepository"
+    ],
+    "remove_in": "AR-07",
+    "reason": "Replace the concrete repository annotation with the query port."
+  },
+  {
+    "source_file": "refinvest/api/routes/trading_analytics_jobs.py",
+    "imported_from": "refinvest.app.trading_analytics_identity",
+    "names": [
+      "AnalyticsContractError"
+    ],
+    "remove_in": "AR-03A",
+    "reason": "Move this exact dependency to its planned contract or application boundary in AR-03A."
+  },
+  {
+    "source_file": "refinvest/api/routes/trading_analytics_jobs.py",
+    "imported_from": "refinvest.app.trading_analytics_identity",
+    "names": [
+      "create_fingerprint"
+    ],
+    "remove_in": "AR-03A",
+    "reason": "Move this exact dependency to its planned contract or application boundary in AR-03A."
+  },
+  {
+    "source_file": "refinvest/api/routes/trading_analytics_jobs.py",
+    "imported_from": "refinvest.app.trading_analytics_identity",
+    "names": [
+      "require_supported_version_set"
+    ],
+    "remove_in": "AR-03A",
+    "reason": "Move this exact dependency to its planned contract or application boundary in AR-03A."
+  },
+  {
+    "source_file": "refinvest/api/routes/trading_analytics_jobs.py",
+    "imported_from": "refinvest.app.trading_analytics_identity",
+    "names": [
+      "validate_create_identity"
+    ],
+    "remove_in": "AR-03A",
+    "reason": "Move this exact dependency to its planned contract or application boundary in AR-03A."
+  },
+  {
+    "source_file": "refinvest/api/routes/trading_analytics_jobs.py",
+    "imported_from": "refinvest.persistence.postgres.trading_analytics_jobs",
+    "names": [
+      "AnalyticsJobCapacity"
+    ],
+    "remove_in": "AR-03A",
+    "reason": "Move this exact dependency to its planned contract or application boundary in AR-03A."
+  },
+  {
+    "source_file": "refinvest/api/routes/trading_analytics_jobs.py",
+    "imported_from": "refinvest.persistence.postgres.trading_analytics_jobs",
+    "names": [
+      "AnalyticsJobConflict"
+    ],
+    "remove_in": "AR-03A",
+    "reason": "Move this exact dependency to its planned contract or application boundary in AR-03A."
+  },
+  {
+    "source_file": "refinvest/api/routes/trading_analytics_jobs.py",
+    "imported_from": "refinvest.persistence.postgres.trading_analytics_jobs",
+    "names": [
+      "AnalyticsJobUnavailable"
+    ],
+    "remove_in": "AR-03A",
+    "reason": "Move this exact dependency to its planned contract or application boundary in AR-03A."
+  },
+  {
+    "source_file": "refinvest/api/routes/trading_analytics_jobs.py",
+    "imported_from": "refinvest.persistence.postgres.trading_analytics_jobs",
+    "names": [
+      "PostgresAnalyticsJobRepository"
+    ],
+    "remove_in": "AR-03A",
+    "reason": "Move this exact dependency to its planned contract or application boundary in AR-03A."
+  },
+  {
+    "source_file": "refinvest/api/routes/trading_review_jobs.py",
+    "imported_from": "refinvest.api.routes.trading_analytics_jobs",
+    "names": [
+      "get_optional_analytics_repository"
+    ],
+    "remove_in": "AR-03A",
+    "reason": "Move this exact dependency to its planned contract or application boundary in AR-03A."
+  },
+  {
+    "source_file": "refinvest/api/routes/trading_review_jobs.py",
+    "imported_from": "refinvest.app.trading_review_identity",
+    "names": [
+      "HASH_SPECIFICATION_V1"
+    ],
+    "remove_in": "AR-02N",
+    "reason": "Move this exact dependency to its planned contract or application boundary in AR-02N."
+  },
+  {
+    "source_file": "refinvest/api/routes/trading_review_jobs.py",
+    "imported_from": "refinvest.app.trading_review_identity",
+    "names": [
+      "calculate_input_set_hash"
+    ],
+    "remove_in": "AR-02N",
+    "reason": "Move this exact dependency to its planned contract or application boundary in AR-02N."
+  },
+  {
+    "source_file": "refinvest/api/routes/trading_review_jobs.py",
+    "imported_from": "refinvest.app.trading_review_identity",
+    "names": [
+      "supports_target_version_set"
+    ],
+    "remove_in": "AR-02N",
+    "reason": "Move this exact dependency to its planned contract or application boundary in AR-02N."
+  },
+  {
+    "source_file": "refinvest/api/routes/trading_review_jobs.py",
+    "imported_from": "refinvest.app.trading_review_payload",
+    "names": [
+      "MEDIA_TYPE"
+    ],
+    "remove_in": "AR-02N",
+    "reason": "Move this exact dependency to its planned contract or application boundary in AR-02N."
+  },
+  {
+    "source_file": "refinvest/api/routes/trading_review_jobs.py",
+    "imported_from": "refinvest.app.trading_review_result_integrity",
+    "names": [
+      "ResultIntegrityError"
+    ],
+    "remove_in": "AR-02N",
+    "reason": "Move this exact dependency to its planned contract or application boundary in AR-02N."
+  },
+  {
+    "source_file": "refinvest/api/routes/trading_review_jobs.py",
+    "imported_from": "refinvest.persistence.postgres.trading_analytics_jobs",
+    "names": [
+      "AnalyticsJobConflict"
+    ],
+    "remove_in": "AR-03A",
+    "reason": "Move this exact dependency to its planned contract or application boundary in AR-03A."
+  },
+  {
+    "source_file": "refinvest/api/routes/trading_review_jobs.py",
+    "imported_from": "refinvest.persistence.postgres.trading_analytics_jobs",
+    "names": [
+      "AnalyticsJobUnavailable"
+    ],
+    "remove_in": "AR-03A",
+    "reason": "Move this exact dependency to its planned contract or application boundary in AR-03A."
+  },
+  {
+    "source_file": "refinvest/api/routes/trading_review_jobs.py",
+    "imported_from": "refinvest.persistence.postgres.trading_analytics_jobs",
+    "names": [
+      "PostgresAnalyticsJobRepository"
+    ],
+    "remove_in": "AR-03A",
+    "reason": "Move this exact dependency to its planned contract or application boundary in AR-03A."
+  },
+  {
+    "source_file": "refinvest/api/routes/trading_review_jobs.py",
+    "imported_from": "refinvest.persistence.postgres.trading_review_jobs",
+    "names": [
+      "PostgresTradingReviewJobRepository"
+    ],
+    "remove_in": "AR-03N",
+    "reason": "Move this exact dependency to its planned contract or application boundary in AR-03N."
+  },
+  {
+    "source_file": "refinvest/api/schemas/trading_review_jobs.py",
+    "imported_from": "refinvest.app.trading_review_identity",
+    "names": [
+      "NormalizationInputIdentity"
+    ],
+    "remove_in": "AR-02N",
+    "reason": "Move this exact dependency to its planned contract or application boundary in AR-02N."
+  },
+  {
+    "source_file": "refinvest/api/schemas/trading_review_jobs.py",
+    "imported_from": "refinvest.app.trading_review_identity",
+    "names": [
+      "TargetVersionSet"
+    ],
+    "remove_in": "AR-02N",
+    "reason": "Move this exact dependency to its planned contract or application boundary in AR-02N."
+  },
+  {
+    "source_file": "refinvest/persistence/postgres/trading_analytics_jobs.py",
+    "imported_from": "refinvest.app.trading_analytics_identity",
+    "names": [
+      "jcs_sha256"
+    ],
+    "remove_in": "AR-03A",
+    "reason": "Move this exact dependency to its planned contract or application boundary in AR-03A."
+  },
+  {
+    "source_file": "refinvest/persistence/postgres/trading_review_jobs.py",
+    "imported_from": "refinvest.app.trading_review_result_delivery",
+    "names": [
+      "effective_payload_limit"
+    ],
+    "remove_in": "AR-02N",
+    "reason": "Move this exact dependency to its planned contract or application boundary in AR-02N."
+  },
+  {
+    "source_file": "refinvest/persistence/postgres/trading_review_jobs.py",
+    "imported_from": "refinvest.app.trading_review_result_integrity",
+    "names": [
+      "ResultIntegrityError"
+    ],
+    "remove_in": "AR-02N",
+    "reason": "Move this exact dependency to its planned contract or application boundary in AR-02N."
+  },
+  {
+    "source_file": "refinvest/persistence/postgres/trading_review_jobs.py",
+    "imported_from": "refinvest.app.trading_review_result_integrity",
+    "names": [
+      "parse_result_json_bytes"
+    ],
+    "remove_in": "AR-02N",
+    "reason": "Move this exact dependency to its planned contract or application boundary in AR-02N."
+  },
+  {
+    "source_file": "refinvest/persistence/postgres/trading_review_jobs.py",
+    "imported_from": "refinvest.app.trading_review_result_integrity",
+    "names": [
+      "verify_public_result"
+    ],
+    "remove_in": "AR-02N",
+    "reason": "Move this exact dependency to its planned contract or application boundary in AR-02N."
+  }
+]

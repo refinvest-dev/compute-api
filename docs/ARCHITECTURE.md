@@ -98,6 +98,9 @@ engine → latest mutable dataset
 
 Engine 계산 함수는 가능한 한 명시적인 입력을 받아 순수하게 계산한다.
 
+현재 import 경계의 자동 검사, 정확한 심볼별 이행 예외와 제거 단계는
+[`ARCHITECTURE_DEPENDENCIES.md`](ARCHITECTURE_DEPENDENCIES.md)에서 관리한다.
+
 ## 4. Engine Pipeline
 
 Backtest pipeline은 개념적으로 다음 순서를 따른다.
