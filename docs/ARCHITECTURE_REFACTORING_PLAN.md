@@ -374,6 +374,10 @@ Backtest의 10분 제한이나 EXECUTION_TIMEOUT을 Analytics 기본값으로 �
 PR 순서를 기록했다. 제안서 작성은 정책 승인이나 운영 수치 확정·실행 코드 완료를 뜻하지 않는다.
 AR-08의 나머지 체크박스는 승인·수치 검증 후 갱신한다.
 
+[1차 자원 실측](ANALYTICS_RESOURCE_BASELINE.md)과 개발용 합성 workload·검증을 추가했다.
+입력 바이트 외 후보 수·projection 비용·RSS 증폭을 확인했으며, 최대 입력/출력·Linux hard limit·
+실제 전송·DB 경합·동시성 실측과 운영 수치 승인은 남아 있다. Production 실행 제한은 미연결이다.
+
 ### AR-09 / AR-10 — Analytics 격리 준비와 production 연결
 
 - [ ] AR-09: executor·입력/outcome을 구현하고 정상·프로세스 crash·IPC 오류·큰 결과를 검증한다.
