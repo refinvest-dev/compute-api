@@ -5,23 +5,22 @@ from __future__ import annotations
 import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from os import getenv
+from threading import Barrier
 from uuid import uuid4
 
 import pytest
 from psycopg import connect
 
-from refinvest.app.trading_analytics_identity import create_fingerprint
+from refinvest.application.analytics_jobs import AnalyticsJobConflict, AnalyticsJobUnavailable
 from refinvest.application.trading_review_jobs import (
     TradingReviewCapacityExceeded,
     hash_idempotency_key,
 )
-from refinvest.persistence.postgres.trading_analytics_jobs import (
-    AnalyticsJobConflict,
-    AnalyticsJobUnavailable,
-    PostgresAnalyticsJobRepository,
-)
+from refinvest.contracts.analytics.identity import create_fingerprint
+from refinvest.persistence.postgres.trading_analytics_jobs import PostgresAnalyticsJobRepository
 from refinvest.persistence.postgres.trading_review_jobs import PostgresTradingReviewJobRepository
 from tests.integration.test_postgres_trading_review_jobs import _job as _normalization_job
 from tests.test_trading_analytics_runtime import FIXTURE, _request, _validate
@@ -224,3 +223,259 @@ def test_cleanup_commits_retry_cutoff_without_core_poll() -> None:
     assert status is not None and status["status"] == "FAILED"
     assert status["failure"]["code"] == "RETRY_EXHAUSTED"
     _validate("TradingAnalyticsJobStatusResponse", status)
+
+
+@pytest.mark.parametrize("ack_mode", ["PERSISTED", "DELETED_GENERATION", "STALE_ATTEMPT"])
+def test_http_application_worker_and_shared_delivery_use_real_store(monkeypatch, ack_mode) -> None:
+    """Use real providers/DB; only the two non-production artifact downloads are fixed."""
+    import base64
+
+    from starlette.testclient import TestClient
+
+    from refinvest.app.config import Settings, get_settings
+    from refinvest.app.main import app
+    from refinvest.application.analytics_worker import (
+        AnalyticsWorkerSettings,
+        TradingAnalyticsWorkerHost,
+    )
+    from tests.test_trading_analytics_runtime import _vector
+
+    assert DATABASE_URL is not None
+    request = _request()
+    settings = Settings(
+        "ar03a-synthetic-key",
+        database_url=DATABASE_URL,
+        trading_review_active_job_limit=1000,
+        trading_review_payload_encryption_key=base64.b64encode(b"A" * 32).decode(),
+        trading_review_artifact_hosts=("core-artifacts.internal",),
+        trading_analytics_implementation_digest=request["targetVersionSet"]["implementationDigest"],
+    )
+    vector = _vector()
+
+    def fixed_download(*_):
+        return (
+            vector["artifactSamples"]["ledgerRevisionContent"],
+            vector["artifactSamples"]["reconciliationManifest"],
+        )
+
+    app.dependency_overrides[get_settings] = lambda: settings
+    try:
+        with TestClient(app) as client:
+            base = "/trading-review/analytics-jobs"
+            headers = {"X-Internal-Api-Key": "ar03a-synthetic-key", "Idempotency-Key": str(uuid4())}
+            accepted = client.post(base, json=request, headers=headers)
+            assert accepted.status_code == 202
+            _validate("TradingAnalyticsJobAccepted", accepted.json())
+            job_id = accepted.json()["jobId"]
+            replay = client.post(base, json=request, headers=headers)
+            assert replay.status_code == 200 and replay.json()["jobId"] == job_id
+            status = client.get(f"{base}/{job_id}", headers=headers).json()
+            update = {
+                "mode": "REPLACE_QUEUED_GRANTS",
+                "expectedGrantRevision": status["grantRevision"],
+                "expectedAttemptToken": status["attemptToken"],
+                "nextAttemptToken": status["attemptToken"],
+                "expectedInputHash": request["expectedInputHash"],
+                "versionSetHash": request["targetVersionSet"]["versionSetHash"],
+                "deletionGeneration": request["deletionGeneration"],
+                "expectedRetryCutoffAt": status["retryCutoffAt"],
+                "ledgerRevisionContent": request["ledgerRevisionContent"],
+                "reconciliationManifest": request["reconciliationManifest"],
+            }
+            receipt = client.post(
+                f"{base}/{job_id}/input-grants",
+                json=update,
+                headers={**headers, "Idempotency-Key": str(uuid4())},
+            )
+            assert receipt.status_code == 200 and receipt.json()["grantRevision"] == 1
+            assert TradingAnalyticsWorkerHost(
+                _repo(),
+                AnalyticsWorkerSettings(
+                    settings.trading_review_artifact_hosts,
+                    settings.trading_analytics_implementation_digest,
+                    settings.trading_analytics_max_input_bytes,
+                ),
+                worker_id="ar05a-worker",
+                download_inputs=fixed_download,
+            ).run_once()
+            descriptor = client.get(f"{base}/{job_id}/result", headers=headers)
+            assert descriptor.status_code == 200
+            descriptor = descriptor.json()
+            _validate("AnalyticsTerminalResultDescriptor", descriptor)
+            resource = client.get(
+                f"/trading-review/terminal-payloads/{descriptor['payloadId']}", headers=headers
+            )
+            assert resource.status_code == 200
+            assert len(resource.content) == descriptor["byteSize"]
+            assert hashlib.sha256(resource.content).hexdigest() == descriptor["payloadSha256"]
+            _validate("AnalyticsTerminalPayload", resource.json())
+            completed_replay = client.post(base, json=request, headers=headers)
+            assert (
+                completed_replay.status_code == 200
+                and completed_replay.json()["status"] == "COMPLETED"
+            )
+            ack = {
+                "coreAnalysisRunId": request["coreAnalysisRunId"],
+                "payloadId": descriptor["payloadId"],
+                "payloadSha256": descriptor["payloadSha256"],
+                "terminalResultHash": descriptor["resultHash"],
+                "attemptToken": request["attemptToken"],
+                "deletionGeneration": request["deletionGeneration"],
+                "disposition": "PERSISTED",
+                "persistedAt": datetime.now(UTC).isoformat(),
+            }
+            if ack_mode != "PERSISTED":
+                ack.pop("persistedAt")
+                ack.update(
+                    disposition="DISCARDED_STALE",
+                    discardedAt=datetime.now(UTC).isoformat(),
+                    staleReason=ack_mode,
+                )
+                if ack_mode == "DELETED_GENERATION":
+                    ack["currentDeletionGeneration"] = request["deletionGeneration"] + 1
+                else:
+                    ack["currentAttemptToken"] = str(uuid4())
+            ack_url = f"/trading-review/jobs/{job_id}/acknowledgement"
+            assert client.post(ack_url, json=ack, headers=headers).status_code == 204
+            assert client.post(ack_url, json=ack, headers=headers).status_code == 204
+            conflicting_ack = dict(ack, terminalResultHash="0" * 64)
+            conflict = client.post(ack_url, json=conflicting_ack, headers=headers)
+            assert conflict.status_code == 409 and conflict.json()["code"] == "RESULT_HASH_MISMATCH"
+            assert (
+                client.get(
+                    f"/trading-review/terminal-payloads/{descriptor['payloadId']}", headers=headers
+                ).status_code
+                == 404
+            )
+            other = _request()
+            second = client.post(
+                base, json=other, headers={**headers, "Idempotency-Key": str(uuid4())}
+            )
+            assert second.status_code == 202
+            cancelled = client.post(
+                f"{base}/{second.json()['jobId']}/cancellation",
+                headers={**headers, "Idempotency-Key": str(uuid4())},
+            )
+            assert cancelled.status_code == 202 and cancelled.json()["status"] == "CANCELLED"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def _publication(claim):
+    request = claim["request"]
+    now = datetime.now(UTC).isoformat()
+    vector = json.loads(FIXTURE.with_name("result-integrity-v1.json").read_text())
+    payload = {
+        "createdAt": now,
+        "terminalAt": now,
+        "inputHash": request["expectedInputHash"],
+        "inputHashSpecificationVersion": request["inputHashSpecificationVersion"],
+        "analysisConfigHash": request["analysisConfigHash"],
+        "targetVersionSet": request["targetVersionSet"],
+        "resultSchemaVersion": request["resultSchemaVersion"],
+        "resultHashSpecificationVersion": request["resultHashSpecificationVersion"],
+        "counts": vector["counts"],
+        "sectionDigests": vector["sectionDigests"],
+        "evidenceHash": vector["evidenceHash"],
+        "resultHash": vector["expectedResultHash"],
+    }
+    return payload, json.dumps(payload, separators=(",", ":")).encode()
+
+
+@pytest.mark.parametrize("competitor", ["publication", "cancellation"])
+def test_publication_serializes_with_competing_terminal_command(competitor):
+    repo = _repo()
+    request = _request()
+    accepted, _ = _create(repo, request, str(uuid4()))
+    job_id = accepted["jobId"]
+    claim = repo.claim_next("racing-worker")
+    assert claim is not None and claim["jobId"] == job_id
+    payload, body = _publication(claim)
+    start = Barrier(2)
+
+    def publish():
+        start.wait(timeout=10)
+        return repo.publish_completed(claim, payload, body)
+
+    def compete():
+        start.wait(timeout=10)
+        if competitor == "publication":
+            return repo.publish_completed(claim, payload, body)
+        return repo.cancel(job_id, hash_idempotency_key(str(uuid4())))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, second = pool.submit(publish), pool.submit(compete)
+        published, other = first.result(timeout=30), second.result(timeout=30)
+    if competitor == "publication":
+        assert sorted([published, other]) == [False, True]
+    expected = "COMPLETED" if published or competitor == "publication" else "CANCELLED"
+    status = repo.get(job_id)
+    assert status is not None and status["status"] == expected
+    with connect(DATABASE_URL) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM trading_analytics_payloads WHERE job_id=%s", (job_id,)
+        ).fetchone()[0] == int(expected == "COMPLETED")
+        assert (
+            connection.execute(
+                "SELECT outcome FROM trading_analytics_attempts WHERE job_id=%s", (job_id,)
+            ).fetchone()[0]
+            == expected
+        )
+    assert (repo.result_descriptor(job_id) is not None) is (expected == "COMPLETED")
+
+
+def test_last_publication_write_failure_rolls_back_payload_job_and_attempt(monkeypatch):
+    repo = _repo()
+    accepted, _ = _create(repo, _request(), str(uuid4()))
+    job_id = accepted["jobId"]
+    claim = repo.claim_next("rollback-worker")
+    assert claim is not None and claim["jobId"] == job_id
+    payload, body = _publication(claim)
+    real_connection = repo._connection
+
+    @contextmanager
+    def failing_connection():
+        with real_connection() as connection:
+
+            class Connection:
+                @contextmanager
+                def cursor(self):
+                    with connection.cursor() as cursor:
+
+                        class Cursor:
+                            def execute(self, query, parameters=None):
+                                cursor.execute(query, parameters)
+                                if (
+                                    "UPDATE trading_analytics_attempts SET outcome='COMPLETED'"
+                                    in query
+                                ):
+                                    raise RuntimeError("synthetic final publication write failure")
+
+                            def __getattr__(self, name):
+                                return getattr(cursor, name)
+
+                        yield Cursor()
+
+            yield Connection()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(repo, "_connection", failing_connection)
+        with pytest.raises(RuntimeError, match="synthetic final publication write failure"):
+            repo.publish_completed(claim, payload, body)
+    status = repo.get(job_id)
+    assert status is not None and status["status"] == "RUNNING"
+    assert repo.result_descriptor(job_id) is None
+    with connect(DATABASE_URL) as connection:
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM trading_analytics_payloads WHERE job_id=%s", (job_id,)
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT outcome FROM trading_analytics_attempts WHERE job_id=%s", (job_id,)
+            ).fetchone()[0]
+            is None
+        )
+    assert repo.publish_completed(claim, payload, body)

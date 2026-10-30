@@ -9,7 +9,7 @@ from jsonschema import Draft202012Validator
 
 from refinvest.api.routes.trading_review_jobs import _http_error
 from refinvest.app.main import app
-from refinvest.app.trading_review_payload import build_normalization_payload
+from refinvest.application.normalization_payload import build_normalization_payload
 from refinvest.trading_review import normalize_and_reconstruct
 from tests.trading_review_support import (
     input_set_hash_for,

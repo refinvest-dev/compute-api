@@ -1,40 +1,174 @@
-# 의존성 규칙과 단계별 이행
+# AR-01 의존성 규칙과 이행 목록
 
-현재 구현은 AR02N까지이며 legacy import 예외 20개를 추적한다.
-정책·계약의 정본은 Context다. 검사 구현은
-[test_architecture_dependencies.py](../tests/test_architecture_dependencies.py), 예외의 정본은
-[architecture_legacy_imports.json](../tests/architecture_legacy_imports.json)이다.
+상태: AR-01 구현. Runtime·API·계산 정책을 변경하지 않고 정적 import 검사를 강화한다.
+정책·계약의 정본은 Context이고, 이 문서는 Compute 로컬 코드의 의존성 운영 기준이다.
 
-Engine과 Trading Review 계산 코어는 HTTP·DB·SDK·설정에 의존하지 않는다.
-Application은 port와 순수 계약·모델에 의존한다. app/API provider가 concrete adapter를 조립한다.
-Contracts는 기능·버전별 DTO·identity·integrity를, adapter는 Artifact·process·storage I/O를 소유한다.
-앞으로 생성할 package도 synthetic source로 경계 규칙을 검사한다.
-Application 전체의 multiprocessing·subprocess 금지는 Backtest executor를 이동하는 AR-05B에서 적용한다.
+실행 검사는 [test_architecture_dependencies.py](../tests/test_architecture_dependencies.py),
+현재 이행 예외의 정본은 [architecture_legacy_imports.json](../tests/architecture_legacy_imports.json)이다.
+기존 [Trading Review runtime 검사](../tests/test_trading_review_runtime_architecture.py)도 유지한다.
 
-예외는 정확한 파일·import 심볼·제거 단계·이유를 명시한다. glob·wildcard·중복·새 심볼·stale 예외는 실패한다.
-예외를 새로 추가해 후속 변경의 검사를 통과시키지 않는다.
+## 1. 허용 경계
 
-| 파일 | import 심볼 | 제거 단계 |
+AR-05N은 Normalization technical adapter의 app/API/DB 의존을 차단한다. Artifact HTTP와
+process 구현은 `adapters/normalization`에, 계산·worker 조율은 application에 둔다.
+순수 `application/normalization_execution.py`의 multiprocessing·subprocess·pathlib도 차단한다.
+AR-05A는 Analytics HTTP adapter의 app/API/DB/worker 의존도 차단한다. 순수 입력 변환과
+결과 projection의 multiprocessing·subprocess·pathlib도 차단하며 application의 네트워크
+금지는 유지한다. AR-05B에서는 Backtest spawn·IPC·deadline·종료 구현을
+`adapters/backtest`로 옮겼다. Application 전체의 multiprocessing·subprocess import를
+차단하고 Backtest adapter의 app/API/DB/직접 네트워크 의존도 금지한다.
+
+| Source | 허용되는 경계 | 차단하는 대표 의존성 |
 |---|---|---|
-| `refinvest/api/routes/assets.py` | `refinvest.app.snapshot_storage.create_snapshot_execution_data_loader` | AR-07 |
-| `refinvest/api/routes/assets.py` | `refinvest.persistence.object_storage.s3_snapshot_artifacts.SnapshotStorageExecutionDataLoader` | AR-07 |
-| `refinvest/api/routes/assets.py` | `refinvest.persistence.postgres.dataset_snapshots.PostgresDatasetSnapshotRepository` | AR-07 |
-| `refinvest/api/routes/series.py` | `refinvest.app.snapshot_storage.create_snapshot_execution_data_loader` | AR-07 |
-| `refinvest/api/routes/series.py` | `refinvest.persistence.object_storage.snapshot_artifacts.SnapshotArtifactError` | AR-07 |
-| `refinvest/api/routes/series.py` | `refinvest.persistence.postgres.dataset_snapshots.PostgresDatasetSnapshotRepository` | AR-07 |
-| `refinvest/api/routes/trading_analytics_jobs.py` | `refinvest.app.trading_analytics_identity.AnalyticsContractError` | AR-03A |
-| `refinvest/api/routes/trading_analytics_jobs.py` | `refinvest.app.trading_analytics_identity.create_fingerprint` | AR-03A |
-| `refinvest/api/routes/trading_analytics_jobs.py` | `refinvest.app.trading_analytics_identity.require_supported_version_set` | AR-03A |
-| `refinvest/api/routes/trading_analytics_jobs.py` | `refinvest.app.trading_analytics_identity.validate_create_identity` | AR-03A |
-| `refinvest/api/routes/trading_analytics_jobs.py` | `refinvest.persistence.postgres.trading_analytics_jobs.AnalyticsJobCapacity` | AR-03A |
-| `refinvest/api/routes/trading_analytics_jobs.py` | `refinvest.persistence.postgres.trading_analytics_jobs.AnalyticsJobConflict` | AR-03A |
-| `refinvest/api/routes/trading_analytics_jobs.py` | `refinvest.persistence.postgres.trading_analytics_jobs.AnalyticsJobUnavailable` | AR-03A |
-| `refinvest/api/routes/trading_analytics_jobs.py` | `refinvest.persistence.postgres.trading_analytics_jobs.PostgresAnalyticsJobRepository` | AR-03A |
-| `refinvest/api/routes/trading_review_jobs.py` | `refinvest.api.routes.trading_analytics_jobs.get_optional_analytics_repository` | AR-03A |
-| `refinvest/api/routes/trading_review_jobs.py` | `refinvest.persistence.postgres.trading_analytics_jobs.AnalyticsJobConflict` | AR-03A |
-| `refinvest/api/routes/trading_review_jobs.py` | `refinvest.persistence.postgres.trading_analytics_jobs.AnalyticsJobUnavailable` | AR-03A |
-| `refinvest/api/routes/trading_review_jobs.py` | `refinvest.persistence.postgres.trading_analytics_jobs.PostgresAnalyticsJobRepository` | AR-03A |
-| `refinvest/api/routes/trading_review_jobs.py` | `refinvest.persistence.postgres.trading_review_jobs.PostgresTradingReviewJobRepository` | AR-03N |
-| `refinvest/persistence/postgres/trading_analytics_jobs.py` | `refinvest.app.trading_analytics_identity.jcs_sha256` | AR-03A |
+| 모든 production package | 자신의 역할에 맞는 package | tests, integration, Core/Web source import |
+| engine | 표준 라이브러리, engine, marketdata.domain/ports/errors | FastAPI·DB·SDK, app/application, ingestion, marketdata adapter |
+| trading_review | 표준 라이브러리, trading_review | 다른 refinvest 계층, 외부 SDK |
+| marketdata.domain/errors | 표준 라이브러리와 자신 | application, adapter, SDK |
+| marketdata.ports | 표준 라이브러리, marketdata.domain/ports/errors | concrete adapter·application |
+| application | 표준 라이브러리, application, engine, 순수 trading_review, marketdata 인터페이스, 승인된 contracts | FastAPI·DB·Vendor SDK, app·API·persistence·ingestion·marketdata adapter |
+| adapters.backtest | 표준 라이브러리, 자신의 package, application.backtest_worker_host port/outcome | app·API·persistence·Engine·네트워크·외부 SDK |
+| adapters.analytics | 표준 라이브러리, 자신의 package, application.analytics_input, contracts.analytics | app·API·persistence·worker 구현·외부 SDK |
+| contracts | 표준 라이브러리, contracts.normalization/analytics, Pydantic, 순수 trading_review.versions | app·API·application·persistence·ingestion·engine, 설정·네트워크·프로세스·파일시스템 구현 |
+| api.routes | FastAPI/Starlette, schema·dependency provider, application, 계약·시장데이터 인터페이스, 관측·인증·설정의 명시적 경계 | concrete persistence, ingestion, 다른 route, 그 외 app 구현 |
+| api.dependencies | 외부 구현체와 설정을 조립 가능 | route import, 테스트·타 서비스 source |
+| api.schemas | Pydantic/FastAPI, schema, 계약, engine.validation 타입 | app, persistence, ingestion, route, dependency provider |
+| persistence | DB·Artifact SDK, port·순수 모델·계약 | app·API 역참조, 테스트·타 서비스 source |
 
-진행 범위와 후속 연결은 [작업 계획](ARCHITECTURE_REFACTORING_PLAN.md)을 참고한다.
+표준 라이브러리 허용만으로 순수성이 보장되지는 않는다. engine·trading_review·application·contracts는
+socket/urllib/http 등의 직접 네트워크 import와 os 설정 접근을 추가로 차단한다.
+contracts는 pathlib·subprocess·multiprocessing도 차단한다. 계약의 메모리 내 JSON/bytes 처리와
+Pydantic 검증은 허용한다. 정규화 identity의 기존 정확한 지원 registry 참조를 위해
+`trading_review.versions`만 승인하며, 결과 projection을 계약 모듈에 넣는 근거로 사용하지 않는다.
+
+Application은 `contracts.normalization`, `contracts.analytics` 두 경계만 승인한다.
+임의의 미래 contracts 하위 package를 자동 승인하지 않는다. AR-01에서는 synthetic source로
+규칙을 검증했고, AR-02N/02A에서 실제 normalization·analytics 계약 모듈을 연결했다.
+
+HTTP 경계의 `StrategyValidationError`, `ScaledDecimal`, `TradingReviewError`는 정확한
+타입 import만 허용한다. 이를 계산 pipeline이나 domain service 호출의 승인으로 해석하지 않는다.
+`app.config`와 `app.security`는 현재 HTTP 설정·인증 경계로 명시적으로 허용한다.
+이들의 최종 배치는 아래 역할 목록과 AR-03/11에서 정리한다.
+
+Dependency provider는 객체 조립을 위해 concrete adapter를 import할 수 있다.
+같은 import를 새로운 HTTP handler에 추가하면 실패한다. 현재 route 파일에 남은 조립 함수는
+예외 목록으로 추적하며, 함수가 provider 역할이라는 이유로 route 파일 전체를 면제하지 않는다.
+
+## 2. 현재 이행 예외
+
+AR-01 시작 시점의 예외는 7개 파일, 18개 import group, 31개 심볼 의존성이다.
+AR-02N에서 6개 group·11개 심볼, AR-02A에서 2개 group·5개 심볼을 제거했다.
+AR-03N에서 Normalization provider를 옮겨 concrete repository 심볼 1개도 제거했다.
+AR-03A에서 Analytics port·오류 소유권·provider 참조를 전환해 3개 group·8개 심볼을 제거했다.
+현재 목록은 2개 파일, 6개 group, 6개 심볼이다.
+
+| 현재 파일 | 남은 의존성 | 제거 단계 |
+|---|---|---|
+| api/routes/assets.py | Snapshot loader factory, concrete loader/repository 타입 | AR-07 |
+| api/routes/series.py | Snapshot loader factory, storage error, concrete repository | AR-07 |
+
+Normalization job handler는 AR-03N에서 application과 좁은 repository port를 사용하도록
+연결했다. 공용 payload·ACK도 새 provider가 반환하는 기존 port를 사용하므로 Normalization
+concrete import는 AR-04보다 먼저 제거했다. AR-03A에서도 공용 handler가 새 provider와
+Analytics 전달 port를 사용해 관련 concrete·route import를 제거했다. AR-04에서는 공용
+payload·ACK의 기능 선택과 조율도 application으로 옮겼다. 의존성 예외 수는 늘리지 않았다.
+AR-02의 import 위치 변경과 AR-03의 use case 분리를 구분한다.
+
+예외의 key는 POSIX 상대 파일 경로와 실제 fully qualified import 심볼의 정확한 쌍이다.
+JSON에는 원래 module, 심볼 목록, 이유, 제거할 AR 단계를 명시한다.
+
+- 파일 glob, module prefix 면제, wildcard 심볼, 중복 key, 불명확한 제거 단계는 거절한다.
+- 동일한 심볼도 다른 파일에서 import하면 새 위반이다.
+- 같은 파일에서 새 심볼·하위 모듈을 import하면 새 위반이다.
+- 의존성을 제거하거나 허용 경계로 이동한 뒤 예외만 남으면 stale exception으로 실패한다.
+- 후속 PR은 코드 전환과 해당 예외 제거를 함께 수행한다. 새 예외로 검사를 통과시키지 않는다.
+
+## 3. app 역할 목록
+
+AR-01 시점 app의 책임 분류다. AR-02N/02A에서 Normalization 계약·MEDIA_TYPE과
+Analytics identity·digest 이동을 완료했다. 아래 원래 module 이름은 책임 추적용으로 남기며,
+AR-05N에서는 Normalization worker·입력 변환·projection·technical adapter 분리도 완료했다.
+AR-05A에서는 Analytics worker·입력 변환·projection·Artifact adapter 분리도 완료했다.
+AR-05B에서 Backtest process adapter 이동과 worker 조립 전환도 완료했다.
+
+| 현재 모듈 | 현재 책임 | 목표 경계·단계 |
+|---|---|---|
+| config.py | 환경 설정과 payload key 해석 | Composition 설정으로 유지; secret 처리는 domain에 전달하지 않음 |
+| main.py | FastAPI 조립, HTTP validation/error 처리, request 계측 | 조립 유지, HTTP 정책은 API 경계로 정리; AR-03/04/11 |
+| security.py | 내부 API key HTTP 인증 | API 인증/dependency 경계; AR-03/11 |
+| worker.py | Backtest 부모 조립·child 계산기 factory·시작·종료 | spawn/IPC/종료는 adapters.backtest로 이동 완료; AR-05B |
+| trading_review_worker.py | 설정 검증·조립·signal·CLI | Worker application과 process adapter 연결 완료; AR-05N |
+| trading_analytics_worker.py | 설정 검증·DB/adapter 조립·signal·CLI | application worker와 Artifact adapter 연결 완료; AR-05A. 새 격리·deadline은 AR-08~10 |
+| trading_review_identity.py | 정규화 identity DTO·hash·지원 registry 확인 | contracts.normalization.identity 이동 완료; AR-02N |
+| trading_review_result_integrity.py | V1/V2 public result 검증·canonicalization | contracts.normalization.result_integrity 이동 완료; AR-02N |
+| trading_review_result_delivery.py | pinned 전달 policy·바이트 상한 | contracts.normalization.result_delivery 이동 완료; AR-02N |
+| trading_review_payload.py (제거됨) | public result projection | application.normalization_payload 이동 완료; AR-05N |
+| trading_review_normalization.py (제거됨) | 입력 해석·변환, 다운로드·process 실행 | application.normalization_execution과 adapters.normalization 이동 완료; AR-05N |
+| trading_analytics_identity.py | Analytics identity·VersionSet·canonical JSON | contracts.analytics.identity 이동 완료; AR-02A |
+| trading_analytics_input.py (제거됨) | Artifact I/O·검증과 계산 입력 변환 | application.analytics_input과 adapters.analytics 이동 완료; AR-05A |
+| trading_analytics_result.py (제거됨) | 세 Metric의 public projection | application.analytics_result 이동 완료; AR-05A |
+| backtest_job_cleanup.py | cleanup CLI·DB 조립·운영 출력 | 얇은 진입점 유지, 조율 책임 정리 AR-06/11 |
+| trading_review_cleanup.py, trading_analytics_cleanup.py | 각 기능 cleanup CLI·조립 | 기능별 정책 유지, 조율 분리 AR-06/11 |
+| snapshot_storage.py | Filesystem/S3 factory와 storage 설정 해석 | 조립 유지, 조회 경계 연결 AR-07 |
+| snapshot_ingestion.py | CLI 입력, Vendor/발행 구성과 ingestion 조율 | 얇은 CLI와 ingestion application 구분; AR-11 기능별 PR |
+| integration_fixture.py, reference_data_smoke.py | 합성 fixture 구성·발행과 참조 데이터 진단 CLI | 검증 도구 책임 유지, 필요시 feature별 구성 분리 AR-11 |
+| benchmark.py | benchmark CLI와 기존 benchmarking 모듈 조립 | 얇은 composition 진입점 유지; AR-11 최종 확인 |
+| refinvest/__init__.py (package root) | FastAPI app/main eager export | 기존 진입점 호환성을 보존하며 bootstrap 분리 검토; AR-11 |
+
+`__init__.py`는 package 초기화로 유지한다. AR-11에서 남은 실질적인 구현 이동을 발견하면
+한 번의 정리 PR에 몰지 않고 해당 기능의 독립 PR로 나눈다.
+
+## 4. 검증 범위와 한계
+
+검사는 production 파일을 import하거나 실행하지 않고 AST를 읽는다.
+Absolute/relative import, package `__init__`, alias, `from ... import *`, 중첩·TYPE_CHECKING
+안의 import를 검사한다. Package 경계는 점 단위로 비교하므로 `domain_extra`를 `domain`으로
+허용하지 않는다. 겹치는 규칙도 함께 적용해 global 금지가 상세 규칙에 가려지지 않게 한다.
+
+정적 import 검사는 동적 import 문자열, re-export의 심볼 기원, 기존 import의 함수 호출
+행위나 I/O·트랜잭션 순수성을 완전히 추적하지 않는다. 특히 이미 승인된 심볼을 같은 파일의
+새 코드가 재사용하는 행위는 새 import edge가 아니다. 코드 리뷰와 기존 계산·Job regression을
+함께 사용하며, 이 검사를 runtime 정확성이나 정보보호 검증으로 확대 해석하지 않는다.
+
+```powershell
+.venv/Scripts/python.exe -m pytest -q tests/test_architecture_dependencies.py tests/test_trading_review_runtime_architecture.py --tb=short
+```
+
+AR-01은 규칙·회귀 테스트·이행 목록을 함께 검토하는 변경 범위다. Runtime 전환은 AR-02
+이후 기능별 PR에서 수행하며, 이 작업에서는 production import 경로를 변경하지 않는다.
+Determinism impact: none. Point-in-Time impact: none.
+
+검증 결과:
+
+- 의존성·기존 Trading Review runtime 검사: 45 passed.
+- 전체 로컬 suite: 504 passed, 117 skipped.
+- Skip은 DB URL 미설정 30개와 폐기된 test-only PoC 87개로 구분한다.
+- Formatter·Ruff lint·Pyright strict 통과.
+- Production Python 파일은 AR-00 포맷 보완 이후 바이트와 동일한지 확인했다.
+
+이번 작업은 테스트·검사 자료·문서만 변경하므로 DB·Core E2E를 재실행하지 않았다.
+AR-00의 실 DB·Core 검증 기록은 별도 baseline으로 유지한다.
+
+이 절의 수치는 AR-01 실행 기록이다. Production import가 전환된 별도 검증은
+[Normalization 계약 문서](NORMALIZATION_CONTRACTS.md)와
+[Analytics 계약 문서](ANALYTICS_CONTRACTS.md)에 기록한다.
+AR-03N의 HTTP/application 연결과 검증은 [Normalization application](NORMALIZATION_APPLICATION.md)에 기록한다.
+AR-03A의 Analytics port·오류·HTTP 연결과 검증은 [Analytics application](ANALYTICS_APPLICATION.md)에 기록한다.
+AR-04의 조회·ACK 조율과 검증은 [공용 전달 application](TERMINAL_DELIVERY_APPLICATION.md)에 기록한다.
+AR-05N의 worker·child 분리와 검증은 [Normalization worker](NORMALIZATION_WORKER_APPLICATION.md)에 기록한다.
+
+AR-05A의 worker·Artifact 분리와 검증은 [Analytics worker](ANALYTICS_WORKER_APPLICATION.md)에 기록한다.
+
+AR-05B의 process adapter·child 조립 전환과 검증은 [Backtest process adapter](BACKTEST_PROCESS_ADAPTER.md)에 기록한다.
+
+AR-06N은 Normalization row/document 변환, payload 저장 codec과 cursor 기반 grant SQL을
+분리한다. Row 모듈은 DB client·암호화를, payload 모듈은 DB client와 repository 역참조를,
+grant 모듈은 새 connection·repository 역참조를 차단한다. Repository가 transaction을 계속
+소유하며 예외 수는 6개로 같다. [Normalization persistence](NORMALIZATION_PERSISTENCE.md)에
+AST·SQL 비교와 DB 경합·rollback 검증을 기록한다.
+
+AR-06N의 후속 단일 회귀·Core publication/ACK·version pin 검증은 [Normalization persistence](NORMALIZATION_PERSISTENCE.md)의 재검증 절을 참고한다. 임시 네트워크 bootstrap은 production 의존성에 포함하지 않는다.
+
+AR-06A는 Analytics persisted document와 AES-GCM codec을 분리한다. Document 모듈의 DB client·
+암호화·네트워크, codec의 DB client·repository 역참조를 차단한다. Claim predicate·DB clock·
+transaction은 repository에 유지한다. 예외는 6개로 같다. 전후 비교와 실제 DB 경합·rollback은
+[Analytics persistence](ANALYTICS_PERSISTENCE.md)에 기록한다.

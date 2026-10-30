@@ -1,17 +1,14 @@
-"""Typed Analytics V1 public result projection and independent digest construction."""
+"""Typed Analytics V1 projection of pure Engine results to public sections."""
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import cast
 
-from refinvest.app.trading_analytics_identity import (
-    RESULT_HASH_SPEC,
-    RESULT_SCHEMA,
-    AnalyticsContractError,
-    jcs_sha256,
-)
+from refinvest.contracts.analytics.identity import AnalyticsContractError
+from refinvest.contracts.analytics.result_integrity import SECTION_FIELDS, SECTIONS
 from refinvest.trading_review.analytics.model import (
     Distribution,
     ExposureValues,
@@ -24,27 +21,6 @@ from refinvest.trading_review.decimal import ExactRational
 REENTRY = "ENTRY_WITHIN_WINDOW_AFTER_LOSS"
 EXPOSURE = "INITIAL_EXPOSURE_CHANGE_AFTER_LOSS"
 HOLDING = "WIN_LOSS_HOLDING_DURATION_DIFFERENCE"
-
-SECTIONS = (
-    "EVIDENCE_MEMBERSHIPS",
-    "FINDINGS",
-    "METRICS",
-    "OBSERVATIONS",
-    "OUTCOME_CLASSIFICATIONS",
-    "RELATIONS",
-)
-SECTION_FIELDS = {
-    "OUTCOME_CLASSIFICATIONS": (
-        "outcomeClassifications",
-        "outcomeClassificationCount",
-        "reviewUnitId",
-    ),
-    "OBSERVATIONS": ("observations", "observationCount", "observationId"),
-    "METRICS": ("metrics", "metricCount", "metricId"),
-    "RELATIONS": ("relations", "relationCount", "relationId"),
-    "EVIDENCE_MEMBERSHIPS": ("evidenceMembership", "evidenceMembershipCount", "membershipId"),
-    "FINDINGS": ("findings", "findingCount", "findingId"),
-}
 
 
 def _sort(values: list[str]) -> list[str]:
@@ -160,65 +136,6 @@ def _scalar_inputs(metric: MetricResult) -> list[dict[str, str]]:
         result.append({"reviewUnitId": unit_id, "name": name, "value": text})
     result.sort(key=lambda item: (item["reviewUnitId"], item["name"], item["value"]))
     return result
-
-
-def finish_sections(
-    sections: dict[str, list[dict[str, object]]],
-    *,
-    input_hash: str,
-    config_hash: str,
-    version_set: dict[str, object],
-) -> dict[str, object]:
-    """Hash the public structures; never trust supplied counts or expected vector hashes."""
-    if set(sections) != set(SECTIONS) or len(sections["METRICS"]) != 3 or sections["FINDINGS"]:
-        raise AnalyticsContractError("RESULT_INTEGRITY_FAILURE")
-    metric_ids = {str(item["definitionId"]) for item in sections["METRICS"]}
-    if metric_ids != {
-        "ENTRY_WITHIN_WINDOW_AFTER_LOSS",
-        "INITIAL_EXPOSURE_CHANGE_AFTER_LOSS",
-        "WIN_LOSS_HOLDING_DURATION_DIFFERENCE",
-    }:
-        raise AnalyticsContractError("RESULT_INTEGRITY_FAILURE")
-    for metric in sections["METRICS"]:
-        metric["metricHash"] = jcs_sha256(
-            {key: value for key, value in metric.items() if key != "metricHash"}
-        )
-    counts: dict[str, int] = {}
-    digests: list[dict[str, object]] = []
-    for section_type in SECTIONS:
-        _, count_field, identity = SECTION_FIELDS[section_type]
-        items = sections[section_type]
-        item_ids = [str(item[identity]) for item in items]
-        if item_ids != _sort(item_ids):
-            raise AnalyticsContractError("RESULT_INTEGRITY_FAILURE")
-        counts[count_field] = len(items)
-        digests.append(
-            {
-                "sectionType": section_type,
-                "itemCount": len(items),
-                "hashSpecificationVersion": RESULT_HASH_SPEC,
-                "sectionHash": jcs_sha256(items),
-            }
-        )
-    manifest: dict[str, object] = {
-        "resultHashSpecificationVersion": RESULT_HASH_SPEC,
-        "resultSchemaVersion": RESULT_SCHEMA,
-        "inputHash": input_hash,
-        "inputHashSpecificationVersion": "TRADING_ANALYTICS_INPUT_HASH_V1",
-        "analysisConfigHash": config_hash,
-        "targetVersionSet": version_set,
-        "counts": counts,
-        "sectionDigests": digests,
-    }
-    return {
-        "counts": counts,
-        "sectionDigests": digests,
-        "evidenceHash": next(
-            item["sectionHash"] for item in digests if item["sectionType"] == "EVIDENCE_MEMBERSHIPS"
-        ),
-        "resultDigestManifest": manifest,
-        "resultHash": jcs_sha256(manifest),
-    }
 
 
 def build_sections(
@@ -498,3 +415,48 @@ def build_sections(
         if len({str(item[identity]) for item in items}) != len(items):
             raise AnalyticsContractError("RESULT_ITEM_CONFLICT")
     return sections
+
+
+def bounded_analytics_json(payload: dict[str, object], maximum: int) -> bytes:
+    """Measure each UTF-8 chunk before retaining it; never create an oversized result."""
+    if maximum < 1:
+        raise ValueError("A positive payload limit is required.")
+    output = bytearray()
+    encoder = json.JSONEncoder(ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    for text in encoder.iterencode(payload):
+        chunk = text.encode("utf-8")
+        if len(output) + len(chunk) > maximum:
+            raise AnalyticsContractError("RESULT_PAYLOAD_TOO_LARGE")
+        output.extend(chunk)
+    return bytes(output)
+
+
+def build_analytics_payload(
+    claim: dict[str, object],
+    request: dict[str, object],
+    sections: dict[str, list[dict[str, object]]],
+    digests: dict[str, object],
+    *,
+    terminal_at: datetime,
+) -> dict[str, object]:
+    job_id = cast(str, claim["jobId"])
+    now = terminal_at.isoformat().replace("+00:00", "Z")
+    created = cast(datetime, claim["createdAt"]).astimezone(UTC).isoformat().replace("+00:00", "Z")
+    return {
+        "jobId": job_id,
+        "coreLogicalJobId": request["coreLogicalJobId"],
+        "coreAnalysisRunId": request["coreAnalysisRunId"],
+        "attemptToken": claim["attemptToken"],
+        "deletionGeneration": claim["deletionGeneration"],
+        "status": "COMPLETED",
+        "targetVersionSet": request["targetVersionSet"],
+        "analysisConfigHash": request["analysisConfigHash"],
+        "inputHash": request["expectedInputHash"],
+        "inputHashSpecificationVersion": request["inputHashSpecificationVersion"],
+        "resultSchemaVersion": request["resultSchemaVersion"],
+        "resultHashSpecificationVersion": request["resultHashSpecificationVersion"],
+        **digests,
+        **{field: sections[name] for name, (field, _, _) in SECTION_FIELDS.items()},
+        "createdAt": created,
+        "terminalAt": now,
+    }

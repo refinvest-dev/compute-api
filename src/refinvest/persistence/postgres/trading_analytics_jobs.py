@@ -5,65 +5,37 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timedelta
-from os import urandom
 from typing import Any, cast
 from uuid import uuid4
 
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from psycopg import connect
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from refinvest.app.trading_analytics_identity import jcs_sha256
-
-
-class AnalyticsJobConflict(ValueError):
-    pass
-
-
-class AnalyticsJobCapacity(ValueError):
-    pass
-
-
-class AnalyticsJobUnavailable(ValueError):
-    pass
+from refinvest.application.analytics_jobs import (
+    AnalyticsJobCapacity,
+    AnalyticsJobConflict,
+    AnalyticsJobUnavailable,
+)
+from refinvest.contracts.analytics.identity import jcs_sha256
+from refinvest.persistence.postgres.analytics_documents import (
+    accepted_row,
+    build_terminal_descriptor,
+    expiry,
+    grants_from_request,
+    stable_request,
+    status_row,
+)
+from refinvest.persistence.postgres.analytics_payloads import (
+    create_payload_cipher,
+    decrypt_payload,
+    encrypt_payload,
+)
 
 
 def _db_time(cursor: Any) -> datetime:
     cursor.execute("SELECT CURRENT_TIMESTAMP AS now")
     return cast(datetime, cursor.fetchone()["now"])
-
-
-def _stable_request(request: dict[str, object]) -> dict[str, object]:
-    stable = dict(request)
-    for role in ("ledgerRevisionContent", "reconciliationManifest"):
-        reference = cast(dict[str, object], stable[role])
-        stable[role] = {
-            key: value for key, value in reference.items() if key not in {"accessUri", "expiresAt"}
-        }
-    return stable
-
-
-def _grants(request: dict[str, object]) -> dict[str, object]:
-    return {
-        role: {
-            "accessUri": cast(dict[str, object], request[role])["accessUri"],
-            "expiresAt": cast(dict[str, object], request[role])["expiresAt"],
-        }
-        for role in ("ledgerRevisionContent", "reconciliationManifest")
-    }
-
-
-def _expiry(grants: dict[str, object], now: datetime) -> datetime:
-    expiries = [
-        datetime.fromisoformat(
-            str(cast(dict[str, object], grants[role])["expiresAt"]).replace("Z", "+00:00")
-        )
-        for role in ("ledgerRevisionContent", "reconciliationManifest")
-    ]
-    if any(value <= now or value > now + timedelta(minutes=5) for value in expiries):
-        raise AnalyticsJobConflict("INPUT_REFERENCE_EXPIRED")
-    return min(expiries)
 
 
 class PostgresAnalyticsJobRepository:
@@ -78,16 +50,9 @@ class PostgresAnalyticsJobRepository:
         if len(encryption_key) != 32 or active_job_limit <= 0 or max_payload_bytes <= 0:
             raise ValueError("Analytics job store configuration is invalid.")
         self.database_url = database_url
-        self.cipher = AESGCM(encryption_key)
+        self.cipher = create_payload_cipher(encryption_key)
         self.active_job_limit = active_job_limit
         self.max_payload_bytes = max_payload_bytes
-
-    def _encrypt(self, identity: str, data: bytes) -> bytes:
-        nonce = urandom(12)
-        return nonce + self.cipher.encrypt(nonce, data, identity.encode())
-
-    def _decrypt(self, identity: str, data: bytes) -> bytes:
-        return self.cipher.decrypt(data[:12], data[12:], identity.encode())
 
     def _connection(self) -> Any:
         return connect(self.database_url, row_factory=cast(Any, dict_row))
@@ -110,7 +75,7 @@ class PostgresAnalyticsJobRepository:
                 job_id = str(existing["job_id"])
                 self._expire_retry(cursor, job_id)
                 cursor.execute("SELECT * FROM trading_analytics_jobs WHERE job_id=%s", (job_id,))
-                return self._status_row(cast(dict[str, Any], cursor.fetchone())), False
+                return status_row(cast(dict[str, Any], cursor.fetchone())), False
             cursor.execute(
                 "SELECT pg_advisory_xact_lock("
                 "hashtextextended('trading-review-active-capacity', 0))"
@@ -131,9 +96,11 @@ class PostgresAnalyticsJobRepository:
             if cursor.fetchone()["active"] >= self.active_job_limit:
                 raise AnalyticsJobCapacity("TRADING_REVIEW_CAPACITY_EXCEEDED")
             now = _db_time(cursor)
-            grants = _grants(request)
-            expire_at = _expiry(grants, now)
-            cipher = self._encrypt(job_id, json.dumps(grants, separators=(",", ":")).encode())
+            grants = grants_from_request(request)
+            expire_at = expiry(grants, now)
+            cipher = encrypt_payload(
+                self.cipher, job_id, json.dumps(grants, separators=(",", ":")).encode()
+            )
             cursor.execute(
                 """
                 INSERT INTO trading_analytics_jobs (
@@ -149,7 +116,7 @@ class PostgresAnalyticsJobRepository:
                     request["coreLogicalJobId"],
                     request["coreAnalysisRunId"],
                     request["ledgerRevisionId"],
-                    Jsonb(_stable_request(request)),
+                    Jsonb(stable_request(request)),
                     fingerprint,
                     request["expectedInputHash"],
                     request["analysisConfigHash"],
@@ -185,19 +152,7 @@ class PostgresAnalyticsJobRepository:
         row = cursor.fetchone()
         if row is None:
             raise AnalyticsJobUnavailable("JOB_NOT_FOUND")
-        return {
-            "jobId": str(row["job_id"]),
-            "coreLogicalJobId": row["core_logical_job_id"],
-            "kind": "ANALYTICS",
-            "status": "PENDING",
-            "createdAt": row["created_at"].isoformat(),
-            "coreAnalysisRunId": row["core_analysis_run_id"],
-            "attempt": 1,
-            "attemptToken": row["attempt_token"],
-            "deletionGeneration": row["deletion_generation"],
-            "grantRevision": row["grant_revision"],
-            "expectedInputHash": row["expected_input_hash"],
-        }
+        return accepted_row(row)
 
     @staticmethod
     def _expire_retry(cursor: Any, job_id: str) -> None:
@@ -221,44 +176,7 @@ class PostgresAnalyticsJobRepository:
             row = cursor.fetchone()
             if row is None:
                 return None
-            return self._status_row(row)
-
-    @staticmethod
-    def _status_row(row: dict[str, Any]) -> dict[str, object]:
-        request = cast(dict[str, object], row["request_payload"])
-        status: dict[str, object] = {
-            "jobId": str(row["job_id"]),
-            "coreLogicalJobId": row["core_logical_job_id"],
-            "coreAnalysisRunId": row["core_analysis_run_id"],
-            "kind": "ANALYTICS",
-            "status": row["status"],
-            "progressStage": row["progress_stage"],
-            "attempt": row["attempt_number"],
-            "attemptToken": row["attempt_token"],
-            "deletionGeneration": row["deletion_generation"],
-            "grantRevision": row["grant_revision"],
-            "expectedInputHash": row["expected_input_hash"],
-            "inputHashSpecificationVersion": request["inputHashSpecificationVersion"],
-            "analysisConfigHash": row["analysis_config_hash"],
-            "targetVersionSet": request["targetVersionSet"],
-            "retryPolicyVersion": request["retryPolicyVersion"],
-            "resultDeliveryPolicy": request["resultDeliveryPolicy"],
-            "retryCutoffAt": row["retry_cutoff_at"].isoformat(),
-            "retryAvailable": row["retry_available"],
-            "createdAt": row["created_at"].isoformat(),
-            "updatedAt": row["updated_at"].isoformat(),
-            "startedAt": row["started_at"].isoformat() if row["started_at"] else None,
-        }
-        if row["last_attempt_failure"] is not None:
-            status["lastAttemptFailure"] = row["last_attempt_failure"]
-        if row["status"] == "COMPLETED":
-            status["terminalPayloadId"] = str(row["terminal_payload_id"])
-            status["resultHash"] = row["result_hash"]
-        if row["status"] == "FAILED":
-            status["failure"] = row["failure"]
-        if row["terminal_at"] is not None:
-            status["terminalAt"] = row["terminal_at"].isoformat()
-        return status
+            return status_row(row)
 
     def update_grants(
         self, job_id: str, update: dict[str, object], key_hash: str
@@ -303,8 +221,8 @@ class PostgresAnalyticsJobRepository:
                 if any(expected[key] != actual.get(key) for key in expected):
                     raise AnalyticsJobConflict("ARTIFACT_IDENTITY_CONFLICT")
             now = _db_time(cursor)
-            grants = _grants(update)
-            expire_at = _expiry(grants, now)
+            grants = grants_from_request(update)
+            expire_at = expiry(grants, now)
             mode = str(update["mode"])
             next_token = str(update["nextAttemptToken"])
             if mode == "REPLACE_QUEUED_GRANTS":
@@ -340,7 +258,9 @@ class PostgresAnalyticsJobRepository:
             else:
                 raise AnalyticsJobConflict("STALE_GRANT_UPDATE")
             revision = row["grant_revision"] + 1
-            encrypted = self._encrypt(job_id, json.dumps(grants, separators=(",", ":")).encode())
+            encrypted = encrypt_payload(
+                self.cipher, job_id, json.dumps(grants, separators=(",", ":")).encode()
+            )
             cursor.execute(
                 """
                 UPDATE trading_analytics_jobs SET grants_encrypted=%s,grants_expire_at=%s,
@@ -447,7 +367,8 @@ class PostgresAnalyticsJobRepository:
                 (generation, worker_id, lease.total_seconds(), job_id, row["attempt_number"]),
             )
             grants = cast(
-                dict[str, object], json.loads(self._decrypt(job_id, row["grants_encrypted"]))
+                dict[str, object],
+                json.loads(decrypt_payload(self.cipher, job_id, row["grants_encrypted"])),
             )
             return {
                 "jobId": job_id,
@@ -580,33 +501,16 @@ class PostgresAnalyticsJobRepository:
         created_at = datetime.fromisoformat(str(payload["createdAt"]).replace("Z", "+00:00"))
         terminal_at = datetime.fromisoformat(str(payload["terminalAt"]).replace("Z", "+00:00"))
         expires_at = terminal_at + timedelta(hours=24)
-        descriptor: dict[str, object] = {
-            "jobId": claim["jobId"],
-            "coreLogicalJobId": request["coreLogicalJobId"],
-            "coreAnalysisRunId": request["coreAnalysisRunId"],
-            "payloadId": payload_id,
-            "transportMode": "SINGLE_RESOURCE",
-            "resultDeliveryPolicyVersion": "ANALYTICS_RESULT_DELIVERY_V1",
-            "mediaType": "application/vnd.refinvest.trading-analytics+json",
-            "contentEncoding": "identity",
-            "byteSize": len(body),
-            "payloadSha256": digest,
-            "attemptToken": claim["attemptToken"],
-            "deletionGeneration": claim["deletionGeneration"],
-            "inputHash": payload["inputHash"],
-            "inputHashSpecificationVersion": payload["inputHashSpecificationVersion"],
-            "analysisConfigHash": payload["analysisConfigHash"],
-            "targetVersionSet": payload["targetVersionSet"],
-            "resultSchemaVersion": payload["resultSchemaVersion"],
-            "resultHashSpecificationVersion": payload["resultHashSpecificationVersion"],
-            "counts": payload["counts"],
-            "sectionDigests": payload["sectionDigests"],
-            "evidenceHash": payload["evidenceHash"],
-            "resultHash": payload["resultHash"],
-            "createdAt": created_at.isoformat(),
-            "expiresAt": expires_at.isoformat(),
-        }
-        encrypted = self._encrypt(payload_id, body)
+        descriptor = build_terminal_descriptor(
+            claim,
+            payload,
+            payload_id=payload_id,
+            body_size=len(body),
+            payload_sha256=digest,
+            created_at=created_at,
+            expires_at=expires_at,
+        )
+        encrypted = encrypt_payload(self.cipher, payload_id, body)
         with self._connection() as connection, connection.cursor() as cursor:
             cursor.execute(
                 "SELECT 1 FROM trading_analytics_jobs WHERE " + self._claim_where() + " FOR UPDATE",
@@ -691,7 +595,7 @@ class PostgresAnalyticsJobRepository:
                 raise AnalyticsJobUnavailable("RESULT_PAYLOAD_EXPIRED")
             if row["encrypted_bytes"] is None:
                 return None
-            return self._decrypt(payload_id, row["encrypted_bytes"])
+            return decrypt_payload(self.cipher, payload_id, row["encrypted_bytes"])
 
     def acknowledge(self, job_id: str, body: dict[str, object]) -> None:
         fingerprint = jcs_sha256(body)

@@ -13,25 +13,32 @@ from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.routing import APIRoute
 
+from refinvest.api.dependencies.trading_analytics_jobs import (
+    get_analytics_repository,
+)
 from refinvest.api.schemas.trading_analytics_jobs import (
     CreateAnalyticsJobTransport,
     UpdateAnalyticsGrantsTransport,
 )
-from refinvest.app.config import Settings, get_settings, trading_review_payload_key
+from refinvest.app.config import Settings, get_settings
 from refinvest.app.security import require_internal_api_key
-from refinvest.app.trading_analytics_identity import (
-    AnalyticsContractError,
-    create_fingerprint,
-    require_supported_version_set,
-    validate_create_identity,
-)
-from refinvest.application.trading_review_jobs import hash_idempotency_key
-from refinvest.persistence.postgres.trading_analytics_jobs import (
+from refinvest.application.analytics_jobs import (
+    AnalyticsAdmissionUnavailable,
+    AnalyticsCancellationConflict,
     AnalyticsJobCapacity,
     AnalyticsJobConflict,
+    AnalyticsJobNotFound,
+    AnalyticsJobRepository,
     AnalyticsJobUnavailable,
-    PostgresAnalyticsJobRepository,
+    AnalyticsResultExpired,
+    AnalyticsResultUnavailable,
+    cancel_analytics_job,
+    get_analytics_job_status,
+    get_analytics_result,
+    submit_analytics_job,
+    update_analytics_grants,
 )
+from refinvest.contracts.analytics.identity import AnalyticsContractError
 
 
 def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -95,35 +102,6 @@ def _key(value: str | None) -> str | None:
     return value if value is not None and _KEY.fullmatch(value) else None
 
 
-def get_optional_analytics_repository(
-    settings: Annotated[Settings, Depends(get_settings)],
-) -> PostgresAnalyticsJobRepository | None:
-    if settings.database_url is None or settings.trading_review_active_job_limit is None:
-        return None
-    try:
-        key = trading_review_payload_key(settings)
-    except ValueError:
-        return None
-    return PostgresAnalyticsJobRepository(
-        settings.database_url,
-        key,
-        active_job_limit=settings.trading_review_active_job_limit,
-        max_payload_bytes=settings.trading_review_max_payload_bytes,
-    )
-
-
-def get_analytics_repository(
-    repository: Annotated[
-        PostgresAnalyticsJobRepository | None, Depends(get_optional_analytics_repository)
-    ],
-) -> PostgresAnalyticsJobRepository:
-    if repository is None:
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=503, detail="Analytics job store is unavailable.")
-    return repository
-
-
 @router.post(
     "/trading-review/analytics-jobs",
     operation_id="createTradingAnalyticsJob",
@@ -132,27 +110,22 @@ def get_analytics_repository(
 def create_trading_analytics_job(
     body: CreateAnalyticsJobTransport,
     settings: Annotated[Settings, Depends(get_settings)],
-    repository: Annotated[PostgresAnalyticsJobRepository, Depends(get_analytics_repository)],
+    repository: Annotated[AnalyticsJobRepository, Depends(get_analytics_repository)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> JSONResponse:
     key = _key(idempotency_key)
     if key is None:
         return _error(400, "IDEMPOTENCY_KEY_INVALID")
-    request = body.model_dump(mode="json", by_alias=True)
-    if any(
-        reference.byte_size > settings.trading_analytics_max_input_bytes
-        for reference in (body.ledger_revision_content, body.reconciliation_manifest)
-    ):
-        return _error(503, "TEMPORARY_DEPENDENCY_FAILURE", retryable=True)
     try:
-        validate_create_identity(request)
-        implementation_digest = settings.trading_analytics_implementation_digest
-        if implementation_digest is None:
-            return _error(503, "TEMPORARY_DEPENDENCY_FAILURE", retryable=True)
-        require_supported_version_set(request["targetVersionSet"], implementation_digest)
-        response, created = repository.create(
-            request, hash_idempotency_key(key), create_fingerprint(request)
+        response, created = submit_analytics_job(
+            body.model_dump(mode="json", by_alias=True),
+            key,
+            repository,
+            max_input_bytes=settings.trading_analytics_max_input_bytes,
+            implementation_digest=settings.trading_analytics_implementation_digest,
         )
+    except AnalyticsAdmissionUnavailable:
+        return _error(503, "TEMPORARY_DEPENDENCY_FAILURE", retryable=True)
     except AnalyticsContractError as error:
         return _error(422, error.code)
     except AnalyticsJobCapacity:
@@ -171,9 +144,9 @@ def create_trading_analytics_job(
 )
 def get_trading_analytics_job_status(
     jobId: str,
-    repository: Annotated[PostgresAnalyticsJobRepository, Depends(get_analytics_repository)],
+    repository: Annotated[AnalyticsJobRepository, Depends(get_analytics_repository)],
 ) -> dict[str, object] | JSONResponse:
-    result = repository.get(jobId)
+    result = get_analytics_job_status(jobId, repository)
     return result if result is not None else _error(404, "JOB_NOT_FOUND")
 
 
@@ -184,18 +157,16 @@ def get_trading_analytics_job_status(
 )
 def get_trading_analytics_job_result(
     jobId: str,
-    repository: Annotated[PostgresAnalyticsJobRepository, Depends(get_analytics_repository)],
+    repository: Annotated[AnalyticsJobRepository, Depends(get_analytics_repository)],
 ) -> dict[str, object] | JSONResponse:
-    job = repository.get(jobId)
-    if job is None:
-        return _error(404, "JOB_NOT_FOUND")
-    if job["status"] != "COMPLETED":
-        return _error(409, "RESULT_NOT_AVAILABLE")
     try:
-        result = repository.result_descriptor(jobId)
-    except AnalyticsJobUnavailable:
+        return get_analytics_result(jobId, repository)
+    except AnalyticsJobNotFound:
+        return _error(404, "JOB_NOT_FOUND")
+    except AnalyticsResultUnavailable:
+        return _error(409, "RESULT_NOT_AVAILABLE")
+    except AnalyticsResultExpired:
         return _error(404, "RESULT_PAYLOAD_EXPIRED")
-    return result if result is not None else _error(409, "RESULT_NOT_AVAILABLE")
 
 
 @router.post(
@@ -206,19 +177,19 @@ def get_trading_analytics_job_result(
 )
 def cancel_trading_analytics_job(
     jobId: str,
-    repository: Annotated[PostgresAnalyticsJobRepository, Depends(get_analytics_repository)],
+    repository: Annotated[AnalyticsJobRepository, Depends(get_analytics_repository)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict[str, object] | JSONResponse:
     key = _key(idempotency_key)
     if key is None:
         return _error(400, "IDEMPOTENCY_KEY_INVALID")
     try:
-        repository.cancel(jobId, hash_idempotency_key(key))
-    except AnalyticsJobUnavailable:
+        result = cancel_analytics_job(jobId, key, repository)
+    except AnalyticsJobNotFound:
         return _error(404, "JOB_NOT_FOUND")
-    except AnalyticsJobConflict:
+    except AnalyticsCancellationConflict:
         return _error(409, "JOB_STATE_CONFLICT")
-    return repository.get(jobId) or _error(404, "JOB_NOT_FOUND")
+    return result or _error(404, "JOB_NOT_FOUND")
 
 
 @router.post(
@@ -229,15 +200,15 @@ def cancel_trading_analytics_job(
 def update_trading_analytics_job_input_grants(
     jobId: str,
     body: UpdateAnalyticsGrantsTransport,
-    repository: Annotated[PostgresAnalyticsJobRepository, Depends(get_analytics_repository)],
+    repository: Annotated[AnalyticsJobRepository, Depends(get_analytics_repository)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict[str, object] | JSONResponse:
     key = _key(idempotency_key)
     if key is None:
         return _error(400, "IDEMPOTENCY_KEY_INVALID")
     try:
-        return repository.update_grants(
-            jobId, body.model_dump(mode="json", by_alias=True), hash_idempotency_key(key)
+        return update_analytics_grants(
+            jobId, body.model_dump(mode="json", by_alias=True), key, repository
         )
     except AnalyticsJobUnavailable:
         return _error(404, "JOB_NOT_FOUND")

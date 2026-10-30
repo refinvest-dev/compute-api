@@ -82,6 +82,16 @@ Compute storage from long-lived backups. Metrics use fixed status and safe failu
 
 ## Verification
 
+Worker orchestration and execution ownership are described in
+[Normalization worker application](NORMALIZATION_WORKER_APPLICATION.md). The existing CLI assembles
+the application worker and the artifact/process adapters. Child configuration contains only the
+calculation settings; PostgreSQL state transitions remain in the parent process.
+
+Normalization Job HTTP handlers delegate admission and job commands/queries to the application
+boundary described in [Normalization application](NORMALIZATION_APPLICATION.md). Repository
+composition lives in `api/dependencies/trading_review_jobs.py`. Shared payload/ACK orchestration
+delegates to the [terminal delivery application](TERMINAL_DELIVERY_APPLICATION.md).
+
 Set `REFINVEST_TEST_DATABASE_URL` to an isolated PostgreSQL database with migration 0015 applied,
 then run `uv run pytest tests/integration/test_postgres_trading_review_jobs.py`. Route and worker
 tests use synthetic artifacts. Integration fixture validation is a separate sibling-checkout

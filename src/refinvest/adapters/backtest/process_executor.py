@@ -11,12 +11,13 @@ from typing import cast
 
 from refinvest.application.backtest_worker_host import (
     BacktestExecutionOutcome,
+    BacktestJobExecutor,
     ExecutableBacktestJob,
     RetryableBacktestFailure,
     TerminalBacktestFailure,
 )
 
-_LOGGER = logging.getLogger(__name__)
+_LOGGER = logging.getLogger("refinvest.application.backtest_process_executor")
 _TERMINATION_GRACE_SECONDS = 30
 
 ChildTarget = Callable[[ExecutableBacktestJob, Connection], None]
@@ -100,3 +101,18 @@ class ProcessIsolatedBacktestExecutor:
             cls._terminate(process)
             return True
         return False
+
+
+def execute_backtest_child(
+    create_executor: Callable[[], BacktestJobExecutor],
+    job: ExecutableBacktestJob,
+    sender: Connection,
+) -> None:
+    """Build the executor in the child and send only its outcome to the lease owner."""
+    try:
+        outcome = create_executor().execute(job)
+        sender.send(outcome)
+    except Exception:
+        sender.send(RetryableBacktestFailure("Backtest execution process failed unexpectedly."))
+    finally:
+        sender.close()

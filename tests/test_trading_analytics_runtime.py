@@ -17,27 +17,28 @@ import yaml
 from jsonschema import Draft202012Validator, FormatChecker
 from starlette.testclient import TestClient
 
-from refinvest.api.routes.trading_analytics_jobs import (
+from refinvest.adapters.analytics.artifacts import download_inputs
+from refinvest.api.dependencies.trading_analytics_jobs import (
     get_analytics_repository,
     get_optional_analytics_repository,
 )
-from refinvest.api.routes.trading_review_jobs import get_trading_review_repository
+from refinvest.api.dependencies.trading_review_jobs import get_trading_review_repository
 from refinvest.app.config import Settings, get_settings
 from refinvest.app.main import app
-from refinvest.app.trading_analytics_identity import (
+from refinvest.application.analytics_input import AnalyticsInputFailure, adapt_inputs
+from refinvest.application.analytics_jobs import AnalyticsJobConflict
+from refinvest.application.analytics_result import bounded_analytics_json, build_sections
+from refinvest.application.analytics_worker import (
+    AnalyticsWorkerSettings,
+    TradingAnalyticsWorkerHost,
+)
+from refinvest.contracts.analytics.identity import (
     AnalyticsContractError,
     analysis_input_hash,
     canonical_bytes,
     create_fingerprint,
 )
-from refinvest.app.trading_analytics_input import (
-    AnalyticsInputFailure,
-    adapt_inputs,
-    download_inputs,
-)
-from refinvest.app.trading_analytics_result import build_sections, finish_sections
-from refinvest.app.trading_analytics_worker import TradingAnalyticsWorkerHost, _bounded_json
-from refinvest.persistence.postgres.trading_analytics_jobs import AnalyticsJobConflict
+from refinvest.contracts.analytics.result_integrity import finish_sections
 from refinvest.trading_review.analytics import calculate_behavior_metrics
 
 FIXTURE = (
@@ -191,7 +192,7 @@ def test_input_transport_checks_exact_bytes_before_parsing(monkeypatch: Any) -> 
             role = requested.full_url.rsplit("/", 1)[1]
             return Response(payloads[role], request[role]["mediaType"])
 
-    input_module = importlib.import_module("refinvest.app.trading_analytics_input")
+    input_module = importlib.import_module("refinvest.adapters.analytics.artifacts")
     monkeypatch.setattr(input_module, "build_opener", lambda *_: Opener())
     ledger, manifest = download_inputs(
         request, grants, ("core-artifacts.internal",), lambda: False, 1_000_000
@@ -218,7 +219,7 @@ def test_result_digest_matches_context_fixed_vector_and_payload_cap() -> None:
     assert computed["evidenceHash"] == vector["evidenceHash"]
     assert computed["resultHash"] == vector["expectedResultHash"]
     with pytest.raises(AnalyticsContractError, match="RESULT_PAYLOAD_TOO_LARGE"):
-        _bounded_json({"payload": "x" * 1000}, 100)
+        bounded_analytics_json({"payload": "x" * 1000}, 100)
 
 
 class MemoryAnalyticsRepository:
@@ -358,14 +359,13 @@ def test_worker_api_terminal_delivery_and_ack(monkeypatch: Any) -> None:
     request = _request()
     repo = MemoryAnalyticsRepository(request)
     vector = _vector()
-    monkeypatch.setattr(
-        importlib.import_module("refinvest.app.trading_analytics_worker"),
-        "download_inputs",
-        lambda *_: (
+
+    def fixed_download(*_: Any) -> Any:
+        return (
             vector["artifactSamples"]["ledgerRevisionContent"],
             vector["artifactSamples"]["reconciliationManifest"],
-        ),
-    )
+        )
+
     settings = Settings(
         internal_api_key="test-internal-key",
         trading_review_artifact_hosts=("core-artifacts.internal",),
@@ -405,7 +405,16 @@ def test_worker_api_terminal_delivery_and_ack(monkeypatch: Any) -> None:
                 '"coreLogicalJobId":', '"coreLogicalJobId":"other","coreLogicalJobId":', 1
             )
             assert client.post(base, content=duplicate, headers=headers).status_code == 422
-            assert TradingAnalyticsWorkerHost(repo, settings, worker_id="test-worker").run_once()
+            assert TradingAnalyticsWorkerHost(
+                repo,
+                AnalyticsWorkerSettings(
+                    settings.trading_review_artifact_hosts,
+                    settings.trading_analytics_implementation_digest,
+                    settings.trading_analytics_max_input_bytes,
+                ),
+                worker_id="test-worker",
+                download_inputs=fixed_download,
+            ).run_once()
             assert (
                 repo.payload is not None and repo.body is not None and repo.descriptor is not None
             )
@@ -439,10 +448,10 @@ def test_worker_api_terminal_delivery_and_ack(monkeypatch: Any) -> None:
 
 
 def test_worker_separates_input_and_engine_failures(monkeypatch: Any) -> None:
-    worker_module = importlib.import_module("refinvest.app.trading_analytics_worker")
+    worker_module = importlib.import_module("refinvest.application.analytics_worker")
     request = _request()
-    settings = Settings(
-        internal_api_key="test-internal-key",
+    settings = AnalyticsWorkerSettings(
+        trading_analytics_max_input_bytes=1_000_000,
         trading_review_artifact_hosts=("core-artifacts.internal",),
         trading_analytics_implementation_digest=request["targetVersionSet"]["implementationDigest"],
     )
@@ -451,26 +460,27 @@ def test_worker_separates_input_and_engine_failures(monkeypatch: Any) -> None:
     def bad_input(*_: Any) -> Any:
         raise AnalyticsInputFailure("INPUT_CONTENT_HASH_MISMATCH")
 
-    monkeypatch.setattr(worker_module, "download_inputs", bad_input)
-    assert TradingAnalyticsWorkerHost(input_repo, settings, worker_id="input-worker").run_once()
+    assert TradingAnalyticsWorkerHost(
+        input_repo, settings, worker_id="input-worker", download_inputs=bad_input
+    ).run_once()
     assert input_repo.failure == ("INPUT_CONTENT_HASH_MISMATCH", False)
     assert input_repo.payload is None
 
     vector = _vector()
     engine_repo = MemoryAnalyticsRepository(request)
-    monkeypatch.setattr(
-        worker_module,
-        "download_inputs",
-        lambda *_: (
+
+    def fixed_download(*_: Any) -> Any:
+        return (
             vector["artifactSamples"]["ledgerRevisionContent"],
             vector["artifactSamples"]["reconciliationManifest"],
-        ),
-    )
+        )
 
     def bad_engine(**_: Any) -> Any:
         raise ValueError("private engine input")
 
     monkeypatch.setattr(worker_module, "calculate_behavior_metrics", bad_engine)
-    assert TradingAnalyticsWorkerHost(engine_repo, settings, worker_id="engine-worker").run_once()
+    assert TradingAnalyticsWorkerHost(
+        engine_repo, settings, worker_id="engine-worker", download_inputs=fixed_download
+    ).run_once()
     assert engine_repo.failure == ("ENGINE_INVARIANT_VIOLATION", False)
     assert engine_repo.payload is None
