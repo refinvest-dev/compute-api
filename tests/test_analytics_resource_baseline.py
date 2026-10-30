@@ -5,6 +5,9 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import subprocess
+import sys
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -13,7 +16,7 @@ import pytest
 
 from refinvest.application.analytics_input import AnalyticsInputFailure, adapt_inputs
 from refinvest.application.analytics_result import build_analytics_payload
-from tools.analytics_resource_baseline import measure
+from tools.analytics_resource_baseline import measure, run_child
 from tools.analytics_synthetic_inputs import ROLES, synthetic_inputs
 
 
@@ -90,3 +93,21 @@ def test_generated_input_tampering_fails_real_verifier(tmp_path: Path) -> None:
     assert "encryption" not in result["phases"]
     assert "body_sha256" not in result
     assert hashlib.sha256(bodies[ROLES[0]]).hexdigest() == request[ROLES[0]]["sha256"]
+
+
+def test_benchmark_watchdog_stops_descendants(tmp_path: Path) -> None:
+    ready, survived = tmp_path / "ready", tmp_path / "survived"
+    descendant = (
+        "import pathlib,sys,time; pathlib.Path(sys.argv[1]).touch(); "
+        "time.sleep(3); pathlib.Path(sys.argv[2]).touch(); time.sleep(30)"
+    )
+    program = (
+        "import subprocess,sys,time; "
+        "subprocess.Popen([sys.executable,'-c',sys.argv[1],sys.argv[2],sys.argv[3]]); "
+        "time.sleep(30)"
+    )
+    with pytest.raises(subprocess.TimeoutExpired):
+        run_child([sys.executable, "-c", program, descendant, str(ready), str(survived)], 2)
+    assert ready.exists(), "the descendant must have started for cleanup to be tested"
+    time.sleep(2)
+    assert not survived.exists(), "a benchmark descendant survived its watchdog"

@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import platform
+import signal
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -21,6 +22,51 @@ from typing import Any
 from unittest.mock import patch
 
 from tools.analytics_synthetic_inputs import ROLES, ROOT, synthetic_inputs
+
+
+def run_child(command: list[str], timeout: float) -> subprocess.CompletedProcess[str]:
+    """Reap this benchmark's child tree, including Windows venv redirectors."""
+    with subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=sys.platform != "win32",
+    ) as child:
+        try:
+            stdout, stderr = child.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            if sys.platform == "win32":
+                # Killing only python.exe's venv redirector can leave the real Python alive.
+                try:
+                    cleanup = subprocess.run(
+                        ["taskkill", "/PID", str(child.pid), "/T", "/F"],
+                        capture_output=True,
+                        timeout=10,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                    )
+                except (OSError, subprocess.TimeoutExpired) as error:
+                    child.kill()
+                    raise RuntimeError("benchmark child-tree cleanup unavailable") from error
+                if cleanup.returncode and child.poll() is None:
+                    child.kill()
+                    raise RuntimeError("benchmark child-tree cleanup failed") from None
+            else:
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            try:
+                child.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                # Inherited stdout/stderr must not turn cleanup into an unbounded wait.
+                child.kill()
+                child.wait(timeout=5)
+                raise RuntimeError("benchmark descendants retained output pipes") from None
+            raise
+        result = subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
+        result.check_returncode()
+        return result
 
 
 def process_memory() -> dict[str, int]:
@@ -228,16 +274,12 @@ def main() -> None:
             "--evidence-per-record",
             str(args.evidence_per_record),
         ]
-        subprocess.run(
-            command + ["prepare", str(directory), *options],
-            check=True,
-            timeout=args.watchdog_seconds,
-        )
+        run_child(command + ["prepare", str(directory), *options], args.watchdog_seconds)
         samples = []
         for _ in range(args.repetitions):
             started = perf_counter()
             try:
-                child = subprocess.run(
+                child = run_child(
                     command
                     + [
                         "measure",
@@ -245,10 +287,7 @@ def main() -> None:
                         "--max-payload-bytes",
                         str(args.max_payload_bytes),
                     ],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                    timeout=args.watchdog_seconds,
+                    args.watchdog_seconds,
                 )
             except subprocess.TimeoutExpired:
                 samples.append(

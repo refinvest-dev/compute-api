@@ -18,8 +18,10 @@ $env:PYTHONPATH = "$PWD/src;$PWD"
 - `--spacing-seconds 3600`: window 밖 후보. 현재 엔진은 `AFTER_WINDOW`도 결과에 포함한다.
 - `--evidence-per-record 8`: canonical record당 서로 다른 합성 source 참조 8개.
 - 기본 출력 cap 64MiB, watchdog 60초, 반복 3회는 **측정 도구의 보호값**이며 운영 권장값이 아니다.
-  Watchdog는 자식 하나를 kill/wait하는 `subprocess.run(timeout=...)`다. 메모리 hard limit,
-  process-tree 감독이나 production timeout을 보장하지 않는다. 큰 profile은 격리된 호스트에서 실행한다.
+  Watchdog는 Windows의 `taskkill /T` 또는 POSIX의 전용 process group으로 이 도구가 생성한
+  프로세스들을 정리하고 wait한다. Windows venv redirector의 하위 Python 생존을 실제 테스트한다.
+  메모리 hard limit, production executor의 crash/IPC/OS 감독을 보장하지 않는다.
+  큰 profile은 격리된 호스트에서 실행한다.
 
 `prepare`는 변경하지 않은 synthetic fixed vector의 형식·config·opaque upstream pin을 기반으로
 고유한 record/unit/allocation/evidence ID와 OPEN/CLOSE 쌍을 만든다. 손실·이익이 번갈아 나오며
