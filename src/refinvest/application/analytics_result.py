@@ -197,6 +197,16 @@ def build_sections(
         return membership_id
 
     metric_members: dict[str, list[str]] = {}
+    scalar_inputs_by_unit: dict[str, dict[str, list[dict[str, str]]]] = {}
+
+    def observation_attributes(metric_id: str, unit_ids: list[str]) -> list[dict[str, str]]:
+        # Scalar rows use Python string order, unlike the UTF-16 ordering of ID sets.
+        # Copy rows so changing an observation cannot change a Metric or another observation.
+        by_unit = scalar_inputs_by_unit[metric_id]
+        return [
+            item.copy() for unit_id in sorted(set(unit_ids)) for item in by_unit.get(unit_id, [])
+        ]
+
     for result in results:
         baselines: set[str] = (
             {
@@ -242,6 +252,11 @@ def build_sections(
                 for baseline_id in pair.baseline_episode_ids:
                     ids.append(add_membership(EXPOSURE, baseline_id, "PRIOR_BASELINE"))
         metric_members[result.definition_id] = _sort(ids)
+        scalar_inputs = _scalar_inputs(result)
+        by_unit: dict[str, list[dict[str, str]]] = {}
+        for item in scalar_inputs:
+            by_unit.setdefault(item["reviewUnitId"], []).append(item)
+        scalar_inputs_by_unit[result.definition_id] = by_unit
         sections["METRICS"].append(
             {
                 "metricId": result.definition_id,
@@ -256,7 +271,7 @@ def build_sections(
                 "eligibleCount": result.eligible_count,
                 "excludedCount": result.excluded_count,
                 "excludedReasonCounts": dict(result.excluded_reason_counts),
-                "scalarInputs": _scalar_inputs(result),
+                "scalarInputs": scalar_inputs,
                 "relationIds": _sort([f"{item.loss_id}:{REENTRY}" for item in result.relations])
                 if result.definition_id in {REENTRY, EXPOSURE}
                 else [],
@@ -309,11 +324,7 @@ def build_sections(
                 "definitionVersion": reentry.definition_version,
                 "subjectReviewUnitIds": [relation.loss_id],
                 "observedAt": _utc(relation.closed_at),
-                "attributes": [
-                    item
-                    for item in _scalar_inputs(reentry)
-                    if item["reviewUnitId"] == relation.loss_id
-                ],
+                "attributes": observation_attributes(REENTRY, [relation.loss_id]),
                 "relationIds": [relation_id],
                 "membershipIds": [add_membership(REENTRY, relation.loss_id, "SUBJECT")],
             }
@@ -332,11 +343,7 @@ def build_sections(
                             str(units[pair.entry_id]["openedAt"]).replace("Z", "+00:00")
                         )
                     ),
-                    "attributes": [
-                        item
-                        for item in _scalar_inputs(exposure)
-                        if item["reviewUnitId"] in unit_ids
-                    ],
+                    "attributes": observation_attributes(EXPOSURE, unit_ids),
                     "relationIds": [f"{pair.loss_id}:{REENTRY}"],
                     "membershipIds": _sort(
                         [
@@ -358,9 +365,7 @@ def build_sections(
                 "observedAt": _utc(
                     datetime.fromisoformat(str(units[unit_id]["closedAt"]).replace("Z", "+00:00"))
                 ),
-                "attributes": [
-                    item for item in _scalar_inputs(holding) if item["reviewUnitId"] == unit_id
-                ],
+                "attributes": observation_attributes(HOLDING, [unit_id]),
                 "relationIds": [],
                 "membershipIds": [add_membership(HOLDING, unit_id, role)],
             }

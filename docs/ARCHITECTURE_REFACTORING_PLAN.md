@@ -391,6 +391,10 @@ AR-08의 나머지 체크박스는 승인·수치 검증 후 갱신한다.
 
 ### AR-11 — 최종 정리와 선택적 후속 작업
 
+Analytics 결과 구성의 scalar 반복 변환·전체 필터링은
+[호출 내 unit index 재사용](ANALYTICS_PROJECTION_SCALARS.md)으로 별도 개선·검증했다.
+이 작업은 AR-08 정책 승인이나 AR-09/10 실행 제한·실제 Core E2E 완료를 뜻하지 않는다.
+
 - [ ] 사용하지 않는 re-export·이전 경로·테스트의 import monkeypatch 경로를 정리한다.
 - [ ] `app/`의 조립 외 책임, application의 concrete adapter 의존, persistence의 app 역참조를 검사한다.
 - [ ] HTTP 인증은 inbound 경계에, ingestion·cleanup·benchmark CLI의 업무 조율은 해당 기능에 둔다.
