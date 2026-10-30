@@ -62,6 +62,10 @@ worker 동시성·control frame·spool quota는 대표 입력을 측정한 뒤 �
 AES-GCM·DB lock 경합·동시 실행을 포함한다. Bytes cap을 지키는 것과 RSS가 안전한 것을
 따로 검증한다. 입력을 잘라서 성공하거나 광고된 상한을 조용히 낮추지 않는다.
 
+[1차 합성 profile 실측](ANALYTICS_RESOURCE_BASELINE.md)은 32~512 episode의 시간·OS peak
+메모리와 결과 증폭, Evidence 확장·출력 cap 실패를 기록한다. Linux/최대 입력·출력·실제
+network/DB/동시성 검증은 남아 있으며 이 자료로 운영 수치나 정책을 승인하지 않는다.
+
 ## 5. 후속 커밋·PR 순서
 
 | 순서 | 소유·범위 | 해당 PR의 검증 | 다음 단계에 남기는 연결 |
