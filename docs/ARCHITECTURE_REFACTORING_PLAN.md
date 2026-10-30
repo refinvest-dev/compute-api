@@ -346,7 +346,7 @@ Normalization의 grant SQL 모듈을 그대로 복제하거나 두 기능의 상
 
 ### AR-07 — Snapshot 조회 경계와 요청 내 재사용
 
-- [ ] 변경 전 같은 fixture로 `/assets` 로딩 횟수와 대표 Snapshot 조회 비용을 기록한다.
+- [x] 변경 전 같은 fixture로 `/assets` 로딩 횟수와 대표 Snapshot 조회 비용을 기록한다.
 - [ ] Asset/series 조회의 Snapshot 선택·loader port·조립 경계를 명확히 한다.
 - [ ] `/assets`는 한 번 로딩한 검증된 Calendar에서 다섯 자산의 availability를 계산한다.
 - [ ] Loader 호출 횟수, pinned Snapshot 일관성, 기존 응답·데이터 오류 처리를 검증한다.
