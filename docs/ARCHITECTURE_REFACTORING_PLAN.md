@@ -359,7 +359,7 @@ Normalization의 grant SQL 모듈을 그대로 복제하거나 두 기능의 상
 
 ### AR-08 — Analytics 실행 제한 정책 결정
 
-- [ ] Context 정본에 deadline·격리 정책 ADR 초안을 제안한다.
+- [x] Context 정본에 deadline·격리 정책 ADR 초안을 제안한다. ADR-071은 DRAFT이며 승인 대기다.
 - [ ] Timeout의 시작/끝, 다운로드·검증·계산·projection·직렬화 포함 범위를 정한다.
 - [ ] Timeout 오류 코드, retry 가능 여부·예산, 취소·lease 상실과의 우선순위를 정한다.
 - [ ] IPC 메모리·결과 상한, 종료 유예·강제 종료, 지원 OS의 spawn 동작을 검토한다.
@@ -368,6 +368,11 @@ Normalization의 grant SQL 모듈을 그대로 복제하거나 두 기능의 상
 
 Backtest의 10분 제한이나 EXECUTION_TIMEOUT을 Analytics 기본값으로 추정하지 않는다.
 정책이 확정되기 전에는 production 실행 제한을 연결하지 않는다.
+
+[Analytics 실행 정책 검토](ANALYTICS_EXECUTION_POLICY_REVIEW.md)에 현재 구현의 실행·IPC·
+메모리 위험, Context ADR-071 제안과 계약·persistence·executor·Core/Integration·운영 전환의
+PR 순서를 기록했다. 제안서 작성은 정책 승인이나 운영 수치 확정·실행 코드 완료를 뜻하지 않는다.
+AR-08의 나머지 체크박스는 승인·수치 검증 후 갱신한다.
 
 ### AR-09 / AR-10 — Analytics 격리 준비와 production 연결
 
