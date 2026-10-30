@@ -50,8 +50,8 @@ HTTP 경계의 `StrategyValidationError`, `ScaledDecimal`, `TradingReviewError`�
 이들의 최종 배치는 아래 역할 목록과 AR-03/11에서 정리한다.
 
 Dependency provider는 객체 조립을 위해 concrete adapter를 import할 수 있다.
-같은 import를 새로운 HTTP handler에 추가하면 실패한다. 현재 route 파일에 남은 조립 함수는
-예외 목록으로 추적하며, 함수가 provider 역할이라는 이유로 route 파일 전체를 면제하지 않는다.
+같은 import를 새로운 HTTP handler에 추가하면 실패한다. 함수가 provider 역할이라는 이유로
+route 파일 전체를 면제하지 않는다. AR-07에서 마지막 조회 조립도 provider로 옮겼다.
 
 ## 2. 현재 이행 예외
 
@@ -59,12 +59,9 @@ AR-01 시작 시점의 예외는 7개 파일, 18개 import group, 31개 심볼 �
 AR-02N에서 6개 group·11개 심볼, AR-02A에서 2개 group·5개 심볼을 제거했다.
 AR-03N에서 Normalization provider를 옮겨 concrete repository 심볼 1개도 제거했다.
 AR-03A에서 Analytics port·오류 소유권·provider 참조를 전환해 3개 group·8개 심볼을 제거했다.
-현재 목록은 2개 파일, 6개 group, 6개 심볼이다.
-
-| 현재 파일 | 남은 의존성 | 제거 단계 |
-|---|---|---|
-| api/routes/assets.py | Snapshot loader factory, concrete loader/repository 타입 | AR-07 |
-| api/routes/series.py | Snapshot loader factory, storage error, concrete repository | AR-07 |
+AR-07에서 assets/series의 조립 함수·concrete repository/loader·storage 오류 참조 6개를
+모두 제거했다. 현재 registry는 빈 배열이며 production은 legacy 예외 없이 검사를 통과한다.
+Snapshot metadata와 loader는 application port를 사용하고 artifact 오류도 loader port가 소유한다.
 
 Normalization job handler는 AR-03N에서 application과 좁은 repository port를 사용하도록
 연결했다. 공용 payload·ACK도 새 provider가 반환하는 기존 port를 사용하므로 Normalization
@@ -108,7 +105,7 @@ AR-05B에서 Backtest process adapter 이동과 worker 조립 전환도 완료�
 | trading_analytics_result.py (제거됨) | 세 Metric의 public projection | application.analytics_result 이동 완료; AR-05A |
 | backtest_job_cleanup.py | cleanup CLI·DB 조립·운영 출력 | 얇은 진입점 유지, 조율 책임 정리 AR-06/11 |
 | trading_review_cleanup.py, trading_analytics_cleanup.py | 각 기능 cleanup CLI·조립 | 기능별 정책 유지, 조율 분리 AR-06/11 |
-| snapshot_storage.py | Filesystem/S3 factory와 storage 설정 해석 | 조립 유지, 조회 경계 연결 AR-07 |
+| snapshot_storage.py | Filesystem/S3 factory와 storage 설정 해석 | 조립 유지, 조회 provider 연결 완료; AR-07 |
 | snapshot_ingestion.py | CLI 입력, Vendor/발행 구성과 ingestion 조율 | 얇은 CLI와 ingestion application 구분; AR-11 기능별 PR |
 | integration_fixture.py, reference_data_smoke.py | 합성 fixture 구성·발행과 참조 데이터 진단 CLI | 검증 도구 책임 유지, 필요시 feature별 구성 분리 AR-11 |
 | benchmark.py | benchmark CLI와 기존 benchmarking 모듈 조립 | 얇은 composition 진입점 유지; AR-11 최종 확인 |
@@ -172,3 +169,7 @@ AR-06A는 Analytics persisted document와 AES-GCM codec을 분리한다. Documen
 암호화·네트워크, codec의 DB client·repository 역참조를 차단한다. Claim predicate·DB clock·
 transaction은 repository에 유지한다. 예외는 6개로 같다. 전후 비교와 실제 DB 경합·rollback은
 [Analytics persistence](ANALYTICS_PERSISTENCE.md)에 기록한다.
+
+AR-07에서 마지막 legacy 예외 6개를 제거했다. `/assets`는 요청마다 선택한 Snapshot을 한 번
+검증한 뒤 같은 Calendar로 다섯 availability를 계산한다. 요청 사이에는 데이터를 보관하지
+않는다. [Snapshot 조회](SNAPSHOT_QUERIES.md)에 전후 호출 수·HTTP bytes·오류와 검증 기록을 둔다.

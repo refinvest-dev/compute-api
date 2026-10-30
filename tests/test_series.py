@@ -3,7 +3,6 @@ from decimal import Decimal
 from json import loads
 
 import refinvest.api.routes.series as series_route
-from refinvest.app.config import Settings
 from refinvest.application.dataset_snapshots import DatasetSnapshot
 from refinvest.application.series import SeriesPoint, build_series
 from refinvest.application.snapshot_execution_data import SnapshotExecutionData
@@ -101,9 +100,6 @@ def test_return_uses_preceding_available_session_before_requested_period() -> No
 def test_missing_expected_close_fails_fast_as_dataset_corruption(monkeypatch) -> None:
     market_data = FakeMarketData()
     market_data.closes.pop(("QQQ", date(2025, 1, 3)))
-    monkeypatch.setattr(
-        series_route, "create_snapshot_execution_data_loader", lambda _: FakeLoader(market_data)
-    )
 
     response = series_route.get_series(
         "QQQ",
@@ -111,7 +107,7 @@ def test_missing_expected_close_fails_fast_as_dataset_corruption(monkeypatch) ->
         date(2025, 1, 3),
         date(2025, 1, 3),
         FakeSnapshots(_snapshot()),
-        Settings(None),
+        FakeLoader(market_data),
         None,
     )
 
@@ -126,7 +122,7 @@ def test_missing_snapshot_and_period_limits_have_explicit_responses() -> None:
         date(2025, 1, 2),
         date(2025, 1, 3),
         FakeSnapshots(None),
-        Settings(None),
+        FakeLoader(),
         None,
     )
     unknown = series_route.get_series(
@@ -135,7 +131,7 @@ def test_missing_snapshot_and_period_limits_have_explicit_responses() -> None:
         date(2025, 1, 2),
         date(2025, 1, 3),
         FakeSnapshots(_snapshot()),
-        Settings(None),
+        FakeLoader(),
         "other",
     )
     too_long = series_route.get_series(
@@ -144,7 +140,7 @@ def test_missing_snapshot_and_period_limits_have_explicit_responses() -> None:
         date(2025, 1, 1),
         date(2035, 1, 2),
         FakeSnapshots(_snapshot()),
-        Settings(None),
+        FakeLoader(),
         None,
     )
 
@@ -155,16 +151,13 @@ def test_missing_snapshot_and_period_limits_have_explicit_responses() -> None:
 
 
 def test_series_rejects_vix_and_more_than_five_symbols(monkeypatch) -> None:
-    monkeypatch.setattr(
-        series_route, "create_snapshot_execution_data_loader", lambda _: FakeLoader()
-    )
     vix = series_route.get_series(
         "VIX",
         "PRICE",
         date(2025, 1, 2),
         date(2025, 1, 3),
         FakeSnapshots(_snapshot()),
-        Settings(None),
+        FakeLoader(),
         None,
     )
     too_many = series_route.get_series(
@@ -173,7 +166,7 @@ def test_series_rejects_vix_and_more_than_five_symbols(monkeypatch) -> None:
         date(2025, 1, 2),
         date(2025, 1, 3),
         FakeSnapshots(_snapshot()),
-        Settings(None),
+        FakeLoader(),
         None,
     )
 

@@ -9,7 +9,8 @@ AR-04 공용 payload·ACK 조율과 AR-05N Normalization worker·실행 adapter 
 AR-05A Analytics worker·Artifact adapter와 AR-05B Backtest 실행 adapter 분리도 완료했다.
 AR-06N Normalization persistence 책임 분리와 실 DB·단일 전체 회귀·고정 Core E2E 검증도 완료했다.
 AR-06A Analytics persistence 분리와 전후 비교·실 DB 검증도 완료했다.
-다음은 AR-07 Snapshot 조회 경계·요청 내 재사용이며 변경 전 비용 측정부터 시작한다.
+AR-07 Snapshot 조회 port·provider 연결과 요청 내 단일 로딩, 마지막 legacy 예외 제거도 완료했다.
+다음은 AR-08 Analytics 실행 제한 정책이며 구현 전에 Context ADR 초안을 검토한다.
 실행 결과와 남은 gate는 [AR-00 baseline 보고서](ARCHITECTURE_BASELINE_AR00.md)에 기록한다.
 이 문서는 Compute 로컬 실행 계획이다. 제품 정책·ADR·API·hash fixture의 정본은
 `../../context`이며 이 문서로 변경하지 않는다.
@@ -346,12 +347,15 @@ Normalization의 grant SQL 모듈을 그대로 복제하거나 두 기능의 상
 
 ### AR-07 — Snapshot 조회 경계와 요청 내 재사용
 
-- [ ] 변경 전 같은 fixture로 `/assets` 로딩 횟수와 대표 Snapshot 조회 비용을 기록한다.
-- [ ] Asset/series 조회의 Snapshot 선택·loader port·조립 경계를 명확히 한다.
-- [ ] `/assets`는 한 번 로딩한 검증된 Calendar에서 다섯 자산의 availability를 계산한다.
-- [ ] Loader 호출 횟수, pinned Snapshot 일관성, 기존 응답·데이터 오류 처리를 검증한다.
-- [ ] Ingestion의 artifact → manifest → metadata 발행 순서를 유지한다.
-- [ ] 동일 fixture로 변경 전후 로딩 비용과 결과를 비교한다.
+- [x] 변경 전 같은 fixture로 `/assets` 로딩 횟수와 대표 Snapshot 조회 비용을 기록한다.
+- [x] Asset/series 조회의 Snapshot 선택·loader port·조립 경계를 명확히 한다.
+- [x] `/assets`는 한 번 로딩한 검증된 Calendar에서 다섯 자산의 availability를 계산한다.
+- [x] Loader 호출 횟수, pinned Snapshot 일관성, 기존 응답·데이터 오류 처리를 검증한다.
+- [x] Ingestion의 artifact → manifest → metadata 발행 순서를 유지한다.
+- [x] 동일 fixture로 변경 전후 로딩 비용과 결과를 비교한다.
+
+[Snapshot 조회 검증](SNAPSHOT_QUERIES.md)에 5→1회 로딩·15→3회 읽기, 여섯 HTTP 응답 bytes와
+runtime OpenAPI 동일성, legacy 예외 0개, 전체 681개·고정 Core smoke 결과를 기록했다.
 
 전역 캐시, partial artifact loader, 새 저장 포맷은 포함하지 않는다. `/series`의 전체 로딩은
 측정 후 별도 최적화 후보로 남긴다. Metadata 등록 실패 후 잔여 artifact 정리는 기존 발행
@@ -390,6 +394,10 @@ AR-08의 나머지 체크박스는 승인·수치 검증 후 갱신한다.
 미연결 상태임을 본문에 명시한다. Normalization·Backtest의 retry 정책은 유지한다.
 
 ### AR-11 — 최종 정리와 선택적 후속 작업
+
+Analytics 결과 구성의 scalar 반복 변환·전체 필터링은
+[호출 내 unit index 재사용](ANALYTICS_PROJECTION_SCALARS.md)으로 별도 개선·검증했다.
+이 작업은 AR-08 정책 승인이나 AR-09/10 실행 제한·실제 Core E2E 완료를 뜻하지 않는다.
 
 - [ ] 사용하지 않는 re-export·이전 경로·테스트의 import monkeypatch 경로를 정리한다.
 - [ ] `app/`의 조립 외 책임, application의 concrete adapter 의존, persistence의 app 역참조를 검사한다.

@@ -7,6 +7,10 @@ from refinvest.application.dataset_snapshots import DatasetSnapshot
 from refinvest.marketdata.ports import MarketDataPort, SessionCalendarPort
 
 
+class SnapshotArtifactError(ValueError):
+    """A pinned snapshot artifact is unavailable, malformed, or fails integrity checks."""
+
+
 @dataclass(frozen=True)
 class SnapshotExecutionData:
     """Immutable Engine inputs plus ingestion-provided integrity facts."""
@@ -19,6 +23,6 @@ class SnapshotExecutionData:
 
 
 class SnapshotExecutionDataLoader(Protocol):
-    """Loads only artifacts belonging to the worker's already-pinned snapshot."""
+    """Load pinned artifacts; raise SnapshotArtifactError on artifact/integrity failure."""
 
     def load(self, snapshot: DatasetSnapshot) -> SnapshotExecutionData: ...

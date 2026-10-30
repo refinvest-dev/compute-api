@@ -6,7 +6,10 @@ from typing import Protocol, cast
 from urllib.parse import urlparse
 
 from refinvest.application.dataset_snapshots import DatasetSnapshot
-from refinvest.application.snapshot_execution_data import SnapshotExecutionData
+from refinvest.application.snapshot_execution_data import (
+    SnapshotArtifactError,
+    SnapshotExecutionData,
+)
 from refinvest.ingestion.snapshot.artifacts import (
     PublishedSnapshotArtifacts,
     SnapshotPublicationError,
@@ -21,10 +24,7 @@ from refinvest.marketdata.domain import (
     DailyBar,
     ReferenceClose,
 )
-from refinvest.persistence.object_storage.snapshot_artifacts import (
-    SnapshotArtifactError,
-    load_snapshot_execution_data,
-)
+from refinvest.persistence.object_storage.snapshot_artifacts import load_snapshot_execution_data
 
 
 class S3ResponseBody(Protocol):

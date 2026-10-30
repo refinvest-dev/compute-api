@@ -97,3 +97,10 @@ AR-08 정책 결정, AR-09 구현, AR-10 운영 검증에서 다룬다.
 로컬 실행 로그·JUnit·전후 payload·AST 비교·source fingerprint·checksum은
 [AR-05A manifest](../../../integration/.integration-data/architecture-refactoring/ar05a/20261029T101841Z/manifest.json)에
 보관한다. 이 위치는 Integration의 비커밋 산출물이며 credential을 포함하지 않는다.
+
+## 5. Projection scalar 재사용 후속 개선
+
+2026-10-30에는 metric scalar 변환·정렬을 호출마다 한 번 수행하고 observation용 unit index를
+재사용했다. 반환 row의 독립성과 기존 순서·전체 hash를 보존한다. 전후 36개 합성 표본,
+전체 suite·실제 PostgreSQL·32 episode ASGI/worker/ACK smoke와 미검증 Core E2E 범위는
+[projection 개선 검증](ANALYTICS_PROJECTION_SCALARS.md)에 기록했다. 실행 제한·격리 정책은 별도다.
