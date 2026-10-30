@@ -23,8 +23,8 @@ from refinvest.api.schemas.trading_review_jobs import (
     TradingComputeJobAcceptedTransport,
     UpdateTradingNormalizationJobGrantsTransport,
 )
+from refinvest.api.security import require_internal_api_key
 from refinvest.app.config import Settings, get_settings
-from refinvest.app.security import require_internal_api_key
 from refinvest.application.analytics_jobs import (
     AnalyticsResultDeliveryRepository,
 )

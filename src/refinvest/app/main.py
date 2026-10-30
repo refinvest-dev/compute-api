@@ -96,7 +96,7 @@ def create_app() -> FastAPI:
     application.middleware("http")(observe_request)
 
     # Deployment probes are deliberately unauthenticated. Future Core-facing
-    # contract routes must apply app.security.require_internal_api_key.
+    # contract routes must apply api.security.require_internal_api_key.
     application.include_router(health_router)
     application.include_router(backtests_router)
     application.include_router(assets_router)

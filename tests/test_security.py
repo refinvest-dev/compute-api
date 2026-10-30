@@ -1,8 +1,8 @@
 import pytest
 from fastapi import HTTPException
 
+from refinvest.api.security import require_internal_api_key
 from refinvest.app.config import Settings
-from refinvest.app.security import require_internal_api_key
 
 
 def test_internal_api_key_rejects_missing_and_incorrect_values() -> None:

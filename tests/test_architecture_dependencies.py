@@ -196,7 +196,7 @@ RULES = (
             "refinvest.api.schemas",
             "refinvest.api.dependencies",
             "refinvest.app.config",
-            "refinvest.app.security",
+            "refinvest.api.security",
             "refinvest.application",
             "refinvest.observability",
             "refinvest.engine.validation.StrategyValidationError",
@@ -207,6 +207,17 @@ RULES = (
         ),
     ),
     DependencyRule("refinvest.api.dependencies", ("refinvest.api.routes",)),
+    DependencyRule(
+        "refinvest.api.security",
+        (
+            "refinvest.application",
+            "refinvest.persistence",
+            "refinvest.api.routes",
+            "refinvest.api.dependencies",
+            *NETWORK_PACKAGES,
+        ),
+        ("fastapi", "refinvest.app.config"),
+    ),
     DependencyRule(
         "refinvest.api.schemas",
         (
@@ -312,6 +323,10 @@ def test_architecture_check_reports_absolute_relative_and_external_violations(
         ("contracts/normalization/new.py", "from pathlib import Path\n"),
         ("application/new.py", "from refinvest.contracts import unapproved\n"),
         ("application/new.py", "import refinvest.persistence.postgres\n"),
+        ("api/routes/new.py", "from refinvest.app.security import require_internal_api_key\n"),
+        ("api/security.py", "from refinvest.persistence.postgres import jobs\n"),
+        ("api/security.py", "from refinvest.api.routes import assets\n"),
+        ("api/security.py", "from refinvest.app.main import app\n"),
         ("application/new.py", "from socket import socket\n"),
         ("application/new.py", "from refinvest.adapters.normalization import Executor\n"),
         ("application/normalization_execution.py", "import multiprocessing\n"),
@@ -387,13 +402,17 @@ def test_pure_interfaces_contracts_and_composition_providers_are_allowed(tmp_pat
             "from fastapi import Depends\n"
             "from refinvest.api.dependencies.assets import get_dataset_snapshot_repository\n"
             "from refinvest.application.assets import AssetReference\n"
-            "from refinvest.app.security import require_internal_api_key\n"
+            "from refinvest.api.security import require_internal_api_key\n"
             "from refinvest.trading_review.decimal import ScaledDecimal\n"
             "from refinvest.trading_review.errors import TradingReviewError\n"
         ),
         "api/dependencies/new.py": (
             "from refinvest.app.config import Settings\n"
             "from refinvest.persistence.postgres.dataset_snapshots import Repository\n"
+        ),
+        "api/security.py": (
+            "from fastapi import Depends, Header, HTTPException\n"
+            "from refinvest.app.config import Settings, get_settings\n"
         ),
         "api/schemas/new.py": "from refinvest.contracts.normalization import Identity\n",
         "persistence/postgres/new.py": "from psycopg import connect\n",

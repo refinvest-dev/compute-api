@@ -31,6 +31,7 @@ AR-05A는 Analytics HTTP adapter의 app/API/DB/worker 의존도 차단한다. �
 | contracts | 표준 라이브러리, contracts.normalization/analytics, Pydantic, 순수 trading_review.versions | app·API·application·persistence·ingestion·engine, 설정·네트워크·프로세스·파일시스템 구현 |
 | api.routes | FastAPI/Starlette, schema·dependency provider, application, 계약·시장데이터 인터페이스, 관측·인증·설정의 명시적 경계 | concrete persistence, ingestion, 다른 route, 그 외 app 구현 |
 | api.dependencies | 외부 구현체와 설정을 조립 가능 | route import, 테스트·타 서비스 source |
+| api.security | 표준 라이브러리, FastAPI, app.config의 Settings/get_settings | application·DB·route·dependency provider·네트워크·다른 app 구현 |
 | api.schemas | Pydantic/FastAPI, schema, 계약, engine.validation 타입 | app, persistence, ingestion, route, dependency provider |
 | persistence | DB·Artifact SDK, port·순수 모델·계약 | app·API 역참조, 테스트·타 서비스 source |
 
@@ -46,8 +47,9 @@ Application은 `contracts.normalization`, `contracts.analytics` 두 경계만 �
 
 HTTP 경계의 `StrategyValidationError`, `ScaledDecimal`, `TradingReviewError`는 정확한
 타입 import만 허용한다. 이를 계산 pipeline이나 domain service 호출의 승인으로 해석하지 않는다.
-`app.config`와 `app.security`는 현재 HTTP 설정·인증 경계로 명시적으로 허용한다.
-이들의 최종 배치는 아래 역할 목록과 AR-03/11에서 정리한다.
+Route의 설정 접근은 `app.config`, HTTP 인증은 `api.security`로 명시적으로 허용한다.
+AR-11A에서 인증을 inbound 경계로 이동하고 `app.security` 허용을 제거했다.
+인증 모듈도 FastAPI와 최소 설정 외 concrete adapter·use case·route·provider에 의존하지 못한다.
 
 Dependency provider는 객체 조립을 위해 concrete adapter를 import할 수 있다.
 같은 import를 새로운 HTTP handler에 추가하면 실패한다. 함수가 provider 역할이라는 이유로
@@ -91,7 +93,7 @@ AR-05B에서 Backtest process adapter 이동과 worker 조립 전환도 완료�
 |---|---|---|
 | config.py | 환경 설정과 payload key 해석 | Composition 설정으로 유지; secret 처리는 domain에 전달하지 않음 |
 | main.py | FastAPI 조립, HTTP validation/error 처리, request 계측 | 조립 유지, HTTP 정책은 API 경계로 정리; AR-03/04/11 |
-| security.py | 내부 API key HTTP 인증 | API 인증/dependency 경계; AR-03/11 |
+| security.py (제거됨) | 내부 API key HTTP 인증 | api/security.py로 이동 완료; AR-11A |
 | worker.py | Backtest 부모 조립·child 계산기 factory·시작·종료 | spawn/IPC/종료는 adapters.backtest로 이동 완료; AR-05B |
 | trading_review_worker.py | 설정 검증·조립·signal·CLI | Worker application과 process adapter 연결 완료; AR-05N |
 | trading_analytics_worker.py | 설정 검증·DB/adapter 조립·signal·CLI | application worker와 Artifact adapter 연결 완료; AR-05A. 새 격리·deadline은 AR-08~10 |

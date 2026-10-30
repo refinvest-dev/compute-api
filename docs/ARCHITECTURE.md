@@ -23,15 +23,15 @@ Core는 StrategyVersion 전체 payload를 Compute에 전달한다.
 refinvest-compute/
 ├── app/
 │   ├── main.py
-│   ├── config/
-│   └── security/
+│   └── config.py
 │
 ├── api/
 │   ├── routes/
 │   │   ├── backtests.py
 │   │   └── assets.py
 │   ├── schemas/
-│   └── dependencies/
+│   ├── dependencies/
+│   └── security.py
 │
 ├── engine/
 │   ├── domain/
@@ -100,6 +100,11 @@ Engine 계산 함수는 가능한 한 명시적인 입력을 받아 순수하게
 
 현재 import 경계의 자동 검사, 정확한 심볼별 이행 예외와 제거 단계는
 [`ARCHITECTURE_DEPENDENCIES.md`](ARCHITECTURE_DEPENDENCIES.md)에서 관리한다.
+
+Core 전용 HTTP 인증은 `api/security.py`가 소유한다. Route는 이 inbound dependency를
+사용하고 `app.config`에서 읽은 설정만 전달받는다. 인증 모듈은 DB·application·route·provider
+구현을 조립하지 않는다. `app/`에는 HTTP 인증의 이전 경로나 re-export를 남기지 않는다.
+공개 health probe와 Trading Review의 JSON 중복 key 사전 검사·HTTP 오류 투영은 기존 경계를 유지한다.
 
 ## 4. Engine Pipeline
 
@@ -210,7 +215,8 @@ Core가 소유:
 
 ## 9. API
 
-`openapi/compute-api.yaml`이 Core↔Compute 계약의 정본이다.
+Core↔Compute 계약의 정본은 sibling Context의 `openapi/compute-api.yaml`이다.
+이 저장소의 같은 경로는 그 동기화 snapshot이며 독자적으로 변경하지 않는다.
 
 주요 API:
 
