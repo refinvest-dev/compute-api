@@ -56,10 +56,17 @@ class CountingQueryLoader:
         return self.loader.load(snapshot)
 
 
-def query_fixture(tmp_path, backend, *, start=date(2025, 1, 2), end=date(2025, 1, 8)):
+def query_fixture(
+    tmp_path,
+    backend,
+    *,
+    start=date(2025, 1, 2),
+    end=date(2025, 1, 8),
+    snapshot_id="query-snapshot-1",
+):
     provenance = CalendarProvenance("synthetic-query", "v1", "five-assets-query-v1")
     snapshot = DatasetSnapshot(
-        "query-snapshot-1",
+        snapshot_id,
         datetime(2025, 1, 9, tzinfo=UTC),
         "synthetic-query",
         {"firstDate": start.isoformat(), "lastDate": end.isoformat()},
@@ -98,7 +105,7 @@ def query_fixture(tmp_path, backend, *, start=date(2025, 1, 2), end=date(2025, 1
     objects["manifest.json"] = contents.manifest
     client = QueryS3(objects)
     if backend == "s3":
-        snapshot = replace(snapshot, storage_path="s3://synthetic-query-bucket/snapshot-1")
+        snapshot = replace(snapshot, storage_path=f"s3://synthetic-query-bucket/{snapshot_id}")
     else:
         tmp_path.mkdir(parents=True, exist_ok=True)
         for name, content in objects.items():

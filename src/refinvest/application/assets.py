@@ -2,10 +2,10 @@
 
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Protocol
 
 from refinvest.application.dataset_snapshots import DatasetSnapshot
 from refinvest.application.snapshot_execution_data import SnapshotExecutionDataLoader
+from refinvest.marketdata.ports import SessionCalendarPort
 
 
 @dataclass(frozen=True)
@@ -34,10 +34,6 @@ class AssetAvailability:
     snapshot_created_at: datetime
 
 
-class DatasetSnapshotSelector(Protocol):
-    def latest(self) -> DatasetSnapshot | None: ...
-
-
 def asset_reference(symbol: str) -> AssetReference | None:
     return _BY_SYMBOL.get(symbol)
 
@@ -46,7 +42,27 @@ def availability_for_snapshot(
     asset: AssetReference, snapshot: DatasetSnapshot, loader: SnapshotExecutionDataLoader
 ) -> AssetAvailability | None:
     """Use only the selected immutable snapshot's verified calendar artifact."""
-    sessions = loader.load(snapshot).calendar.expected_sessions(asset.symbol)
+    return _availability_for_calendar(asset, snapshot, loader.load(snapshot).calendar)
+
+
+def availabilities_for_snapshot(
+    snapshot: DatasetSnapshot | None, loader: SnapshotExecutionDataLoader
+) -> dict[str, AssetAvailability]:
+    """Validate once and reuse the selected snapshot's calendar only within this call."""
+    if snapshot is None:
+        return {}
+    calendar = loader.load(snapshot).calendar
+    return {
+        asset.symbol: availability
+        for asset in ASSET_REFERENCES
+        if (availability := _availability_for_calendar(asset, snapshot, calendar)) is not None
+    }
+
+
+def _availability_for_calendar(
+    asset: AssetReference, snapshot: DatasetSnapshot, calendar: SessionCalendarPort
+) -> AssetAvailability | None:
+    sessions = calendar.expected_sessions(asset.symbol)
     if not sessions:
         return None
     return AssetAvailability(

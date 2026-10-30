@@ -3,9 +3,10 @@
 import pytest
 from starlette.testclient import TestClient
 
-import refinvest.api.routes.assets as asset_routes
-import refinvest.api.routes.series as series_routes
-from refinvest.api.dependencies.assets import get_dataset_snapshot_repository
+from refinvest.api.dependencies.assets import (
+    get_dataset_snapshot_repository,
+    get_snapshot_execution_data_loader,
+)
 from refinvest.app.config import Settings, get_settings
 from refinvest.app.main import create_app
 from tests.snapshot_query_support import QuerySnapshots, query_fixture
@@ -15,14 +16,13 @@ SERIES = "/series?symbols=QQQ,BTCUSDT&metric=PRICE&start=2025-01-03&end=2025-01-
 
 
 @pytest.fixture(params=["filesystem", "s3"])
-def query_api(request, tmp_path, monkeypatch):
+def query_api(request, tmp_path):
     snapshot, loader, storage = query_fixture(tmp_path, request.param)
     snapshots = QuerySnapshots(snapshot)
     application = create_app()
     application.dependency_overrides[get_settings] = lambda: Settings("synthetic-query-key")
     application.dependency_overrides[get_dataset_snapshot_repository] = lambda: snapshots
-    monkeypatch.setattr(asset_routes, "create_snapshot_execution_data_loader", lambda _: loader)
-    monkeypatch.setattr(series_routes, "create_snapshot_execution_data_loader", lambda _: loader)
+    application.dependency_overrides[get_snapshot_execution_data_loader] = lambda: loader
     with TestClient(application, raise_server_exceptions=False) as client:
         yield client, snapshot, snapshots, loader, storage, tmp_path, request.param
 
@@ -45,9 +45,9 @@ def test_catalog_uses_one_snapshot_and_preserves_all_five_availabilities(query_a
         for asset in result["assets"]
     )
     assert snapshots.latest_calls == 1
-    assert loader.snapshots == [snapshot.snapshot_id] * 5
+    assert loader.snapshots == [snapshot.snapshot_id]
     if backend == "s3":
-        assert len(storage.reads) == 15
+        assert len(storage.reads) == 3
 
 
 def test_explicit_series_pin_uses_get_once_and_preserves_independent_sessions(query_api):
@@ -103,7 +103,7 @@ def test_each_request_revalidates_artifacts_and_retains_error_responses(query_ap
         }
     else:
         assert response.status_code == 500
-    assert len(loader.snapshots) >= 2
+    assert len(loader.snapshots) == 2
 
 
 def test_unknown_asset_invalid_series_and_unauthenticated_request_do_not_load(query_api):
@@ -112,3 +112,49 @@ def test_unknown_asset_invalid_series_and_unauthenticated_request_do_not_load(qu
     assert client.get(SERIES.replace("QQQ,BTCUSDT", "QQQ,QQQ"), headers=HEADERS).status_code == 400
     assert client.get(SERIES, headers={}).status_code == 401
     assert snapshots.latest_calls == 0 and loader.snapshots == []
+
+
+def test_new_request_resolves_latest_again_without_reusing_an_earlier_snapshot(query_api):
+    client, snapshot, snapshots, loader, _, root, backend = query_api
+    assert (
+        client.get("/assets", headers=HEADERS).json()["datasetSnapshotId"] == snapshot.snapshot_id
+    )
+    newer, new_loader, _ = query_fixture(root / "next", backend, snapshot_id="query-snapshot-2")
+    snapshots.snapshot = newer
+    client.app.dependency_overrides[get_snapshot_execution_data_loader] = lambda: new_loader
+    result = client.get("/assets", headers=HEADERS).json()
+    assert result["datasetSnapshotId"] == newer.snapshot_id
+    assert snapshots.latest_calls == 2
+    assert loader.snapshots == [snapshot.snapshot_id]
+    assert new_loader.snapshots == [newer.snapshot_id]
+
+
+def test_real_provider_creates_request_scoped_loaders_without_opening_s3_for_empty_catalog(
+    monkeypatch,
+):
+    import refinvest.api.dependencies.assets as dependencies
+
+    settings = Settings("synthetic-query-key")
+    created = []
+
+    def factory(received):
+        assert received is settings
+
+        class Loader:
+            def load(self, snapshot):
+                raise AssertionError(
+                    "No snapshot must not read artifacts or construct an S3 client."
+                )
+
+        loader = Loader()
+        created.append(loader)
+        return loader
+
+    monkeypatch.setattr(dependencies, "create_snapshot_execution_data_loader", factory)
+    application = create_app()
+    application.dependency_overrides[get_settings] = lambda: settings
+    application.dependency_overrides[get_dataset_snapshot_repository] = lambda: QuerySnapshots(None)
+    with TestClient(application) as client:
+        assert client.get("/assets", headers=HEADERS).status_code == 200
+        assert client.get("/assets", headers=HEADERS).status_code == 200
+    assert len(created) == 2 and created[0] is not created[1]
