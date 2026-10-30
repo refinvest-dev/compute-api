@@ -9,7 +9,10 @@ from pathlib import Path, PurePosixPath
 from typing import cast
 
 from refinvest.application.dataset_snapshots import DatasetSnapshot
-from refinvest.application.snapshot_execution_data import SnapshotExecutionData
+from refinvest.application.snapshot_execution_data import (
+    SnapshotArtifactError,
+    SnapshotExecutionData,
+)
 from refinvest.ingestion.snapshot.calendar import CalendarComponent, validate_composite_calendar
 from refinvest.marketdata.adapters.in_memory import (
     InMemorySnapshotCalendar,
@@ -26,10 +29,6 @@ from refinvest.marketdata.domain import (
     DailyBar,
     ReferenceClose,
 )
-
-
-class SnapshotArtifactError(ValueError):
-    """A pinned snapshot artifact is unavailable, malformed, or fails integrity checks."""
 
 
 class FilesystemSnapshotExecutionDataLoader:

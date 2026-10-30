@@ -7,14 +7,18 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 
-from refinvest.api.dependencies.assets import get_dataset_snapshot_repository
-from refinvest.app.config import Settings, get_settings
+from refinvest.api.dependencies.assets import (
+    get_dataset_snapshot_repository,
+    get_snapshot_execution_data_loader,
+)
 from refinvest.app.security import require_internal_api_key
-from refinvest.app.snapshot_storage import create_snapshot_execution_data_loader
+from refinvest.application.dataset_snapshots import DatasetSnapshotRepository
 from refinvest.application.series import build_series
+from refinvest.application.snapshot_execution_data import (
+    SnapshotArtifactError,
+    SnapshotExecutionDataLoader,
+)
 from refinvest.marketdata.ports import MissingRequiredMarketDataError
-from refinvest.persistence.object_storage.snapshot_artifacts import SnapshotArtifactError
-from refinvest.persistence.postgres.dataset_snapshots import PostgresDatasetSnapshotRepository
 
 router = APIRouter(tags=["assets"], dependencies=[Depends(require_internal_api_key)])
 
@@ -25,10 +29,8 @@ def get_series(
     metric: Literal["PRICE", "RETURN", "NORMALIZED"],
     start: date,
     end: date,
-    snapshots: Annotated[
-        PostgresDatasetSnapshotRepository, Depends(get_dataset_snapshot_repository)
-    ],
-    settings: Annotated[Settings, Depends(get_settings)],
+    snapshots: Annotated[DatasetSnapshotRepository, Depends(get_dataset_snapshot_repository)],
+    loader: Annotated[SnapshotExecutionDataLoader, Depends(get_snapshot_execution_data_loader)],
     dataset_snapshot_id: str | None = Query(default=None, alias="datasetSnapshotId"),
 ) -> dict[str, object] | JSONResponse:
     requested = tuple(symbols.split(","))
@@ -56,7 +58,7 @@ def get_series(
     try:
         series = build_series(
             snapshot,
-            create_snapshot_execution_data_loader(settings),
+            loader,
             requested,
             metric,
             start,

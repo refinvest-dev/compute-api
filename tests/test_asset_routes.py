@@ -2,7 +2,6 @@ from datetime import UTC, date, datetime
 from json import loads
 
 import refinvest.api.routes.assets as assets_route
-from refinvest.app.config import Settings
 from refinvest.application.dataset_snapshots import DatasetSnapshot
 from refinvest.application.snapshot_execution_data import SnapshotExecutionData
 
@@ -37,7 +36,7 @@ def _snapshot() -> DatasetSnapshot:
 
 
 def test_list_assets_returns_static_catalog_without_a_snapshot() -> None:
-    result = assets_route.list_assets(FakeSnapshots(None), Settings(None))
+    result = assets_route.list_assets(FakeSnapshots(None), FakeLoader())
 
     assert [asset.symbol for asset in result.assets] == [
         "QQQ",
@@ -52,11 +51,8 @@ def test_list_assets_returns_static_catalog_without_a_snapshot() -> None:
 
 
 def test_availability_is_derived_from_one_selected_snapshot(monkeypatch) -> None:
-    monkeypatch.setattr(
-        assets_route, "create_snapshot_execution_data_loader", lambda _: FakeLoader()
-    )
 
-    result = assets_route.get_asset_availability("QQQ", FakeSnapshots(_snapshot()), Settings(None))
+    result = assets_route.get_asset_availability("QQQ", FakeSnapshots(_snapshot()), FakeLoader())
 
     assert result.dataset_snapshot_id == "snapshot-1"
     assert result.data_availability.first_date == date(2025, 1, 2)
@@ -64,7 +60,7 @@ def test_availability_is_derived_from_one_selected_snapshot(monkeypatch) -> None
 
 
 def test_supported_asset_without_snapshot_returns_dataset_unavailable() -> None:
-    response = assets_route.get_asset_availability("QQQ", FakeSnapshots(None), Settings(None))
+    response = assets_route.get_asset_availability("QQQ", FakeSnapshots(None), FakeLoader())
 
     assert response.status_code == 503
     assert loads(response.body) == {
@@ -74,7 +70,15 @@ def test_supported_asset_without_snapshot_returns_dataset_unavailable() -> None:
 
 
 def test_vix_is_not_an_mvp_asset() -> None:
-    response = assets_route.get_asset_availability("VIX", FakeSnapshots(None), Settings(None))
+    response = assets_route.get_asset_availability("VIX", FakeSnapshots(None), FakeLoader())
 
     assert response.status_code == 404
     assert loads(response.body) == {"message": "Asset not found."}
+
+
+def test_catalog_preserves_absent_availability_for_assets_outside_snapshot_coverage() -> None:
+    result = assets_route.list_assets(FakeSnapshots(_snapshot()), FakeLoader())
+
+    assert result.dataset_snapshot_id == "snapshot-1"
+    assert result.assets[0].data_availability.first_date == date(2025, 1, 2)
+    assert all(row.data_availability is None for row in result.assets[1:])
