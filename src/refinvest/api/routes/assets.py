@@ -15,7 +15,7 @@ from refinvest.api.schemas.assets import (
     AssetTransport,
     DataAvailabilityTransport,
 )
-from refinvest.app.security import require_internal_api_key
+from refinvest.api.security import require_internal_api_key
 from refinvest.application.assets import (
     ASSET_REFERENCES,
     AssetAvailability,

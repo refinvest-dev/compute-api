@@ -20,8 +20,8 @@ from refinvest.api.schemas.trading_analytics_jobs import (
     CreateAnalyticsJobTransport,
     UpdateAnalyticsGrantsTransport,
 )
+from refinvest.api.security import require_internal_api_key
 from refinvest.app.config import Settings, get_settings
-from refinvest.app.security import require_internal_api_key
 from refinvest.application.analytics_jobs import (
     AnalyticsAdmissionUnavailable,
     AnalyticsCancellationConflict,

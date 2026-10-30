@@ -11,7 +11,7 @@ from refinvest.api.dependencies.assets import (
     get_dataset_snapshot_repository,
     get_snapshot_execution_data_loader,
 )
-from refinvest.app.security import require_internal_api_key
+from refinvest.api.security import require_internal_api_key
 from refinvest.application.dataset_snapshots import DatasetSnapshotRepository
 from refinvest.application.series import build_series
 from refinvest.application.snapshot_execution_data import (

@@ -16,8 +16,8 @@ from refinvest.api.schemas.backtests import (
     PeriodTransport,
 )
 from refinvest.api.schemas.errors import map_strategy_validation_error
+from refinvest.api.security import require_internal_api_key
 from refinvest.app.config import Settings, get_settings
-from refinvest.app.security import require_internal_api_key
 from refinvest.application.backtests import (
     BacktestCapacityExceeded,
     BacktestIdempotencyConflict,
