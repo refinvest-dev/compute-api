@@ -382,6 +382,10 @@ AR-08의 나머지 체크박스는 승인·수치 검증 후 갱신한다.
 입력 바이트 외 후보 수·projection 비용·RSS 증폭을 확인했으며, 최대 입력/출력·Linux hard limit·
 실제 전송·DB 경합·동시성 실측과 운영 수치 승인은 남아 있다. Production 실행 제한은 미연결이다.
 
+[Linux 후속 실측](ANALYTICS_RESOURCE_LINUX.md)은 현재 main·잠금파일 기반 WSL 회귀 689개와
+8개 profile을 검증했다. Production systemd/메모리 격리·최대 허용 입력·동시 worker·실제 Core
+E2E gate는 남아 있으며 AR-08~10 완료나 운영 수치 승인으로 해석하지 않는다.
+
 ### AR-09 / AR-10 — Analytics 격리 준비와 production 연결
 
 - [ ] AR-09: executor·입력/outcome을 구현하고 정상·프로세스 crash·IPC 오류·큰 결과를 검증한다.

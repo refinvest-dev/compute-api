@@ -11,8 +11,8 @@ read부터 암호화까지 24.35~39.21초, 관측 최대 working set 194.6MiB였
 
 ## 1. 기준과 측정 방법
 
-- Compute source 기준: `111f1cca61450853aaec8d28c4d17928a327106e`.
-  AR-07 PR #116은 아직 미머지 상태이며 그 diff를 포함하지 않았다.
+- 최초 Windows 측정 source 기준: `111f1cca61450853aaec8d28c4d17928a327106e`.
+  그 측정 당시 AR-07 PR #116은 미머지 상태였으며 그 diff를 포함하지 않았다.
 - 최초 도구/검증 commit: `430534d`. 아래 7개 profile은 이 도구로 각각 3회 실행했다.
   후속 변경은 측정용 watchdog의 하위 프로세스 정리 보강이며 서비스 소스를 바꾸지 않는다.
 - 모든 profile의 `src/**/*.py` 경로·내용을 정렬해 계산한 source SHA-256:
@@ -129,7 +129,7 @@ Evidence 검증, 정상 metric·후보 수·반복 body 결정론, 변조 거부
 프로세스 정리가 허용되는 실행 권한이 필요하며 sandbox 거부를 통과로 처리하지 않는다.
 Ruff/formatter, 기존 `src` strict Pyright와 전체 regression 결과를 PR에 기록한다.
 
-최종 검증은 Ruff·formatter 257 files, strict Pyright 0 errors/0 warnings,
+최초 Windows 도구 검증은 Ruff·formatter 257 files, strict Pyright 0 errors/0 warnings,
 전체 pytest **668 passed / 131 skipped / 기존 AnyIO assert-rewrite warning 1개**다.
 Windows 네트워크 회귀에는 이전 단계의 저장소 밖 IPv6 loopback bootstrap을 사용했다.
 Watchdog 보강 후 CLI도 새 프로세스로 2회 실행해 기존 dense32 전체 body hash와 일치함을 확인했다.
@@ -139,3 +139,9 @@ Raw request/artifact/report·test log는 로컬 임시 폴더 `refinvest-ar08-me
 migration·golden fixture는 이 PR에서 변경하지 않으며 DB/Core E2E를 새로 실행했다고 주장하지 않는다.
 
 Determinism impact: none. Point-in-Time impact: none.
+
+## 6. Linux 후속 검증
+
+현재 main의 projection 개선을 포함한 [Linux 실측](ANALYTICS_RESOURCE_LINUX.md)을 추가했다.
+WSL의 전체 689개 테스트와 8개 profile 24개 표본을 검증하고, 완료 표본의 Windows hash 일치를
+확인했다. 위 표는 최초 Windows 측정 기록이며 Linux 데이터나 현재 source의 성능으로 덮어쓰지 않는다.

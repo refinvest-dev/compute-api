@@ -14,6 +14,26 @@ $env:PYTHONPATH = "$PWD/src;$PWD"
 별도 worktree라면 가상환경 Python의 절대 경로를 사용하고 `PYTHONPATH`는 해당 worktree를
 가리키게 한다. Linux에서는 Python 경로와 `PYTHONPATH` 구분자를 맞춘다.
 
+Linux의 새 검증 폴더에서 같은 lockfile과 checkout을 사용한다. 다음 보호값은 실험용이다.
+
+```sh
+uv sync --locked --dev --python 3.11
+export PYTHONPATH="$PWD/src:$PWD"
+run_root="$(mktemp -d /var/tmp/refinvest-analytics.XXXXXX)"
+(
+  ulimit -v 2097152
+  .venv/bin/python -m tools.analytics_resource_baseline run "$run_root/dense512" --episodes 512 --repetitions 3
+)
+PYRIGHT_PYTHON_NODE_VERSION=22.16.0 PYRIGHT_PYTHON_CACHE_DIR="$run_root/pyright-cache" \
+  .venv/bin/pyright --pythonpath "$PWD/.venv/bin/python"
+```
+
+`ulimit -v`는 Linux virtual address space를 2GiB로 제한하며 RSS/cgroup 제한은 아니다.
+Node 버전은 pyright wrapper의 자동 alpha 버전 선택·파싱 실패를 피하기 위한 검사 환경 설정이다.
+Runtime 정책·의존성이나 잠금파일을 바꾸지 않는다. 실제 측정 환경·결과·실패와 한계는
+[Linux 실측 기록](../docs/ANALYTICS_RESOURCE_LINUX.md)에 있다. WSL에서는 세션 간 검증 폴더 보존을
+확인하고, 종료 전 raw report/log를 별도 로컬 증적 폴더로 복사한다.
+
 - `--spacing-seconds 2`: 한 instrument의 중첩 없는 빠른 거래, 30분 window 내 후보·baseline.
 - `--spacing-seconds 3600`: window 밖 후보. 현재 엔진은 `AFTER_WINDOW`도 결과에 포함한다.
 - `--evidence-per-record 8`: canonical record당 서로 다른 합성 source 참조 8개.
