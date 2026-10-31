@@ -10,7 +10,9 @@ AR-05A Analytics worker·Artifact adapter와 AR-05B Backtest 실행 adapter 분�
 AR-06N Normalization persistence 책임 분리와 실 DB·단일 전체 회귀·고정 Core E2E 검증도 완료했다.
 AR-06A Analytics persistence 분리와 전후 비교·실 DB 검증도 완료했다.
 AR-07 Snapshot 조회 port·provider 연결과 요청 내 단일 로딩, 마지막 legacy 예외 제거도 완료했다.
-다음은 AR-08 Analytics 실행 제한 정책이며 구현 전에 Context ADR 초안을 검토한다.
+AR-11A~G의 책임 이동과 최종 점검도 완료했다. AR-00~07·AR-11의 기본 구조 개선은 완료이며,
+AR-08~10 Analytics 실행 제한 정책·격리·production 연결은 미완료다. Context ADR-071은 DRAFT다.
+현재 프로세스·도구의 명시적 유지 범위와 남은 위험은 [최종 점검](ARCHITECTURE_FINAL_AUDIT.md)을 따른다.
 실행 결과와 남은 gate는 [AR-00 baseline 보고서](ARCHITECTURE_BASELINE_AR00.md)에 기록한다.
 이 문서는 Compute 로컬 실행 계획이다. 제품 정책·ADR·API·hash fixture의 정본은
 `../../context`이며 이 문서로 변경하지 않는다.
@@ -403,8 +405,8 @@ Analytics 결과 구성의 scalar 반복 변환·전체 필터링은
 [호출 내 unit index 재사용](ANALYTICS_PROJECTION_SCALARS.md)으로 별도 개선·검증했다.
 이 작업은 AR-08 정책 승인이나 AR-09/10 실행 제한·실제 Core E2E 완료를 뜻하지 않는다.
 
-- [ ] 사용하지 않는 re-export·이전 경로·테스트의 import monkeypatch 경로를 정리한다.
-- [ ] `app/`의 조립 외 책임, application의 concrete adapter 의존, persistence의 app 역참조를 검사한다.
+- [x] Re-export·이전 경로·테스트 monkeypatch를 점검했다. 순수 package facade·console·logger 호환 이름은 유지한다.
+- [x] `app/` 책임, application의 concrete adapter 의존, persistence의 app 역참조를 점검했다. Legacy 예외는 비어 있다.
 - [x] AR-11A: HTTP 인증을 inbound `api/security.py`로 옮기고 이전 app 경로·route 예외를 제거한다.
 - [x] AR-11B: 전역 HTTP 오류 handler를 `api/exception_handlers.py`로 옮기고 app에는 등록만 둔다.
 - [x] AR-11C: HTTP 관측 middleware·label 분류를 `api/http_metrics.py`로 옮기고 app은 registry/listener·등록을 조립한다.
@@ -413,9 +415,9 @@ Analytics 결과 구성의 scalar 반복 변환·전체 필터링은
 - [x] AR-11F: snapshot CLI 입력·발행 lifecycle을 `ingestion/snapshot/cli.py`로 옮기고 app은 lazy adapter를 조립한다.
 - [x] AR-11G: reference-data 진단의 선택·coverage·cross-calendar 조율을 application으로 옮기고 app은 CLI·구현체를 조립한다.
 - [x] Ingestion·benchmark 조율은 해당 기능으로 옮겼다. Cleanup CLI 3개는 단일 repository 호출·설정·로그만 남아 있어 얇은 진입점을 유지한다.
-- [ ] 남은 실질적 구현 이동은 기능별 PR로 분리하며 최종 정리 PR에 몰지 않는다.
-- [ ] 실제 프로세스·의존 방향·계약 ownership을 `docs/ARCHITECTURE.md`와 runbook에 반영한다.
-- [ ] 남은 정책 공백·미검증 시나리오·지원하지 않는 조합을 기록한다.
+- [x] 실질적 책임 이동은 AR-11A~G의 독립 PR로 검증했다. Fixture는 명시적인 비운영 도구로 유지한다.
+- [x] 실제 프로세스·의존 방향·계약 ownership을 `docs/ARCHITECTURE.md`와 현재 runbook에 반영했다.
+- [x] 남은 정책 공백·미검증 시나리오·운영 위험을 최종 점검에 기록했다.
 
 [HTTP 인증 경계 정리](HTTP_AUTH_BOUNDARY.md)는 17개 계약 operation의 인증 응답과
 runtime OpenAPI·설정/오류 처리·공개 probe를 보존한다. [HTTP 오류 handler 정리](HTTP_ERROR_BOUNDARY.md)도
@@ -425,8 +427,9 @@ runtime OpenAPI·설정/오류 처리·공개 probe를 보존한다. [HTTP 오�
 [Benchmark CLI 정리](BENCHMARK_CLI_BOUNDARY.md)는 기존 exit·출력·correctness gate와 측정 경계를 유지한다.
 [Ingestion CLI 정리](INGESTION_CLI_BOUNDARY.md)는 기존 검증·ID·artifact·로그와 console 진입점을 유지한다.
 [Reference-data 진단 정리](REFERENCE_DATA_DIAGNOSTICS_BOUNDARY.md)는 선택한 snapshot·7일 창·오류·console 출력을 유지한다.
-Fixture 도구의 ownership·나머지 re-export와
-최종 architecture/runbook 전체 정리는 후속 개별 범위이며 AR-11 전체를 완료로 표시하지 않는다.
+[최종 점검](ARCHITECTURE_FINAL_AUDIT.md)은 fixture 도구 ownership·나머지 re-export와 실제
+프로세스·runbook을 대조했다. 기본 구조 개선의 AR-11을 완료하며, 운영 준비·모든 시나리오의
+E2E 완료나 ADR-071 승인을 뜻하지 않는다. 각 단계 문서의 당시 미완료 기록은 역사적 증적으로 유지한다.
 
 다음 항목은 별도 후속 후보이며 기본 구조 개선의 완료를 가로막지 않는다.
 

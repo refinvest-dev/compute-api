@@ -2,6 +2,10 @@
 
 작성일: 2026-10-30 KST. 대상: AR-00~AR-06A까지 구현한 구조 개선.
 
+이하 본문·수치는 PR #115 준비 당시의 머지 복구 기록이다. #115 이후 AR-07과 AR-11A~G가
+별도 PR로 main에 반영됐다. 2026-11-01 KST 현재 상태와 완료 범위는
+[최종 점검](ARCHITECTURE_FINAL_AUDIT.md)을 따른다. 아래의 당시 후속 목록을 현재 미머지 목록으로 읽지 않는다.
+
 아래 PR은 단계별 변경의 검토·머지 기록이다. #103~#105는 main으로, #106~#114는
 중간 브랜치 `refactor/ar02n-normalization-contracts`로 머지됐다. 중간 브랜치는 삭제됐고,
 main에는 AR-02N까지만 반영되어 [통합 PR #115](https://github.com/refinvest-dev/compute-api/pull/115)로 남은 최종 구현을 반영한다.

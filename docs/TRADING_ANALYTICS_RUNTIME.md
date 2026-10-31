@@ -26,6 +26,14 @@ construction live in `contracts/analytics`. Worker coordination, Artifact HTTP a
 AR-05A verification are described in [Analytics worker](ANALYTICS_WORKER_APPLICATION.md).
 The app worker module retains configuration, composition, signal handling and the CLI entrypoint.
 
+The current application worker fetches, validates, calculates, projects and serializes in the
+parent process while a separate thread renews its lease. It does not have an enforceable
+attempt-wide deadline or child process memory isolation. Download and payload byte caps
+are not RSS limits. ADR-071 remains DRAFT; see the
+[execution policy review](ANALYTICS_EXECUTION_POLICY_REVIEW.md)
+and [final architecture audit](ARCHITECTURE_FINAL_AUDIT.md). Backtest/Normalization process
+isolation and synthetic Analytics vectors do not establish actual Core Analytics runtime E2E.
+
 Job orchestration, application-owned errors, repository ports and the database-backed HTTP/worker
 smoke are described in [Analytics application](ANALYTICS_APPLICATION.md). Providers live in
 `api/dependencies/trading_analytics_jobs.py`. Shared payload/ACK routing delegates to the

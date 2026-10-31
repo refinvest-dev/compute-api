@@ -133,25 +133,28 @@ AR-05B에서 Backtest process adapter 이동과 worker 조립 전환도 완료�
 | worker.py | Backtest 부모 조립·child 계산기 factory·시작·종료 | spawn/IPC/종료는 adapters.backtest로 이동 완료; AR-05B |
 | trading_review_worker.py | 설정 검증·조립·signal·CLI | Worker application과 process adapter 연결 완료; AR-05N |
 | trading_analytics_worker.py | 설정 검증·DB/adapter 조립·signal·CLI | application worker와 Artifact adapter 연결 완료; AR-05A. 새 격리·deadline은 AR-08~10 |
-| trading_review_identity.py | 정규화 identity DTO·hash·지원 registry 확인 | contracts.normalization.identity 이동 완료; AR-02N |
-| trading_review_result_integrity.py | V1/V2 public result 검증·canonicalization | contracts.normalization.result_integrity 이동 완료; AR-02N |
-| trading_review_result_delivery.py | pinned 전달 policy·바이트 상한 | contracts.normalization.result_delivery 이동 완료; AR-02N |
+| trading_review_identity.py (제거됨) | 정규화 identity DTO·hash·지원 registry 확인 | contracts.normalization.identity 이동 완료; AR-02N |
+| trading_review_result_integrity.py (제거됨) | V1/V2 public result 검증·canonicalization | contracts.normalization.result_integrity 이동 완료; AR-02N |
+| trading_review_result_delivery.py (제거됨) | pinned 전달 policy·바이트 상한 | contracts.normalization.result_delivery 이동 완료; AR-02N |
 | trading_review_payload.py (제거됨) | public result projection | application.normalization_payload 이동 완료; AR-05N |
 | trading_review_normalization.py (제거됨) | 입력 해석·변환, 다운로드·process 실행 | application.normalization_execution과 adapters.normalization 이동 완료; AR-05N |
-| trading_analytics_identity.py | Analytics identity·VersionSet·canonical JSON | contracts.analytics.identity 이동 완료; AR-02A |
+| trading_analytics_identity.py (제거됨) | Analytics identity·VersionSet·canonical JSON | contracts.analytics.identity 이동 완료; AR-02A |
 | trading_analytics_input.py (제거됨) | Artifact I/O·검증과 계산 입력 변환 | application.analytics_input과 adapters.analytics 이동 완료; AR-05A |
 | trading_analytics_result.py (제거됨) | 세 Metric의 public projection | application.analytics_result 이동 완료; AR-05A |
 | backtest_job_cleanup.py | 설정·retention 단위 전달, 단일 DB cleanup 호출·운영 로그 | AR-11G에서 검토: 얇은 진입점 유지, 삭제 판단·DB clock은 repository 소유 |
 | trading_review_cleanup.py, trading_analytics_cleanup.py | 설정·DB 조립, 단일 cleanup 호출·운영 로그 | AR-11G에서 검토: 기능별 ACK·retention·암호화 정책을 유지하며 범용 cleanup 계층을 추가하지 않음 |
 | snapshot_storage.py | Filesystem/S3 factory와 storage 설정 해석 | 조립 유지, 조회 provider 연결 완료; AR-07 |
 | snapshot_ingestion.py | Settings·clock/nonce·vendor/DB/storage 조립, console·호환 진입점 | 입력·발행 조율은 ingestion.snapshot.cli로 이동 완료; AR-11F |
-| integration_fixture.py | 합성 fixture 구성·발행과 기존 fixture 검증 CLI | 검증 도구 책임 유지, 최종 AR-11 ownership 검토 대상 |
+| integration_fixture.py | 고정 비운영 5자산 fixture 구성·발행·재사용 검증 CLI | 최종 점검에서 개발 도구로 유지; production ingestion·계산 정책 아님, DB 격리는 harness 절차 소유 |
 | reference_data_smoke.py | DB 설정·구현체 조립, parser·출력·exit | 선택·coverage·cross-calendar 진단 조율은 application으로 이동 완료; AR-11G |
 | benchmark.py | 인자·오류·출력 처리, executor/version 조립 | 실행 조율은 benchmarking.runner로 이동 완료; AR-11E |
 | refinvest/__init__.py (package root) | 호출 시 HTTP main을 import하는 console wrapper | eager app export 제거 완료; AR-11D |
 
-`__init__.py`는 package 초기화로 유지한다. AR-11에서 남은 실질적인 구현 이동을 발견하면
-한 번의 정리 PR에 몰지 않고 해당 기능의 독립 PR로 나눈다.
+최종 점검에서 36개 package initializer 중 root의 지연 `main`과 순수 Engine/Trading Review의
+10개 공개 facade를 유지했다. 이들은 지원하는 계산 인터페이스이며 예전 app 구현을 재수출하는
+compatibility shim이 아니다. 나머지는 docstring 또는 빈 initializer다. 제거한 10개 옛 경로,
+monkeypatch·프로세스 target과 logger 문자열의 구분은 [최종 점검](ARCHITECTURE_FINAL_AUDIT.md)을 따른다.
+새 실질적 구현 이동은 최종 문서 정리에 섞지 않고 기능별 독립 PR로 검증한다.
 
 ## 4. 검증 범위와 한계
 
