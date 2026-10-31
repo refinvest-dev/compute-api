@@ -31,6 +31,7 @@ refinvest-compute/
 │   │   └── assets.py
 │   ├── schemas/
 │   ├── dependencies/
+│   ├── exception_handlers.py
 │   └── security.py
 │
 ├── engine/
@@ -105,6 +106,10 @@ Core 전용 HTTP 인증은 `api/security.py`가 소유한다. Route는 이 inbou
 사용하고 `app.config`에서 읽은 설정만 전달받는다. 인증 모듈은 DB·application·route·provider
 구현을 조립하지 않는다. `app/`에는 HTTP 인증의 이전 경로나 re-export를 남기지 않는다.
 공개 health probe와 Trading Review의 JSON 중복 key 사전 검사·HTTP 오류 투영은 기존 경계를 유지한다.
+
+전역 request validation·HTTP 예외의 응답 투영은 `api/exception_handlers.py`가 소유한다.
+`app/main.py`는 framework 예외와 handler를 등록한다. 기존 contract schema mapper는
+`api/schemas/errors.py`, route 고유의 오류 투영은 해당 route에 유지하며 새 catch-all 정책은 추가하지 않는다.
 
 ## 4. Engine Pipeline
 

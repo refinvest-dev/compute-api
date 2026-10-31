@@ -41,7 +41,9 @@ def test_contract_operations_preserve_authentication_responses(
 ) -> None:
     application = create_app()
     application.dependency_overrides[get_settings] = lambda: Settings(configured)
-    monkeypatch.setattr(import_module("refinvest.app.main"), "uuid4", lambda: UUID(TRACE_ID))
+    monkeypatch.setattr(
+        import_module("refinvest.api.exception_handlers"), "uuid4", lambda: UUID(TRACE_ID)
+    )
     uri = re.sub(r"\{([^}]+)\}", lambda match: "QQQ" if match[1] == "symbol" else TRACE_ID, path)
     headers = {} if supplied is None else {"X-Internal-Api-Key": supplied}
     with TestClient(application) as client:

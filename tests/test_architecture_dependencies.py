@@ -208,6 +208,22 @@ RULES = (
     ),
     DependencyRule("refinvest.api.dependencies", ("refinvest.api.routes",)),
     DependencyRule(
+        "refinvest.api.exception_handlers",
+        (
+            "refinvest.app",
+            "refinvest.application",
+            "refinvest.persistence",
+            "refinvest.api.routes",
+            "refinvest.api.dependencies",
+            *NETWORK_PACKAGES,
+        ),
+        ("fastapi", "starlette", "refinvest.api.schemas.errors"),
+    ),
+    DependencyRule(
+        "refinvest.app.main",
+        ("refinvest.api.schemas", "fastapi.responses.JSONResponse"),
+    ),
+    DependencyRule(
         "refinvest.api.security",
         (
             "refinvest.application",
@@ -327,6 +343,14 @@ def test_architecture_check_reports_absolute_relative_and_external_violations(
         ("api/security.py", "from refinvest.persistence.postgres import jobs\n"),
         ("api/security.py", "from refinvest.api.routes import assets\n"),
         ("api/security.py", "from refinvest.app.main import app\n"),
+        ("api/exception_handlers.py", "from refinvest.app.config import get_settings\n"),
+        ("api/exception_handlers.py", "from refinvest.persistence.postgres import jobs\n"),
+        ("api/exception_handlers.py", "from refinvest.api.routes import backtests\n"),
+        ("api/exception_handlers.py", "from refinvest.app.main import create_app\n"),
+        (
+            "app/main.py",
+            "from refinvest.api.schemas.errors import map_transport_validation_error\n",
+        ),
         ("application/new.py", "from socket import socket\n"),
         ("application/new.py", "from refinvest.adapters.normalization import Executor\n"),
         ("application/normalization_execution.py", "import multiprocessing\n"),
@@ -414,6 +438,12 @@ def test_pure_interfaces_contracts_and_composition_providers_are_allowed(tmp_pat
             "from fastapi import Depends, Header, HTTPException\n"
             "from refinvest.app.config import Settings, get_settings\n"
         ),
+        "api/exception_handlers.py": (
+            "from fastapi import Request\n"
+            "from starlette.responses import JSONResponse\n"
+            "from refinvest.api.schemas.errors import map_transport_validation_error\n"
+        ),
+        "app/main.py": "from refinvest.api import exception_handlers\n",
         "api/schemas/new.py": "from refinvest.contracts.normalization import Identity\n",
         "persistence/postgres/new.py": "from psycopg import connect\n",
         "adapters/backtest/new.py": (
