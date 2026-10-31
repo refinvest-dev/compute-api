@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from datetime import UTC, datetime, timedelta
 from threading import Event
 from time import monotonic
@@ -174,7 +175,9 @@ class TradingReviewWorkerHost:
         finally:
             # Drop canonical transport bytes before certifying the parent resource as released.
             outcome = None
-            if self.execution_tracker is not None:
+            # A propagating publication/retry exception may retain payload bytes in
+            # its traceback. Keep the resource guard until this parent really exits.
+            if self.execution_tracker is not None and sys.exception() is None:
                 self.execution_tracker.release_execution(claim)
         return True
 
