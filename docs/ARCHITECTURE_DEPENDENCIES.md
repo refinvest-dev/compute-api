@@ -24,6 +24,7 @@ AR-05A는 Analytics HTTP adapter의 app/API/DB/worker 의존도 차단한다. �
 | package root __init__ | 표준 라이브러리, 호출 시 app.main.main 진입점 | FastAPI app 재수출, app.config·외부 framework 직접 import |
 | benchmarking.runner | 표준 라이브러리, benchmarking, DailyBarBacktestExecutor 타입 | app·API·persistence·ingestion 직접 의존, argparse·직접 네트워크·subprocess |
 | ingestion.snapshot.cli | 표준 라이브러리, ingestion.snapshot.mvp | app·API·DB·Engine·vendor/calendar 구현 직접 import와 네트워크 |
+| application.reference_data_diagnostics | application의 assets·dataset_snapshots·series·snapshot_execution_data, 표준 라이브러리 | app·API·DB·storage 구현, CLI parser·파일·JSON 출력 |
 | engine | 표준 라이브러리, engine, marketdata.domain/ports/errors | FastAPI·DB·SDK, app/application, ingestion, marketdata adapter |
 | trading_review | 표준 라이브러리, trading_review | 다른 refinvest 계층, 외부 SDK |
 | marketdata.domain/errors | 표준 라이브러리와 자신 | application, adapter, SDK |
@@ -86,6 +87,10 @@ App은 vendor·calendar·DB 구현을 조립할 수 있지만 parser·JSON·path
 MvpSnapshotRequest 구성을 다시 소유하지 못하게 import를 검사한다. CLI adapter는 순수 domain이
 아니며 파일 입력·로그·JSON 출력이 허용된다. Legacy 이행 예외는 추가하지 않는다.
 
+AR-11G의 reference-data 진단은 저장소 port와 지연 loader callback만 받는다. Snapshot 선택 후
+loader를 생성하고 catalog·series를 검사한다. App은 parser·JSON·설정·DB/storage 조립을 유지하되
+asset registry·series 조율과 날짜 창 계산을 직접 import하지 못하게 검사한다.
+
 ## 2. 현재 이행 예외
 
 AR-01 시작 시점의 예외는 7개 파일, 18개 import group, 31개 심볼 의존성이다.
@@ -136,13 +141,14 @@ AR-05B에서 Backtest process adapter 이동과 worker 조립 전환도 완료�
 | trading_analytics_identity.py | Analytics identity·VersionSet·canonical JSON | contracts.analytics.identity 이동 완료; AR-02A |
 | trading_analytics_input.py (제거됨) | Artifact I/O·검증과 계산 입력 변환 | application.analytics_input과 adapters.analytics 이동 완료; AR-05A |
 | trading_analytics_result.py (제거됨) | 세 Metric의 public projection | application.analytics_result 이동 완료; AR-05A |
-| backtest_job_cleanup.py | cleanup CLI·DB 조립·운영 출력 | 얇은 진입점 유지, 조율 책임 정리 AR-06/11 |
-| trading_review_cleanup.py, trading_analytics_cleanup.py | 각 기능 cleanup CLI·조립 | 기능별 정책 유지, 조율 분리 AR-06/11 |
+| backtest_job_cleanup.py | 설정·retention 단위 전달, 단일 DB cleanup 호출·운영 로그 | AR-11G에서 검토: 얇은 진입점 유지, 삭제 판단·DB clock은 repository 소유 |
+| trading_review_cleanup.py, trading_analytics_cleanup.py | 설정·DB 조립, 단일 cleanup 호출·운영 로그 | AR-11G에서 검토: 기능별 ACK·retention·암호화 정책을 유지하며 범용 cleanup 계층을 추가하지 않음 |
 | snapshot_storage.py | Filesystem/S3 factory와 storage 설정 해석 | 조립 유지, 조회 provider 연결 완료; AR-07 |
 | snapshot_ingestion.py | Settings·clock/nonce·vendor/DB/storage 조립, console·호환 진입점 | 입력·발행 조율은 ingestion.snapshot.cli로 이동 완료; AR-11F |
-| integration_fixture.py, reference_data_smoke.py | 합성 fixture 구성·발행과 참조 데이터 진단 CLI | 검증 도구 책임 유지, 필요시 feature별 구성 분리 AR-11 |
+| integration_fixture.py | 합성 fixture 구성·발행과 기존 fixture 검증 CLI | 검증 도구 책임 유지, 최종 AR-11 ownership 검토 대상 |
+| reference_data_smoke.py | DB 설정·구현체 조립, parser·출력·exit | 선택·coverage·cross-calendar 진단 조율은 application으로 이동 완료; AR-11G |
 | benchmark.py | 인자·오류·출력 처리, executor/version 조립 | 실행 조율은 benchmarking.runner로 이동 완료; AR-11E |
-| refinvest/__init__.py (package root) | FastAPI app/main eager export | 기존 진입점 호환성을 보존하며 bootstrap 분리 검토; AR-11 |
+| refinvest/__init__.py (package root) | 호출 시 HTTP main을 import하는 console wrapper | eager app export 제거 완료; AR-11D |
 
 `__init__.py`는 package 초기화로 유지한다. AR-11에서 남은 실질적인 구현 이동을 발견하면
 한 번의 정리 PR에 몰지 않고 해당 기능의 독립 PR로 나눈다.

@@ -57,6 +57,9 @@ S3 instance-role configuration as the API and worker:
 refinvest-verify-reference-data
 ```
 
+진단 조율은 `application/reference_data_diagnostics.py`, 설정·DB/storage 조립과 CLI는
+`app/reference_data_smoke.py`가 맡는다. 보존 범위는 [AR-11G](REFERENCE_DATA_DIAGNOSTICS_BOUNDARY.md)에 기록한다.
+
 It resolves the latest published DatasetSnapshot once (or a supplied
 `--dataset-snapshot-id`), manifest-verifies its artifact, confirms calendar availability for all
 six MVP assets, and reads a recent QQQ/BTCUSDT cross-calendar PRICE series. It prints selected

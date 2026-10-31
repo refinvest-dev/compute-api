@@ -411,7 +411,8 @@ Analytics 결과 구성의 scalar 반복 변환·전체 필터링은
 - [x] AR-11D: package root의 HTTP 즉시 조립·FastAPI app 재수출을 제거하고 console main·정식 ASGI 경로를 검증한다.
 - [x] AR-11E: benchmark 실행·report 조율을 `benchmarking/runner.py`로 옮기고 app에는 CLI·조립을 둔다.
 - [x] AR-11F: snapshot CLI 입력·발행 lifecycle을 `ingestion/snapshot/cli.py`로 옮기고 app은 lazy adapter를 조립한다.
-- [ ] Ingestion·cleanup·benchmark CLI의 업무 조율은 해당 기능에 둔다.
+- [x] AR-11G: reference-data 진단의 선택·coverage·cross-calendar 조율을 application으로 옮기고 app은 CLI·구현체를 조립한다.
+- [x] Ingestion·benchmark 조율은 해당 기능으로 옮겼다. Cleanup CLI 3개는 단일 repository 호출·설정·로그만 남아 있어 얇은 진입점을 유지한다.
 - [ ] 남은 실질적 구현 이동은 기능별 PR로 분리하며 최종 정리 PR에 몰지 않는다.
 - [ ] 실제 프로세스·의존 방향·계약 ownership을 `docs/ARCHITECTURE.md`와 runbook에 반영한다.
 - [ ] 남은 정책 공백·미검증 시나리오·지원하지 않는 조합을 기록한다.
@@ -423,7 +424,8 @@ runtime OpenAPI·설정/오류 처리·공개 probe를 보존한다. [HTTP 오�
 정식 CLI·ASGI 경로를 유지하고 root의 FastAPI app 별칭을 제거한다.
 [Benchmark CLI 정리](BENCHMARK_CLI_BOUNDARY.md)는 기존 exit·출력·correctness gate와 측정 경계를 유지한다.
 [Ingestion CLI 정리](INGESTION_CLI_BOUNDARY.md)는 기존 검증·ID·artifact·로그와 console 진입점을 유지한다.
-Cleanup 등 나머지 CLI의 실제 필요 경계와
+[Reference-data 진단 정리](REFERENCE_DATA_DIAGNOSTICS_BOUNDARY.md)는 선택한 snapshot·7일 창·오류·console 출력을 유지한다.
+Fixture 도구의 ownership·나머지 re-export와
 최종 architecture/runbook 전체 정리는 후속 개별 범위이며 AR-11 전체를 완료로 표시하지 않는다.
 
 다음 항목은 별도 후속 후보이며 기본 구조 개선의 완료를 가로막지 않는다.
