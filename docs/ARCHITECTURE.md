@@ -1,5 +1,8 @@
 # ARCHITECTURE.md — refinvest-compute
 
+2026-11-01 KST, Compute `0a48403` 기준의 현재 구조다. 제품 정책·API 계약의 정본은 Context이며,
+구조 개선 완료 범위와 남은 운영 gate는 [최종 점검](ARCHITECTURE_FINAL_AUDIT.md)에 기록한다.
+
 ## 1. System Boundary
 
 ```text
@@ -12,23 +15,31 @@ refinvest-compute
 Postgres / Object Storage
 ```
 
-Compute는 Core가 계산을 위임하는 내부 서비스다.
+Compute는 Core가 계산을 위임하는 내부 서비스다. Backtest, Trading Review Normalization,
+Behavior Analytics와 immutable 시장 참조 데이터의 수집·조회를 담당한다.
 
 Compute는 Core의 User, Subscription, Strategy Aggregate를 소유하지 않는다.
 Core는 StrategyVersion 전체 payload를 Compute에 전달한다.
 
-## 2. Recommended Repository Structure
+## 2. Current Repository Structure
 
 ```text
-refinvest-compute/
+src/refinvest/
 ├── app/
 │   ├── main.py
-│   └── config.py
+│   ├── config.py
+│   ├── worker.py
+│   ├── trading_review_worker.py
+│   ├── trading_analytics_worker.py
+│   └── ... CLI·storage 조립
 │
 ├── api/
 │   ├── routes/
 │   │   ├── backtests.py
-│   │   └── assets.py
+│   │   ├── assets.py
+│   │   ├── series.py
+│   │   ├── trading_review_jobs.py
+│   │   └── trading_analytics_jobs.py
 │   ├── schemas/
 │   ├── dependencies/
 │   ├── exception_handlers.py
@@ -36,25 +47,43 @@ refinvest-compute/
 │   └── security.py
 │
 ├── engine/
-│   ├── domain/
 │   ├── validation/
 │   ├── temporal/
 │   ├── conditions/
+│   ├── signals/
+│   ├── entries/
 │   ├── execution/
 │   ├── position/
 │   ├── metrics/
-│   ├── benchmark/
-│   └── pipeline.py
+│   ├── benchmark.py
+│   ├── performance.py
+│   ├── results.py
+│   └── trades.py
+│
+├── trading_review/
+│   ├── service.py
+│   └── analytics/
+│
+├── contracts/
+│   ├── normalization/
+│   └── analytics/
+│
+├── application/
+│   └── ... use case·port·worker 조율·입력 검증·결과 projection
+│
+├── adapters/
+│   ├── backtest/
+│   ├── normalization/
+│   └── analytics/
 │
 ├── marketdata/
-│   ├── domain/
-│   ├── ports/
+│   ├── domain.py
+│   ├── ports.py
 │   └── adapters/
 │
 ├── ingestion/
 │   ├── vendors/
 │   ├── calendars/
-│   ├── corporate_actions/
 │   └── snapshot/
 │       └── cli.py
 │
@@ -62,16 +91,14 @@ refinvest-compute/
 │   ├── postgres/
 │   └── object_storage/
 │
-├── tests/
-│   ├── unit/
-│   ├── integration/
-│   └── regression/
-│
-├── docs/
-└── openapi/
+├── benchmarking/
+└── observability/
 ```
 
-정확한 package 수는 실제 구현 규모에 맞게 조정한다. 디렉토리를 채우기 위해 abstraction을 만들지 않는다.
+루트의 `tests/`는 단위·계약·회귀 파일과 `integration/`, `fixtures/`를 포함한다.
+`tools/`는 개발용 합성 workload·자원 실측, `deploy/systemd/`는 실행 unit·환경 예시를 소유한다.
+`docs/`와 `openapi/`는 구현 설명과 Context 계약 snapshot이다. Sibling `../../integration`은
+source root·Python runtime dependency가 아니다. 디렉터리를 채우기 위해 추상화를 추가하지 않는다.
 
 ## 3. Dependency Direction
 
@@ -101,6 +128,16 @@ engine → latest mutable dataset
 
 Engine 계산 함수는 가능한 한 명시적인 입력을 받아 순수하게 계산한다.
 
+DDD는 `AssetSession`·`DailyBar` 같은 값, Snapshot·Revision·VersionSet identity와 기능별
+불변식·상태 전이에 적용한다. Core의 제품 Aggregate를 복제하거나 모든 기능을 공통 Job
+Aggregate·generic repository에 맞추지 않는다. 같은 트랜잭션에서 보장할 Job 상태·terminal
+descriptor·암호화 payload의 일관성은 해당 기능 repository가 소유한다.
+
+`contracts/`는 versioned identity·canonicalization·integrity·전달 정책,
+`application/`은 port 기반 조율과 검증된 입력·결과 projection을 담당한다.
+HTTP·artifact fetch·프로세스·DB 구현은 바깥 adapter다. Backtest와 Normalization의
+process adapter, Analytics의 현재 부모 내 실행을 같은 격리 수준으로 표현하지 않는다.
+
 현재 import 경계의 자동 검사, 정확한 심볼별 이행 예외와 제거 단계는
 [`ARCHITECTURE_DEPENDENCIES.md`](ARCHITECTURE_DEPENDENCIES.md)에서 관리한다.
 
@@ -127,6 +164,8 @@ Prometheus collector와 loopback listener 구현은 기존 `observability/metric
 ## 4. Engine Pipeline
 
 Backtest pipeline은 개념적으로 다음 순서를 따른다.
+실제 단계 조율은 `application/backtest_executor.py`의 `DailyBarBacktestExecutor`가 맡고,
+각 계산은 `engine/`의 순수 함수로 수행한다. 별도 `engine/pipeline.py` 파일은 없다.
 
 ```text
 Request Contract Validation
@@ -231,7 +270,8 @@ Compute가 소유:
 - Calendar/reference metadata
 - DatasetSnapshot metadata
 - Snapshot-backed market data
-- Compute job runtime state가 필요하다면 최소 범위
+- 기능별 durable job·attempt·lease·멱등성·grant·ACK 기록
+- retention 내 terminal result/descriptor와 Trading Review의 암호화 payload bytes
 
 Core가 소유:
 
@@ -242,6 +282,9 @@ Core가 소유:
 - BacktestResult의 장기 영속화
 
 공유 Postgres를 사용하더라도 테이블 소유권을 넘나들며 직접 수정하지 않는다.
+Compute의 제한 기간 runtime 결과와 Core의 장기 제품 결과는 다른 소유권이다.
+Worker의 조건부 발행과 payload/descriptor 저장 원자성은 해당 repository가 유지한다.
+Core artifact 접근은 짧은 grant의 HTTP fetch로 수행하며 Core DB를 조회하지 않는다.
 
 ## 9. API
 
@@ -257,15 +300,24 @@ GET  /backtests/{runId}
 GET /assets
 GET /assets/{symbol}/availability
 GET /series
+
+POST /trading-review/normalization-jobs
+GET  /trading-review/normalization-jobs/{jobId}
+POST /trading-review/analytics-jobs
+GET  /trading-review/analytics-jobs/{jobId}
 ```
 
 Compute API는 Core만 호출한다.
+Trading Review에는 기능별 result descriptor·grant update·cancel과 공용 terminal payload·ACK
+operation도 있다. 전체 method/path·status·hash 버전은 OpenAPI 0.6.0을 따른다. Core는 bytes와
+integrity를 검증하고 장기 결과를 commit한 후 ACK한다. Compute의 ACK 이후 bytes 정리와
+terminal retention은 장기 결과 소유권의 이전을 대신하지 않는다.
 
 API transport schema와 Engine domain model을 동일 타입으로 강제하지 않는다. 변환이 실제 경계를 명확히 할 때 분리한다.
 
-## 10. Backtest Execution State
+## 10. Job Execution State
 
-API 계약상 Compute는 polling 가능한 실행 상태를 제공한다.
+Backtest는 polling 가능한 다음 실행 상태를 제공한다.
 
 ```text
 PENDING
@@ -276,6 +328,10 @@ PENDING
 역방향 상태 전이는 허용하지 않는다.
 
 Core의 제품 도메인 BacktestRun과 Compute 내부 실행 상태를 같은 persistence model로 공유하지 않는다.
+Normalization·Analytics는 PENDING/RUNNING에서 COMPLETED/FAILED/CANCELLED로 전이한다.
+Grant 갱신·Core 지시 retry·attempt/token/deletion generation·lease 소유권은 각 기능의
+application/repository와 계약을 따른다. Terminal 결과의 재실행은 허용하지 않는다.
+Backtest의 자동 retry와 Analytics의 Core 지시 attempt 재시도를 공통 정책으로 합치지 않는다.
 
 ## 11. Performance
 
@@ -327,3 +383,44 @@ Context의 DSL canonical cases를 고정 테스트로 유지한다.
 - Postgres/Object Storage
 - FastAPI contract
 - internal API key
+
+## 13. Processes and Operations
+
+| 프로세스·명령 | 조립 | 실제 조율·구현 | 실행 특성 |
+|---|---|---|---|
+| HTTP API: refinvest | app.main·api.dependencies | api의 handler·application·repository | 수락·조회·전달, Engine 계산을 HTTP 안에서 실행하지 않음 |
+| Backtest worker | app.worker | application.backtest_worker_host·adapters.backtest | 부모 lease/상태 관리, child 계산·deadline |
+| Normalization worker | app.trading_review_worker | application.normalization_worker·adapters.normalization | 부모 상태·발행, child 입력 fetch·계산 |
+| Analytics worker | app.trading_analytics_worker | application.analytics_worker·adapters.analytics | 현재 부모에서 fetch·검증·계산·projection, 별도 heartbeat thread |
+| Snapshot 발행 | app.snapshot_ingestion | ingestion.snapshot.cli·mvp·workflow | vendor/calendar 생성·검증, artifact 후 metadata 발행 |
+| Cleanup 명령 3개 | 각 app cleanup 모듈 | 기능별 PostgreSQL repository | 단일 bounded 호출, DB clock·ACK/retention 정책 유지 |
+| Benchmark·reference 진단 | app.benchmark·reference_data_smoke | benchmarking.runner·application.reference_data_diagnostics | 수동 측정·읽기 검증 |
+
+HTTP API·worker 3개는 별도 프로세스다. Snapshot 발행 timer와 cleanup timer 3개는 별도
+단발 service를 기동한다. 이 저장소의 systemd template 존재와 실제 배포·활성화 여부는 다르다.
+Listener·thread·metrics registry와 worker 수를 하나의 전역 singleton처럼 공유하지 않는다.
+
+운영 정본은 [HTTP runbook](COMPUTE_API.md), [Backtest](BACKTEST_WORKER.md),
+[Normalization](TRADING_REVIEW_JOB_RUNTIME.md), [Analytics](TRADING_ANALYTICS_RUNTIME.md),
+[Snapshot](SNAPSHOT_INGESTION.md), [관측](OBSERVABILITY.md)이다.
+
+`app/integration_fixture.py`는 비운영 고정 5자산 데이터의 생성·발행·재사용 검증 도구로 유지한다.
+이 도구의 고정 가격·시각은 실제 시장 의미론이나 production ingestion의 대체값이 아니다.
+구현 자체는 입력 DB가 integration 전용인지 강제하지 않으므로 운영 credential로 실행하지 않는다.
+격리 DB·schema·fixture·실행 증적 관리는 sibling integration의 정본 절차를 따른다.
+이 명시적인 도구 범위를 다른 app 모듈에 계산·업무 조율을 추가하는 허용으로 확대하지 않는다.
+
+## 14. Completion and Remaining Gates
+
+AR-00~07과 AR-11의 기본 구조 개선을 완료했다. API·계산·Job 원자성 보존의 검증은 단계별
+기록과 [최종 점검](ARCHITECTURE_FINAL_AUDIT.md)에 연결한다. 이 문서 수정은 runtime 변경이나
+새 전체 테스트·실 DB·E2E 수행을 뜻하지 않는다.
+
+ADR-071은 DRAFT다. Analytics attempt 전체 deadline·강제 종료·OS 메모리 격리·부모 발행 예산과
+실제 Core Analytics runtime E2E는 AR-08~10의 별도 미완료 gate다. 현재 입력/output bytes cap과
+heartbeat를 실행 시간·RSS 상한으로 해석하지 않는다. [정책 검토](ANALYTICS_EXECUTION_POLICY_REVIEW.md)와
+[Linux 실측](ANALYTICS_RESOURCE_LINUX.md)을 참고한다.
+
+전역 cache·전체 feature package 이동·Temporal 최적화는 별도 후보다. Snapshot metadata의
+Python 하위 dict까지 깊은 불변성이 강제되는 것은 아니므로 공유 cache를 도입할 때는 이를 별도로
+검증해야 한다. 현재 call-local 재사용 검증을 전역 cache 안전성의 증거로 사용하지 않는다.

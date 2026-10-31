@@ -4,6 +4,10 @@ Trading Review normalization jobs are documented in
 `docs/TRADING_REVIEW_JOB_RUNTIME.md`. They use the same internal API key boundary and a
 separate worker/retention lifecycle from Backtest jobs.
 
+Analytics jobs use another independent worker; see [Analytics runtime](TRADING_ANALYTICS_RUNTIME.md).
+Current process ownership and the separate Analytics isolation gates are described in
+[Architecture](ARCHITECTURE.md) and [final audit](ARCHITECTURE_FINAL_AUDIT.md).
+
 The Compute API accepts Core-only backtest submissions and status polling. Backtest
 routes require `X-Internal-Api-Key`; `/health` is intentionally unauthenticated for a
 private deployment probe.
@@ -19,8 +23,9 @@ Core always polls the returned `runId` for current status. See ADR-040.
 ## Asset reference data
 
 `GET /assets` and `GET /assets/{symbol}/availability` are Core-only reference endpoints.
-Compute owns the six-item static registry and returns `inceptionDate`, calendar, and execution
-eligibility. Availability comes from one latest published immutable DatasetSnapshot and includes
+Compute owns the five-item registry (`QQQ`, `SPY`, `TQQQ`, `SOXL`, `BTCUSDT`) and returns
+`inceptionDate`, calendar, and execution eligibility. Availability comes from one latest
+published immutable DatasetSnapshot and includes
 that snapshot ID and creation time. A supported asset without current snapshot data returns
 `503 DATASET_UNAVAILABLE`; Core must not infer availability from an external vendor. See ADR-045.
 
@@ -32,7 +37,7 @@ adjustment policy with the points. `PRICE` is close, `RETURN` is the prior avail
 daily return, and `NORMALIZED` sets the first available close in the requested range to 100.
 Assets retain their own trading sessions: no common-date alignment, non-trading fill, or missing
 expected-session fallback is allowed. A missing expected close or malformed artifact fails with
-`503 DATASET_CORRUPTION`; no available snapshot is `503 DATASET_UNAVAILABLE`. Requests allow 1–6
+`503 DATASET_CORRUPTION`; no available snapshot is `503 DATASET_UNAVAILABLE`. Requests allow 1–5
 unique symbols, up to ten years and 20,000 returned points. See ADR-046.
 
 ## Backtest runtime retention

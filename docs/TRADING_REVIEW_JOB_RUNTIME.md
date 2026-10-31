@@ -1,7 +1,8 @@
 # Trading Review Normalization Job Runtime
 
 This runtime implements the internal normalization subset of Context's Trading Review API and
-OpenAPI 0.4.0 (ADR-064). Core is the sole caller. The FastAPI process accepts and polls jobs; the separate
+the synchronized OpenAPI 0.6.0 (ADR-064). Core is the sole caller. The FastAPI process accepts
+and polls jobs; the separate
 `refinvest-trading-review-worker` process downloads two short-lived Core artifact grants and calls
 `refinvest.trading_review.service.normalize_and_reconstruct` in an isolated child process.
 
@@ -64,8 +65,11 @@ jobs are deleted after 24 hours. Cleanup uses PostgreSQL time and a bounded batc
 deletes active jobs. The cleanup timer runs hourly. Core must not treat a later `404` as a new
 logical dispatch.
 
-The terminal payload follows OpenAPI's canonical record and evidence schemas. Public DTOs are
-ordered and canonicalized before V1 count, nine section digests, reconciliation manifest hash,
+The terminal payload follows OpenAPI's canonical record and evidence schemas. The supported
+result pairs are V1 schema/hash and V2 schema/hash. V2 adds
+`analyticsInputSupplement` and its digest section; versions are not mixed or upgraded implicitly.
+Job Protocol V1 and result payload V1/V2 are distinct version boundaries. For the V1 result pair,
+public DTOs are ordered and canonicalized before count, nine section digests, reconciliation manifest hash,
 and overall resultHash are calculated. `payloadSha256` covers the exact uncompressed UTF-8
 HTTP entity body and is independent of those semantic hashes. The V1 transport is one resource;
 section and manifest SHA-256 inputs are streamed in canonical chunks rather than copied as
@@ -95,5 +99,8 @@ delegates to the [terminal delivery application](TERMINAL_DELIVERY_APPLICATION.m
 Set `REFINVEST_TEST_DATABASE_URL` to an isolated PostgreSQL database with migration 0015 applied,
 then run `uv run pytest tests/integration/test_postgres_trading_review_jobs.py`. Route and worker
 tests use synthetic artifacts. Integration fixture validation is a separate sibling-checkout
-contract check; it is not a Compute runtime dependency. Core dispatch and HTTP end-to-end tests
-belong to the follow-up Core implementation.
+contract check; it is not a Compute runtime dependency. The completed Core Normalization
+publication, ACK and version-pin E2E is recorded in
+[Normalization persistence](NORMALIZATION_PERSISTENCE.md). This is historical implementation
+evidence; this documentation audit does not rerun it. Actual Core Analytics runtime E2E
+remains a separate gate in the [final audit](ARCHITECTURE_FINAL_AUDIT.md).
