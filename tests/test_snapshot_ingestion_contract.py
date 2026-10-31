@@ -31,7 +31,7 @@ NOW = datetime(2025, 1, 3, tzinfo=UTC)
 
 @pytest.fixture
 def publication_module():
-    return import_module("refinvest.app.snapshot_ingestion")
+    return import_module("refinvest.ingestion.snapshot.cli")
 
 
 @pytest.fixture

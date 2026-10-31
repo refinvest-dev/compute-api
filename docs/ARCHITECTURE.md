@@ -56,6 +56,7 @@ refinvest-compute/
 │   ├── calendars/
 │   ├── corporate_actions/
 │   └── snapshot/
+│       └── cli.py
 │
 ├── persistence/
 │   ├── postgres/
@@ -189,6 +190,12 @@ Backtest 중 동일 Snapshot의 데이터만 읽는다.
 `latest` lookup은 Backtest pipeline 시작 전에 snapshot resolution에서만 허용한다.
 
 ## 7. Ingestion
+
+수동 snapshot CLI의 인자 해석·coverage/override 검증·ID 생성·발행 lifecycle은
+`ingestion/snapshot/cli.py`가 소유한다. `app/snapshot_ingestion.py`는 Settings와 clock/nonce,
+storage path·coordinator의 lazy factory를 연결하고 vendor·DB·storage 구현을 조립한다.
+기존 Mvp coordinator의 artifact 발행→metadata 등록 순서는 유지한다.
+경계와 보존 검증은 [Ingestion CLI 정리](INGESTION_CLI_BOUNDARY.md)에 기록한다.
 
 Ingestion의 책임:
 
