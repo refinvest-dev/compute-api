@@ -70,6 +70,7 @@ def test_workloads_are_valid_deterministic_and_have_expected_relations(
         "engine",
         "projection",
         "section_hashes",
+        "payload_assembly",
         "serialization",
         "body_hash",
         "encryption",

@@ -112,7 +112,16 @@ def process_memory() -> dict[str, int]:
     return {"peak_rss_bytes": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) * factor}
 
 
-def measure(directory: Path, maximum: int) -> dict[str, Any]:
+def read_progress(path: Path) -> dict[str, Any]:
+    """A missing/incomplete observation never invents successful work or an OOM cause."""
+    try:
+        result = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {"available": False}
+    return result if isinstance(result, dict) else {"available": False}
+
+
+def measure(directory: Path, maximum: int, *, checkpoint: Path | None = None) -> dict[str, Any]:
     from refinvest.adapters.analytics.artifacts import download_inputs
     from refinvest.application.analytics_input import adapt_inputs
     from refinvest.application.analytics_result import (
@@ -131,12 +140,35 @@ def measure(directory: Path, maximum: int) -> dict[str, Any]:
     request = json.loads((directory / "request.json").read_text())
     phases: dict[str, Any] = {}
 
+    def progress(name: str, state: str, error_type: str | None = None) -> None:
+        if checkpoint is None:
+            return
+        snapshot = {
+            "phase": name,
+            "state": state,
+            "error_type": error_type,
+            "elapsed_seconds": perf_counter() - started,
+            "phases": phases,
+            "memory": process_memory(),
+        }
+        pending = checkpoint.with_suffix(".tmp")
+        pending.write_text(json.dumps(snapshot), encoding="utf-8")
+        pending.replace(checkpoint)
+
     def stage(name: str, operation: Any) -> Any:
-        started = perf_counter()
+        progress(name, "RUNNING")
+        stage_started = perf_counter()
+        state, error_type = "FAILED", None
         try:
-            return operation()
+            value = operation()
+            state = "SUCCEEDED"
+            return value
+        except BaseException as error:
+            error_type = type(error).__name__
+            raise
         finally:
-            phases[name] = {"seconds": perf_counter() - started, **process_memory()}
+            phases[name] = {"seconds": perf_counter() - stage_started, **process_memory()}
+            progress(name, state, error_type)
 
     class Response:
         status = 200
@@ -205,12 +237,17 @@ def measure(directory: Path, maximum: int) -> dict[str, Any]:
         "deletionGeneration": 0,
         "createdAt": fixed_time,
     }
-    payload = build_analytics_payload(claim, request, sections, digests, terminal_at=fixed_time)
+    payload = stage(
+        "payload_assembly",
+        lambda: build_analytics_payload(claim, request, sections, digests, terminal_at=fixed_time),
+    )
     result: dict[str, Any] = {
         "input_hash": request["expectedInputHash"],
         "result_hash": digests["resultHash"],
         "input_bytes": {role: request[role]["byteSize"] for role in ROLES},
         "episode_count": len(episodes),
+        "record_count": len(records),
+        "source_evidence_count": len(ledger["sourceEvidenceReferences"]),
         "candidate_count": candidate_count,
         "metric_statuses": {item.definition_id: item.status.value for item in metrics},
         "section_counts": {name: len(rows) for name, rows in sections.items()},
@@ -233,6 +270,20 @@ def measure(directory: Path, maximum: int) -> dict[str, Any]:
     return result
 
 
+def measure_sample(directory: Path, maximum: int, sample_index: int) -> dict[str, Any]:
+    checkpoint = directory / f"sample-{sample_index}-progress.json"
+    if checkpoint.exists():
+        raise FileExistsError(
+            "Use a fresh sample index; progress evidence must not be overwritten."
+        )
+    try:
+        result = measure(directory, maximum, checkpoint=checkpoint)
+    except MemoryError:
+        result = {"status": "BENCHMARK_MEMORY_ERROR", "memory": process_memory()}
+    result["progress"] = read_progress(checkpoint)
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("prepare", "measure", "run"))
@@ -245,11 +296,14 @@ def main() -> None:
     parser.add_argument("--repetitions", type=int, default=3)
     parser.add_argument("--watchdog-seconds", type=float, default=60)
     parser.add_argument("--max-payload-bytes", type=int, default=64 * 1024 * 1024)
+    parser.add_argument("--sample-index", type=int, default=0)
     args = parser.parse_args()
     if not 1 <= args.repetitions <= 10 or not 0 < args.watchdog_seconds <= 600:
         parser.error("benchmark safety: repetitions 1..10, watchdog >0..600 seconds")
     if not 1 <= args.max_payload_bytes <= 512 * 1024 * 1024:
         parser.error("max payload must be 1..512MiB")
+    if not 0 <= args.sample_index < 10:
+        parser.error("sample index must be 0..9")
     directory = args.directory.resolve()
     if args.mode == "prepare":
         # Do not overwrite an existing run, accidentally mixing workload identities.
@@ -263,7 +317,7 @@ def main() -> None:
         for role, body in bodies.items():
             (directory / f"{role}.json").write_bytes(body)
     elif args.mode == "measure":
-        print(json.dumps(measure(directory, args.max_payload_bytes)))
+        print(json.dumps(measure_sample(directory, args.max_payload_bytes, args.sample_index)))
     else:
         command = [sys.executable, "-m", "tools.analytics_resource_baseline"]
         options = [
@@ -276,8 +330,9 @@ def main() -> None:
         ]
         run_child(command + ["prepare", str(directory), *options], args.watchdog_seconds)
         samples = []
-        for _ in range(args.repetitions):
+        for sample_index in range(args.repetitions):
             started = perf_counter()
+            checkpoint = directory / f"sample-{sample_index}-progress.json"
             try:
                 child = run_child(
                     command
@@ -286,17 +341,35 @@ def main() -> None:
                         str(directory),
                         "--max-payload-bytes",
                         str(args.max_payload_bytes),
+                        "--sample-index",
+                        str(sample_index),
                     ],
                     args.watchdog_seconds,
                 )
-            except subprocess.TimeoutExpired:
+            except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as error:
+                status = (
+                    "BENCHMARK_WATCHDOG"
+                    if isinstance(error, subprocess.TimeoutExpired)
+                    else "BENCHMARK_PROCESS_FAILURE"
+                )
+                if isinstance(error, subprocess.CalledProcessError):
+                    (directory / f"sample-{sample_index}-stderr.log").write_text(
+                        error.stderr or "", encoding="utf-8"
+                    )
                 samples.append(
-                    {"status": "BENCHMARK_WATCHDOG", "process_seconds": perf_counter() - started}
+                    {
+                        "status": status,
+                        "process_seconds": perf_counter() - started,
+                        "returncode": getattr(error, "returncode", None),
+                        "progress": read_progress(checkpoint),
+                    }
                 )
                 break  # no production timeout or failure-code semantics are implied
             sample = json.loads(child.stdout)
             sample["process_seconds"] = perf_counter() - started
             samples.append(sample)
+            if sample["status"] == "BENCHMARK_MEMORY_ERROR":
+                break  # Avoid repeatedly exhausting the same experiment's resource guard.
         source = hashlib.sha256()
         for path in sorted((ROOT / "src").rglob("*.py")):
             source.update(path.relative_to(ROOT).as_posix().encode() + b"\0" + path.read_bytes())
@@ -308,6 +381,8 @@ def main() -> None:
             "logical_cpus": os.cpu_count(),
             "pointer_bits": ctypes.sizeof(ctypes.c_void_p) * 8,
             "source_sha256": source.hexdigest(),
+            "tool_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+            "checkpoint_enabled": True,
             "synthetic_version_set": True,
             "workload": vars(args) | {"directory": str(directory)},
             "samples": samples,

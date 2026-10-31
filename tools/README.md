@@ -65,6 +65,18 @@ Engine, projection, section hash·완전한 payload 직렬화, body hash와 실�
 실제 HTTP 지연·trickle, DB lock, heartbeat, child IPC/spool, 다중 worker의 동시 peak는 측정하지 않는다.
 Watchdog 종료는 실패한 표본으로 남기며 완료·결정론 통과로 계산하지 않는다.
 
+큰 구조적 입력의 실험은 `sample-N-progress.json`에 단계 시작/종료·누적 RSS·오류 class를
+원자적으로 갱신한다. 요청·거래 값·key·오류 메시지는 기록하지 않는다. Watchdog·예상 밖 child
+종료 때는 마지막 관측과 stderr를 보존하며, 그 단계가 실패 원인이었다거나 OS OOM이었다고
+추정하지 않는다. Python MemoryError는 `BENCHMARK_MEMORY_ERROR`라는 도구 상태로 구분한다.
+이들 실패는 성공 body/hash가 없으며 결정론 통과로 집계하지 않는다. 실험 보호값을 반복 소진하지
+않도록 watchdog·process failure·MemoryError 이후 나머지 반복은 중단한다.
+
+CLI `measure`는 `--sample-index 0..9`별 progress를 사용한다. 같은 index의 기존 관측은
+덮어쓰지 않으므로 수동 재측정에는 새 index를 사용한다. `run`은 새 디렉터리와 반복별 index를
+만든다. 이 파일은 개발용 진단 자료이며 production IPC/spool이나 worker 감독 구현이 아니다.
+관측 I/O의 비용이 포함되므로 과거 도구의 성능 수치와 개선율을 계산하지 않는다.
+
 Raw 합성 입력·report는 로컬 검증 산출물로 보존하고 Git에 커밋하지 않는다. 저장소에는 도구,
 정합성/결정론/변조/출력 cap 테스트와 해석 가능한 요약 문서를 둔다. OS·컨테이너·Python·의존성·
 Engine·projection·상한·동시성이 바뀌면 해당 profile을 다시 측정한다. 운영 수치 확정에는 지원 Linux
