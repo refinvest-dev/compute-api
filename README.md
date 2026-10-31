@@ -7,6 +7,9 @@ Trading Review Analytics Job deployment and verification: [docs/TRADING_ANALYTIC
 
 아키텍처 개선의 작업 순서·PR 경계·검증 기준은
 [`docs/ARCHITECTURE_REFACTORING_PLAN.md`](docs/ARCHITECTURE_REFACTORING_PLAN.md)에 정리한다.
+현재 프로세스·의존 방향은 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md),
+AR-00~07·AR-11의 구조 개선 완료 범위와 남은 Analytics 운영 gate는
+[`docs/ARCHITECTURE_FINAL_AUDIT.md`](docs/ARCHITECTURE_FINAL_AUDIT.md)를 참고한다.
 AR-00 실행 결과와 남은 검증 항목은
 [`docs/ARCHITECTURE_BASELINE_AR00.md`](docs/ARCHITECTURE_BASELINE_AR00.md)를 참고한다.
 

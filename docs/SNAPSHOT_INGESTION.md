@@ -1,5 +1,10 @@
 # Snapshot Ingestion Runbook
 
+CLI 입력·coverage/override 검증·ID 생성과 발행 lifecycle은 `ingestion/snapshot/cli.py`,
+설정·clock/nonce·vendor/DB/storage 조립과 console 진입점은 `app/snapshot_ingestion.py`가 소유한다.
+기존 journal logger 이름과 이벤트, public Python 진입점·옵션·exit 동작은 유지한다.
+이동 범위와 검증 증적은 [AR-11F](INGESTION_CLI_BOUNDARY.md)에 기록한다.
+
 Run the external job once per day after 00:15 UTC. The MVP production scheduler is the
 paired `systemd` service and timer under `deploy/systemd/`; see ADR-038. Do not retry by
 overwriting an existing snapshot directory.
@@ -51,6 +56,9 @@ S3 instance-role configuration as the API and worker:
 ```text
 refinvest-verify-reference-data
 ```
+
+진단 조율은 `application/reference_data_diagnostics.py`, 설정·DB/storage 조립과 CLI는
+`app/reference_data_smoke.py`가 맡는다. 보존 범위는 [AR-11G](REFERENCE_DATA_DIAGNOSTICS_BOUNDARY.md)에 기록한다.
 
 It resolves the latest published DatasetSnapshot once (or a supplied
 `--dataset-snapshot-id`), manifest-verifies its artifact, confirms calendar availability for all

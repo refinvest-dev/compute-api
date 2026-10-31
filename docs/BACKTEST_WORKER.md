@@ -4,6 +4,12 @@ The durable worker runs separately from the Compute API process and consumes onl
 PostgreSQL jobs that have already pinned an immutable DatasetSnapshot. Its lifecycle,
 lease, retry, and terminal-failure behavior are defined by ADR-018.
 
+`app/worker.py` composes the application host, repository and process adapter. The parent
+owns leases and conditional terminal publication; the spawned child owns calculation.
+See [process adapter](BACKTEST_PROCESS_ADAPTER.md) and [current architecture](ARCHITECTURE.md).
+Analytics currently has a different execution boundary; this Backtest deadline does not define
+an Analytics deadline or memory limit.
+
 ## EC2 systemd deployment
 
 Install `deploy/systemd/refinvest-backtest-worker.service` on the existing always-on
@@ -89,6 +95,7 @@ systemctl enable --now refinvest-backtest-job-cleanup.timer
 systemctl list-timers refinvest-backtest-job-cleanup.timer
 ```
 
-Monitor the service journal for `deleted_backtest_jobs=<count>`. Core must persist any
+Monitor the service journal for the JSON event `backtest_cleanup_completed` and its
+`deleted_count`. Core must persist any
 terminal result before the 24-hour retention horizon; a later `404` is not permission to
 submit the same logical request again.
