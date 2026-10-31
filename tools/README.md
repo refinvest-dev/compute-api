@@ -69,3 +69,32 @@ Raw 합성 입력·report는 로컬 검증 산출물로 보존하고 Git에 커�
 정합성/결정론/변조/출력 cap 테스트와 해석 가능한 요약 문서를 둔다. OS·컨테이너·Python·의존성·
 Engine·projection·상한·동시성이 바뀌면 해당 profile을 다시 측정한다. 운영 수치 확정에는 지원 Linux
 배포 환경, 최대 허용 입력·출력, 느린 전송·DB 경합·실제 Core E2E 검증이 추가로 필요하다.
+
+## 실제 HTTP 입력 실측
+
+`analytics_http_baseline`은 별도 프로세스의 IPv4 loopback HTTP 서버로 고정 16 episode의 합성
+Ledger/Manifest를 전송한다. 실제 downloader·크기/hash 검사·strict JSON parser·입력 adapter를
+사용하며 HTTP opener를 대체하지 않는다. 서버·generator와 반복별 client 프로세스를 분리해
+client의 누적 peak RSS를 측정한다. 외부 Core·DB·TLS·Engine·projection·payload 발행은 제외한다.
+
+```sh
+PYTHONPATH="$PWD/src:$PWD" .venv/bin/python -m tools.analytics_http_baseline run \
+  /var/tmp/analytics-http-small --artifact-bytes 1048576 --repetitions 3
+```
+
+`--artifact-bytes`는 **각 artifact의 크기**다. 양쪽 JSON 뒤에 유효한 whitespace를 stream으로
+추가하고 byteSize·SHA-256·input identity를 다시 계산한다. JSON tree·record 수가 큰 입력을
+대체하지 않으며 서로 다른 크기의 inputHash를 같다고 주장하지 않는다. 같은 크기·전송 조건의
+반복에서 inputHash·논리 document hash를 비교한다. Golden fixture·production pin은 바꾸지 않는다.
+
+`--send-chunk-bytes`, `--chunk-delay-seconds`로 trickle을, `--grant-seconds`로 짧은 만료를
+시험할 수 있다. `--max-input-bytes`는 실험 client에 전달하는 기존 downloader 상한이다.
+0초 grant·상한 거부·hash 오류는 실패 표본으로 남는다. `INPUTS_VERIFIED`와 `BENCHMARK_*`는
+도구의 상태 이름이며 API나 production 오류 code를 추가하지 않는다. Watchdog·process failure·
+MemoryError는 성공이나 결정론 통과로 계산하지 않는다.
+
+512MiB 상한·60초 watchdog 등의 CLI 범위는 실험 보호값이다. 큰 입력은 주소 공간 제한을 둔
+격리 Linux 프로세스에서 순차 실행하고, RLIMIT_AS와 RSS/cgroup 한도를 구분한다. 운영 T/G/S/P·
+hard limit·동시성 승인이나 실제 Core Analytics E2E의 증거로 사용하지 않는다.
+
+실행 profile·검증 결과와 한계는 [HTTP 실측 기록](../docs/ANALYTICS_HTTP_RESOURCE_BASELINE.md)에 정리한다.
