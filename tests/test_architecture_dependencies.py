@@ -57,6 +57,7 @@ class LegacyImport:
 
 RULES = (
     DependencyRule("refinvest", ("tests", "integration", "refinvest.core", "refinvest.web")),
+    DependencyRule("refinvest.__init__", (), ("refinvest.app.main.main",)),
     DependencyRule(
         "refinvest.trading_review",
         (
@@ -344,6 +345,10 @@ def test_architecture_check_reports_absolute_relative_and_external_violations(
 @pytest.mark.parametrize(
     ("path", "source"),
     (
+        ("__init__.py", "from refinvest.app.main import app\n"),
+        ("__init__.py", "from refinvest.app.config import get_settings\n"),
+        ("__init__.py", "from fastapi import FastAPI\n"),
+        ("__init__.py", "import uvicorn\n"),
         ("engine/new.py", "import fastapi\n"),
         ("engine/new.py", "from urllib.request import urlopen\n"),
         ("engine/new.py", "from refinvest.marketdata import adapters\n"),
@@ -435,6 +440,9 @@ def test_forbidden_dependencies_are_rejected(tmp_path: Path, path: str, source: 
 def test_pure_interfaces_contracts_and_composition_providers_are_allowed(tmp_path: Path) -> None:
     source_root = tmp_path / "src"
     sources = {
+        "__init__.py": (
+            "def main():\n from refinvest.app.main import main as api_main\n api_main()\n"
+        ),
         "engine/validation/models.py": "from dataclasses import dataclass\n",
         "engine/execution/__init__.py": "from .entry import Entry\n",
         "engine/new.py": "from refinvest.marketdata.ports import SessionCalendarPort\n",

@@ -15,6 +15,12 @@ AR-00 실행 결과와 남은 검증 항목은
 
 개발·검증 환경의 Prometheus 계측은 [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md)를 참고한다.
 
+HTTP API는 `uv run refinvest` 또는 `uvicorn refinvest.app.main:app --host 0.0.0.0 --port 8000`으로
+실행한다. Python에서 FastAPI 객체가 필요하면 `from refinvest.app.main import app`을 사용한다.
+`refinvest:app`과 root의 FastAPI `app` 재수출은 제거했다. `refinvest.app`은 이제 하위 package
+namespace다. 계산·worker import가 HTTP app을 조립하지 않도록 한 변경과 호환 범위는
+[`docs/PACKAGE_ENTRYPOINT_BOUNDARY.md`](docs/PACKAGE_ENTRYPOINT_BOUNDARY.md)에 정리한다.
+
 ```powershell
 uv run refinvest-benchmark --fixture-manifest <path> --snapshot-path <path> `
   --scenario <path> --warmups 3 --iterations 10 --cache-mode warm --output <path>

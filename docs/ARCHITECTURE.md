@@ -103,6 +103,12 @@ Engine 계산 함수는 가능한 한 명시적인 입력을 받아 순수하게
 현재 import 경계의 자동 검사, 정확한 심볼별 이행 예외와 제거 단계는
 [`ARCHITECTURE_DEPENDENCIES.md`](ARCHITECTURE_DEPENDENCIES.md)에서 관리한다.
 
+Package root는 `main()` console 진입점만 노출하며 호출 시 HTTP composition을 import한다.
+계산·worker 모듈을 import할 때 HTTP app을 조립하지 않는다. ASGI 객체의 정식 경로는
+`refinvest.app.main:app`이며 root의 이전 FastAPI `app` 별칭은 제거했다.
+`refinvest.app`은 하위 package namespace로 유지한다. 호환 범위와 cold import·spawn 검증은
+[Package 진입점 경계](PACKAGE_ENTRYPOINT_BOUNDARY.md)를 따른다.
+
 Core 전용 HTTP 인증은 `api/security.py`가 소유한다. Route는 이 inbound dependency를
 사용하고 `app.config`에서 읽은 설정만 전달받는다. 인증 모듈은 DB·application·route·provider
 구현을 조립하지 않는다. `app/`에는 HTTP 인증의 이전 경로나 re-export를 남기지 않는다.

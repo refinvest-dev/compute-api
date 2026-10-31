@@ -77,8 +77,9 @@ runtime E2E의 기존 공백을 완료 처리하지 않는다.
 
 전역 HTTP 오류 handler는 후속 [AR-11B](HTTP_ERROR_BOUNDARY.md)에서 API 경계로 이동했다.
 HTTP 관측은 [AR-11C](HTTP_METRICS_BOUNDARY.md)에서 API 경계로 옮기고 app에는 조립을 남겼다.
-Ingestion·cleanup·benchmark CLI의 업무 조율과
-package root 진입점·re-export 검토는 별도 범위다. 책임 이동·필수 검증을 기능별로 나누고,
+Root의 즉시 HTTP import는 [AR-11D](PACKAGE_ENTRYPOINT_BOUNDARY.md)에서 제거했다.
+Ingestion·cleanup·benchmark CLI의 업무 조율과 나머지 re-export 검토는 별도 범위다.
+책임 이동·필수 검증을 기능별로 나누고,
 실제 프로세스·계약 ownership·운영 미검증 조합을 architecture/runbook에 반영한다.
 이번 PR로 AR-11 전체나 AR-08~10을 완료 표시하지 않는다.
 

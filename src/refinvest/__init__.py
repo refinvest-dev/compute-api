@@ -1,5 +1,10 @@
-"""refinvest Compute API package."""
+"""Compute package with an explicit, deferred HTTP console entrypoint."""
 
-from refinvest.app.main import app, main
+__all__ = ["main"]
 
-__all__ = ["app", "main"]
+
+def main() -> None:
+    """Launch the HTTP API; ASGI servers use refinvest.app.main:app directly."""
+    from refinvest.app.main import main as api_main
+
+    api_main()

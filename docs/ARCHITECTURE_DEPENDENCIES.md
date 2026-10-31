@@ -21,6 +21,7 @@ AR-05A는 Analytics HTTP adapter의 app/API/DB/worker 의존도 차단한다. �
 | Source | 허용되는 경계 | 차단하는 대표 의존성 |
 |---|---|---|
 | 모든 production package | 자신의 역할에 맞는 package | tests, integration, Core/Web source import |
+| package root __init__ | 표준 라이브러리, 호출 시 app.main.main 진입점 | FastAPI app 재수출, app.config·외부 framework 직접 import |
 | engine | 표준 라이브러리, engine, marketdata.domain/ports/errors | FastAPI·DB·SDK, app/application, ingestion, marketdata adapter |
 | trading_review | 표준 라이브러리, trading_review | 다른 refinvest 계층, 외부 SDK |
 | marketdata.domain/errors | 표준 라이브러리와 자신 | application, adapter, SDK |
@@ -61,6 +62,12 @@ AR-11C에서 HTTP 관측 middleware와 label 분류를 `api.http_metrics`로 옮
 Enabled 설정은 app이 콜백으로 전달한다. API 모듈은 설정·listener를 조립하지 않으며
 기존 관측 모듈의 `ApiMetrics`와 `safe_record`만 사용한다. App의 `monotonic`·`safe_record`
 직접 import도 차단한다. 이는 명시적 import 규칙이며 모든 간접 호출을 탐지하는 검사는 아니다.
+
+AR-11D에서 package root의 즉시 HTTP composition import를 제거했다. 정적 검사는
+`app.main.main` 심볼만 허용하고, 별도 Python 프로세스의 import blocker가 root·계산·worker와
+모든 console 진입점 로딩의 HTTP composition 재유입을 확인한다. 함수 내부 import와 module-level
+호출의 차이를 정적 allowlist만으로 보장한다고 해석하지 않는다. Benchmark의 기존 API DTO 의존은
+이번 범위 밖이며 모든 CLI가 FastAPI 자체에 독립적이라고 주장하지 않는다.
 
 Dependency provider는 객체 조립을 위해 concrete adapter를 import할 수 있다.
 같은 import를 새로운 HTTP handler에 추가하면 실패한다. 함수가 provider 역할이라는 이유로
