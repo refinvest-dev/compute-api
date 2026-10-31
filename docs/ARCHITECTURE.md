@@ -189,6 +189,12 @@ Backtest 중 동일 Snapshot의 데이터만 읽는다.
 
 `latest` lookup은 Backtest pipeline 시작 전에 snapshot resolution에서만 허용한다.
 
+배포 진단의 snapshot 선택·catalog coverage·최근 QQQ/BTCUSDT series 검사는
+`application/reference_data_diagnostics.py`가 소유한다. 저장소 port와 지연 loader callback을 받고
+한 번 선택한 snapshot만 검사한다. `app/reference_data_smoke.py`는 DB 설정 검증·구현체 조립과
+CLI 입출력을 맡는다. 기존 7일 진단 창과 fail-fast를 보존하며 계산의 Temporal Rule을 변경하지 않는다.
+상세 경계와 검증은 [Reference-data 진단 정리](REFERENCE_DATA_DIAGNOSTICS_BOUNDARY.md)를 따른다.
+
 ## 7. Ingestion
 
 수동 snapshot CLI의 인자 해석·coverage/override 검증·ID 생성·발행 lifecycle은

@@ -59,6 +59,25 @@ RULES = (
     DependencyRule("refinvest", ("tests", "integration", "refinvest.core", "refinvest.web")),
     DependencyRule("refinvest.__init__", (), ("refinvest.app.main.main",)),
     DependencyRule(
+        "refinvest.application.reference_data_diagnostics",
+        ("argparse", "json", "pathlib"),
+        (
+            "refinvest.application.assets",
+            "refinvest.application.dataset_snapshots",
+            "refinvest.application.series",
+            "refinvest.application.snapshot_execution_data",
+        ),
+    ),
+    DependencyRule(
+        "refinvest.app.reference_data_smoke",
+        (
+            "datetime",
+            "refinvest.application.assets",
+            "refinvest.application.series",
+            "refinvest.marketdata",
+        ),
+    ),
+    DependencyRule(
         "refinvest.ingestion.snapshot.cli",
         (
             "refinvest.app",
@@ -398,6 +417,22 @@ def test_architecture_check_reports_absolute_relative_and_external_violations(
         ("__init__.py", "from refinvest.app.config import get_settings\n"),
         ("__init__.py", "from fastapi import FastAPI\n"),
         ("__init__.py", "import uvicorn\n"),
+        (
+            "application/reference_data_diagnostics.py",
+            "from refinvest.app.config import Settings\n",
+        ),
+        (
+            "application/reference_data_diagnostics.py",
+            "from refinvest.persistence.postgres import dataset_snapshots\n",
+        ),
+        ("application/reference_data_diagnostics.py", "import argparse\n"),
+        ("application/reference_data_diagnostics.py", "from pathlib import Path\n"),
+        ("app/reference_data_smoke.py", "from refinvest.application.series import build_series\n"),
+        (
+            "app/reference_data_smoke.py",
+            "from refinvest.application.assets import ASSET_REFERENCES\n",
+        ),
+        ("app/reference_data_smoke.py", "from datetime import timedelta\n"),
         ("ingestion/snapshot/cli.py", "from refinvest.app.config import Settings\n"),
         (
             "ingestion/snapshot/cli.py",
@@ -518,6 +553,20 @@ def test_pure_interfaces_contracts_and_composition_providers_are_allowed(tmp_pat
             "def main():\n from refinvest.app.main import main as api_main\n api_main()\n"
         ),
         "engine/validation/models.py": "from dataclasses import dataclass\n",
+        "application/reference_data_diagnostics.py": (
+            "from collections.abc import Callable\nfrom datetime import date, timedelta\n"
+            "from refinvest.application.assets import availability_for_snapshot\n"
+            "from refinvest.application.dataset_snapshots import DatasetSnapshotRepository\n"
+            "from refinvest.application.series import build_series\n"
+            "from refinvest.application.snapshot_execution_data import "
+            "SnapshotExecutionDataLoader\n"
+        ),
+        "app/reference_data_smoke.py": (
+            "import argparse\nimport json\n"
+            "from refinvest.application import reference_data_diagnostics\n"
+            "from refinvest.persistence.postgres.dataset_snapshots import "
+            "PostgresDatasetSnapshotRepository\n"
+        ),
         "ingestion/snapshot/cli.py": (
             "import argparse\nfrom pathlib import Path\n"
             "from refinvest.ingestion.snapshot.mvp import "
