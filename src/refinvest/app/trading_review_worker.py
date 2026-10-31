@@ -34,20 +34,19 @@ def create_trading_review_worker(
     if settings.trading_review_max_payload_bytes <= 0:
         raise ValueError("REFINVEST_TRADING_REVIEW_MAX_PAYLOAD_BYTES must be positive.")
     payload_key = trading_review_payload_key(settings)
-    return TradingReviewWorkerHost(
-        PostgresTradingReviewJobRepository(
-            settings.database_url,
-            payload_key,
-            active_job_limit=settings.trading_review_active_job_limit,
-            grant_renewal_cutoff=timedelta(
-                seconds=settings.trading_review_grant_renewal_cutoff_seconds
-            ),
-            grant_refresh_wait=timedelta(
-                seconds=settings.trading_review_grant_refresh_wait_seconds
-            ),
-            max_attempts=settings.trading_review_max_attempts,
-            max_payload_bytes=settings.trading_review_max_payload_bytes,
+    repository = PostgresTradingReviewJobRepository(
+        settings.database_url,
+        payload_key,
+        active_job_limit=settings.trading_review_active_job_limit,
+        grant_renewal_cutoff=timedelta(
+            seconds=settings.trading_review_grant_renewal_cutoff_seconds
         ),
+        grant_refresh_wait=timedelta(seconds=settings.trading_review_grant_refresh_wait_seconds),
+        max_attempts=settings.trading_review_max_attempts,
+        max_payload_bytes=settings.trading_review_max_payload_bytes,
+    )
+    return TradingReviewWorkerHost(
+        repository,
         ProcessIsolatedNormalizationExecutor(
             NormalizationExecutionSettings(
                 settings.trading_review_timezone_database_version,
@@ -57,6 +56,7 @@ def create_trading_review_worker(
                 settings.trading_review_max_payload_bytes,
             ),
             timedelta(seconds=settings.trading_review_execution_timeout_seconds),
+            tracker=repository,
         ),
         worker_id=settings.worker_id or f"{gethostname()}-{getpid()}",
         lease_duration=timedelta(seconds=settings.worker_lease_seconds),
@@ -64,6 +64,7 @@ def create_trading_review_worker(
         retention=timedelta(hours=24),
         max_attempts=settings.trading_review_max_attempts,
         metrics=metrics,
+        execution_tracker=repository,
     )
 
 

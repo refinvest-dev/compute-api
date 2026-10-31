@@ -14,6 +14,9 @@ from refinvest.api.routes.backtests import router as backtests_router
 from refinvest.api.routes.health import router as health_router
 from refinvest.api.routes.series import router as series_router
 from refinvest.api.routes.trading_analytics_jobs import router as trading_analytics_jobs_router
+from refinvest.api.routes.trading_normalization_deletion import (
+    router as normalization_deletion_router,
+)
 from refinvest.api.routes.trading_review_jobs import router as trading_review_jobs_router
 from refinvest.app.config import get_settings
 from refinvest.observability.metrics import ApiMetrics, serve_metrics
@@ -42,6 +45,7 @@ def create_app() -> FastAPI:
     application.include_router(assets_router)
     application.include_router(series_router)
     application.include_router(trading_review_jobs_router)
+    application.include_router(normalization_deletion_router)
     application.include_router(trading_analytics_jobs_router)
     application.add_exception_handler(
         RequestValidationError, exception_handlers.request_validation_error_handler

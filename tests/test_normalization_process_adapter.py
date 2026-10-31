@@ -7,6 +7,7 @@ import pickle
 import time
 from dataclasses import replace
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
@@ -39,6 +40,61 @@ def _empty_child(settings, claim, sender):
 
 def _hanging_child(settings, claim, sender):
     time.sleep(60)
+
+
+def _gated_child(settings, claim, sender, gate):
+    root = Path(settings.trading_review_artifact_hosts[0])
+    (root / "ready").write_text("waiting")
+    try:
+        if gate.recv():
+            (root / "protected-bytes").write_text("fetched")
+            _completed_child(settings, claim, sender)
+    finally:
+        gate.close()
+        sender.close()
+
+
+@pytest.mark.parametrize("allowed", [False, True])
+def test_real_child_waits_for_persisted_binding_before_protected_io(monkeypatch, tmp_path, allowed):
+    adapter = importlib.import_module("refinvest.adapters.normalization.process_executor")
+    monkeypatch.setattr(adapter, "execute_normalization_child", _gated_child)
+
+    class Tracker:
+        def bind_process(self, claim, pid, identity):
+            deadline = time.monotonic() + 10
+            while not (tmp_path / "ready").exists():
+                assert time.monotonic() < deadline
+                time.sleep(0.01)
+            assert not (tmp_path / "protected-bytes").exists()
+            return allowed
+
+        def release_execution(self, claim):
+            raise AssertionError("worker owns release")
+
+    settings = replace(_settings(), trading_review_artifact_hosts=(str(tmp_path),))
+    outcome = ProcessIsolatedNormalizationExecutor(
+        settings, timedelta(seconds=20), Tracker()
+    ).execute(_claim(), lambda: False)
+    assert (tmp_path / "protected-bytes").exists() == allowed
+    if allowed:
+        assert isinstance(outcome, CompletedNormalization)
+    else:
+        assert isinstance(outcome, FailedNormalization) and outcome.failure.code == "JOB_CANCELLED"
+
+
+def test_parent_callback_failure_joins_child_in_finally(monkeypatch):
+    adapter = importlib.import_module("refinvest.adapters.normalization.process_executor")
+    monkeypatch.setattr(adapter, "execute_normalization_child", _hanging_child)
+    before = {child.pid for child in multiprocessing.active_children()}
+
+    def failed_callback():
+        raise OSError("temporary database failure")
+
+    with pytest.raises(OSError):
+        ProcessIsolatedNormalizationExecutor(_settings(), timedelta(seconds=20)).execute(
+            _claim(), failed_callback
+        )
+    assert not ({child.pid for child in multiprocessing.active_children()} - before)
 
 
 def test_real_child_imports_new_modules_and_returns_validation_failure_without_network():

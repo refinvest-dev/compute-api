@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from datetime import datetime, timedelta
+from socket import gethostname
 from typing import cast
 from uuid import uuid4
 
@@ -34,6 +36,8 @@ from refinvest.contracts.normalization.result_integrity import (
     parse_result_json_bytes,
     verify_public_result,
 )
+from refinvest.infrastructure.process_identity import process_identity
+from refinvest.persistence.postgres.normalization_deletion import normalization_run_lock
 from refinvest.persistence.postgres.normalization_grants import (
     close_artifact_leases,
     fresh_grants,
@@ -107,6 +111,13 @@ class PostgresTradingReviewJobRepository:
         ):
             raise ResultIntegrityError("RESULT_VERSION_PIN_MISMATCH")
         with connect(self._database_url) as connection, connection.cursor() as cursor:
+            normalization_run_lock(cursor, job.core_normalization_run_id)
+            cursor.execute(
+                "SELECT 1 FROM trading_normalization_deletions WHERE core_normalization_run_id=%s",
+                (job.core_normalization_run_id,),
+            )
+            if cursor.fetchone() is not None:
+                raise TradingReviewJobStateConflict("Normalization Run has been deleted")
             _lock_key(cursor, idempotency_key_hash)
             cursor.execute(
                 """
@@ -757,6 +768,14 @@ class PostgresTradingReviewJobRepository:
                 ),
             )
             cursor.execute(
+                """
+            INSERT INTO trading_normalization_executions
+            (job_id,lease_owner,host_name,parent_pid,parent_identity) VALUES
+            (%s,%s,%s,%s,%s)
+            """,
+                (values[0], lease_owner, gethostname(), os.getpid(), process_identity(os.getpid())),
+            )
+            cursor.execute(
                 """UPDATE trading_review_grant_revisions
                    SET status = 'CONSUMED', closed_at = CURRENT_TIMESTAMP
                    WHERE job_id = %s AND grant_revision = %s AND status = 'ACTIVE'""",
@@ -1311,6 +1330,46 @@ class PostgresTradingReviewJobRepository:
             )
         return True
 
+    def bind_process(self, claim: ClaimedTradingReviewJob, pid: int, identity: str) -> bool:
+        with connect(self._database_url) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+            SELECT cancellation_requested FROM trading_review_jobs
+            WHERE job_id=%s AND lease_owner=%s AND attempt_token=%s AND status='RUNNING'
+            AND deletion_generation=%s AND lease_expires_at>CURRENT_TIMESTAMP FOR UPDATE
+            """,
+                (claim.job_id, claim.lease_owner, claim.attempt_token, claim.deletion_generation),
+            )
+            row = cursor.fetchone()
+            if row is None or row[0]:
+                return False
+            cursor.execute(
+                """UPDATE trading_normalization_executions SET child_pid=%s,child_identity=%s
+                WHERE job_id=%s AND lease_owner=%s AND released_at IS NULL""",
+                (pid, identity, claim.job_id, claim.lease_owner),
+            )
+            return cursor.rowcount == 1
+
+    def release_execution(self, claim: ClaimedTradingReviewJob) -> None:
+        with connect(self._database_url) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+            SELECT child_pid,child_identity FROM trading_normalization_executions
+            WHERE job_id=%s AND lease_owner=%s AND released_at IS NULL FOR UPDATE
+            """,
+                (claim.job_id, claim.lease_owner),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return
+            if row[0] is not None and process_identity(row[0]) == row[1]:
+                return
+            cursor.execute(
+                """UPDATE trading_normalization_executions SET released_at=CURRENT_TIMESTAMP
+                WHERE job_id=%s AND lease_owner=%s""",
+                (claim.job_id, claim.lease_owner),
+            )
+
     def delete_cleanup_candidates(self, batch_size: int) -> int:
         """Delete acknowledged or expired terminal jobs; active/leased jobs never qualify."""
         if batch_size <= 0:
@@ -1324,6 +1383,8 @@ class PostgresTradingReviewJobRepository:
                     WHERE j.status IN ('COMPLETED', 'FAILED', 'CANCELLED')
                       AND j.lease_owner IS NULL
                       AND j.terminal_at <= CURRENT_TIMESTAMP - INTERVAL '24 hours'
+                      AND NOT EXISTS (SELECT 1 FROM trading_normalization_executions e
+                          WHERE e.job_id=j.job_id AND e.released_at IS NULL)
                     ORDER BY j.terminal_at, j.job_id
                     LIMIT %s
                     FOR UPDATE OF j SKIP LOCKED
@@ -1382,6 +1443,14 @@ class PostgresTradingReviewJobRepository:
                 claim.attempt_token,
                 claim.deletion_generation,
             ),
+        )
+        cursor.execute(  # type: ignore[attr-defined]
+            """
+            UPDATE trading_normalization_executions SET released_at=CURRENT_TIMESTAMP
+            WHERE job_id=%s AND lease_owner=%s AND child_pid IS NULL AND host_name IS
+            NOT NULL
+            """,
+            (claim.job_id, claim.lease_owner),
         )
         lease_status = "CONSUMED" if outcome == "COMPLETED" else "CANCELLED"
         close_artifact_leases(cursor, claim.job_id, claim.attempt_number, lease_status)

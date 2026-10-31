@@ -11,6 +11,7 @@ from time import monotonic
 from typing import cast
 
 from refinvest.adapters.normalization.artifacts import download_normalization_artifact
+from refinvest.application.normalization_deletion import NormalizationExecutionTracker
 from refinvest.application.normalization_execution import (
     FailedNormalization,
     NormalizationExecutionSettings,
@@ -22,12 +23,24 @@ from refinvest.application.trading_review_jobs import (
     ClaimedTradingReviewJob,
     SafeTradingReviewFailure,
 )
+from refinvest.infrastructure.process_identity import process_identity
 
 
 def execute_normalization_child(
-    settings: NormalizationExecutionSettings, claim: ClaimedTradingReviewJob, sender: Connection
+    settings: NormalizationExecutionSettings,
+    claim: ClaimedTradingReviewJob,
+    sender: Connection,
+    gate: Connection | None = None,
 ) -> None:
     try:
+        if gate is not None:
+            try:
+                if not gate.recv():
+                    return
+            except EOFError:
+                return
+            finally:
+                gate.close()
         sender.send(execute_normalization(settings, claim, download_normalization_artifact))
     except Exception as error:
         sender.send(normalization_failure(error))
@@ -38,11 +51,17 @@ def execute_normalization_child(
 class ProcessIsolatedNormalizationExecutor:
     """Keep lease ownership in the worker process and enforce a hard wall clock limit."""
 
-    def __init__(self, settings: NormalizationExecutionSettings, timeout: timedelta) -> None:
+    def __init__(
+        self,
+        settings: NormalizationExecutionSettings,
+        timeout: timedelta,
+        tracker: NormalizationExecutionTracker | None = None,
+    ) -> None:
         if timeout <= timedelta(0):
             raise ValueError("timeout must be positive.")
         self._settings = settings
         self._timeout = timeout
+        self._tracker = tracker
 
     def execute(
         self,
@@ -51,14 +70,37 @@ class ProcessIsolatedNormalizationExecutor:
     ) -> NormalizationOutcome:
         context = multiprocessing.get_context("spawn")
         receiver, sender = context.Pipe(duplex=False)
+        gate_reader, gate_writer = (
+            context.Pipe(duplex=False) if self._tracker is not None else (None, None)
+        )
         process = context.Process(
             target=execute_normalization_child,
-            args=(self._settings, claim, sender),
+            args=(self._settings, claim, sender, gate_reader)
+            if gate_reader is not None
+            else (self._settings, claim, sender),
         )
         process.start()
         sender.close()
         deadline = monotonic() + self._timeout.total_seconds()
         try:
+            if self._tracker is not None:
+                assert process.pid is not None and gate_writer is not None
+                identity = process_identity(process.pid)
+                allowed = identity is not None and self._tracker.bind_process(
+                    claim, process.pid, identity
+                )
+                gate_writer.send(allowed)
+                gate_writer.close()
+                if gate_reader is not None:
+                    gate_reader.close()
+                if not allowed:
+                    _terminate(process)
+                    return FailedNormalization(
+                        SafeTradingReviewFailure(
+                            "JOB_CANCELLED", "Normalization was cancelled.", False, "CANCELLATION"
+                        ),
+                        False,
+                    )
             while True:
                 if cancellation_check():
                     _terminate(process)
@@ -119,6 +161,12 @@ class ProcessIsolatedNormalizationExecutor:
                         True,
                     )
         finally:
+            if process.is_alive():
+                _terminate(process)
+            if gate_writer is not None:
+                gate_writer.close()
+            if gate_reader is not None:
+                gate_reader.close()
             receiver.close()
 
 
