@@ -13,12 +13,12 @@ from uuid import uuid4
 import pytest
 from psycopg import connect
 
+from refinvest.adapters.normalization.process_identity import process_identity
 from refinvest.application.normalization_deletion import DeleteNormalizationRuntime
 from refinvest.application.trading_review_jobs import (
     TradingReviewCapacityExceeded,
     TradingReviewJobStateConflict,
 )
-from refinvest.infrastructure.process_identity import process_identity
 from refinvest.persistence.postgres.normalization_deletion import (
     PostgresNormalizationRuntimeDeletion,
 )
@@ -111,7 +111,9 @@ def test_live_child_is_not_absent_even_when_queue_lease_has_expired():
     finally:
         child.terminate()
         child.wait(timeout=10)
-    # The parent crashed without release: actual local OS absence still permits reconciliation.
+    # Child exit alone does not erase a returned payload still owned by the living parent.
+    assert deletion.purge(command).verified_at is None
+    jobs.release_execution(claim)
     assert deletion.purge(command).verified_at is not None
     assert jobs.get(job.job_id) is None
 

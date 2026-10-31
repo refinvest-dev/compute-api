@@ -6,12 +6,12 @@ from socket import gethostname
 
 from psycopg import connect
 
+from refinvest.adapters.normalization.process_identity import process_identity, terminate_process
 from refinvest.application.normalization_deletion import (
     DeleteNormalizationRuntime,
     NormalizationRuntimeAbsence,
 )
 from refinvest.application.trading_review_jobs import TradingReviewJobStateConflict
-from refinvest.infrastructure.process_identity import process_identity, terminate_process
 
 
 def normalization_run_lock(cursor: object, run_id: str) -> None:
@@ -132,14 +132,17 @@ class PostgresNormalizationRuntimeDeletion:
                 if host == gethostname():
                     try:
                         if child_pid is not None and child_birth is not None:
-                            absent = process_identity(child_pid) != child_birth
-                            if (
-                                not absent
-                                and parent_pid is not None
+                            parent_absent = (
+                                parent_pid is not None
                                 and parent_birth is not None
                                 and process_identity(parent_pid) != parent_birth
-                            ):
-                                terminate_process(child_pid, child_birth)
+                            )
+                            if parent_absent:
+                                absent = process_identity(child_pid) != child_birth
+                                if not absent:
+                                    terminate_process(child_pid, child_birth)
+                            # A living parent may still hold the returned payload after child exit.
+                            # Its explicit memory release is required before closing the guard.
                         elif parent_pid is not None and parent_birth is not None:
                             # No child was permitted to fetch bytes before binding its identity.
                             absent = process_identity(parent_pid) != parent_birth

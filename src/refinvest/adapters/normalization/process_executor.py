@@ -11,10 +11,11 @@ from time import monotonic
 from typing import cast
 
 from refinvest.adapters.normalization.artifacts import download_normalization_artifact
-from refinvest.application.normalization_deletion import NormalizationExecutionTracker
+from refinvest.adapters.normalization.process_identity import process_identity
 from refinvest.application.normalization_execution import (
     FailedNormalization,
     NormalizationExecutionSettings,
+    NormalizationExecutionTracker,
     NormalizationOutcome,
     execute_normalization,
     normalization_failure,
@@ -23,7 +24,6 @@ from refinvest.application.trading_review_jobs import (
     ClaimedTradingReviewJob,
     SafeTradingReviewFailure,
 )
-from refinvest.infrastructure.process_identity import process_identity
 
 
 def execute_normalization_child(

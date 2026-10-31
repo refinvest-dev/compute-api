@@ -8,9 +8,9 @@ from threading import Event
 from time import monotonic
 from typing import Protocol
 
-from refinvest.application.normalization_deletion import NormalizationExecutionTracker
 from refinvest.application.normalization_execution import (
     CompletedNormalization,
+    NormalizationExecutionTracker,
     NormalizationExecutor,
 )
 from refinvest.application.trading_review_jobs import (

@@ -4,8 +4,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
-from refinvest.application.trading_review_jobs import ClaimedTradingReviewJob
-
 
 @dataclass(frozen=True, slots=True)
 class DeleteNormalizationRuntime:
@@ -33,8 +31,3 @@ class NormalizationRuntimeAbsence:
 
 class NormalizationRuntimeDeletion(Protocol):
     def purge(self, command: DeleteNormalizationRuntime) -> NormalizationRuntimeAbsence: ...
-
-
-class NormalizationExecutionTracker(Protocol):
-    def bind_process(self, claim: ClaimedTradingReviewJob, pid: int, identity: str) -> bool: ...
-    def release_execution(self, claim: ClaimedTradingReviewJob) -> None: ...

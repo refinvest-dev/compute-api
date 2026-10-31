@@ -3,7 +3,7 @@
 import subprocess
 import sys
 
-from refinvest.infrastructure.process_identity import process_identity, terminate_process
+from refinvest.adapters.normalization.process_identity import process_identity, terminate_process
 
 
 def test_actual_process_birth_and_death():

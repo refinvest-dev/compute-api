@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 import pytest
 from starlette.testclient import TestClient
 
-from refinvest.api.routes.trading_normalization_deletion import deletion_repository
+from refinvest.api.dependencies.trading_normalization_deletion import deletion_repository
 from refinvest.app.config import Settings, get_settings
 from refinvest.app.main import app
 from refinvest.application.normalization_deletion import (

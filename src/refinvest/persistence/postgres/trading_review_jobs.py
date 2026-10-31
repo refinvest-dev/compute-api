@@ -13,6 +13,7 @@ from psycopg import connect
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Jsonb
 
+from refinvest.adapters.normalization.process_identity import process_identity
 from refinvest.application.trading_review_jobs import (
     ClaimedTradingReviewJob,
     GrantUpdateReceipt,
@@ -36,7 +37,6 @@ from refinvest.contracts.normalization.result_integrity import (
     parse_result_json_bytes,
     verify_public_result,
 )
-from refinvest.infrastructure.process_identity import process_identity
 from refinvest.persistence.postgres.normalization_deletion import normalization_run_lock
 from refinvest.persistence.postgres.normalization_grants import (
     close_artifact_leases,

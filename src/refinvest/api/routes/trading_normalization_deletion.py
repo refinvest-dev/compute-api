@@ -1,47 +1,22 @@
 """Internal runtime cleanup transport; cancellation acknowledgement is not absence."""
 
-from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, Depends, Path
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
 
-from refinvest.api.routes.trading_review_jobs import TradingIdentityRoute, trading_http_error
+from refinvest.api.dependencies.trading_identity import TradingIdentityRoute, trading_http_error
+from refinvest.api.dependencies.trading_normalization_deletion import deletion_repository
+from refinvest.api.schemas.trading_normalization_deletion import (
+    RuntimeDeletionRequest,
+    RuntimeDeletionResponse,
+)
 from refinvest.api.security import require_internal_api_key
-from refinvest.app.config import Settings, get_settings
 from refinvest.application.normalization_deletion import (
     DeleteNormalizationRuntime,
     NormalizationRuntimeDeletion,
 )
 from refinvest.application.trading_review_jobs import TradingReviewJobStateConflict
-from refinvest.persistence.postgres.normalization_deletion import (
-    PostgresNormalizationRuntimeDeletion,
-)
-
-
-def deletion_repository(
-    settings: Annotated[Settings, Depends(get_settings)],
-) -> NormalizationRuntimeDeletion:
-    if settings.database_url is None:
-        raise HTTPException(status_code=503, detail="Deletion store is unavailable")
-    return PostgresNormalizationRuntimeDeletion(settings.database_url)
-
-
-class RuntimeDeletionRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-    coreImportSessionId: str = Field(min_length=1, max_length=128)
-    sourceDeletionGeneration: int = Field(ge=0)
-    deletionRequestId: str = Field(min_length=1, max_length=128)
-    deletionGeneration: int = Field(ge=1)
-
-
-class RuntimeDeletionResponse(RuntimeDeletionRequest):
-    coreNormalizationRunId: str
-    state: Literal["PENDING", "ABSENT"]
-    verifiedAbsentAt: datetime | None
-    retryAfterSeconds: int | None
-
 
 router = APIRouter(
     dependencies=[Depends(require_internal_api_key)], route_class=TradingIdentityRoute
