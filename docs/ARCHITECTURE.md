@@ -268,6 +268,11 @@ Core의 제품 도메인 BacktestRun과 Compute 내부 실행 상태를 같은 p
 
 초기 구현에서는 correctness-first.
 
+Benchmark CLI는 `app/benchmark.py`에서 인자·출력·종료 코드와 executor/version 조립을 맡는다.
+고정 fixture·scenario 로딩부터 warm 측정·correctness report 저장까지의 조율은
+`benchmarking/runner.py`가 소유한다. Measurement·report adapter와 API transport DTO의 기존
+경계는 유지한다. 상세 검증은 [Benchmark CLI 경계](BENCHMARK_CLI_BOUNDARY.md)에 기록한다.
+
 성능 최적화 우선순위:
 
 1. 알고리즘/데이터 접근 구조

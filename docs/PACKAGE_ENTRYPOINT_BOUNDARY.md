@@ -82,7 +82,8 @@ Windows 전체 검증은 기존 외부 IPv6 bootstrap을 사용하되 신규 col
 
 ## 5. 남은 범위
 
-Ingestion·cleanup·benchmark CLI의 업무 조율, 나머지 re-export의 필요성 검토와 최종
+Benchmark 조율은 후속 [AR-11E](BENCHMARK_CLI_BOUNDARY.md)에서 feature 경계로 옮겼다.
+Ingestion·cleanup CLI의 업무 조율, 나머지 re-export의 필요성 검토와 최종
 architecture/runbook 정리는 후속 개별 PR이다. AR-11 전체를 완료 표시하지 않는다.
 ADR-071은 계속 DRAFT이며 production Analytics 격리·실행 한도·Core Analytics runtime E2E의
 gate는 별도로 남아 있다. 이번 변경을 성능 수치 개선이나 새로운 실행 제한 정책으로 해석하지 않는다.

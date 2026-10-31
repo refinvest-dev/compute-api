@@ -10,7 +10,7 @@ import pytest
 
 @pytest.fixture
 def pipeline_module():
-    return import_module("refinvest.app.benchmark")
+    return import_module("refinvest.benchmarking.runner")
 
 
 @pytest.fixture

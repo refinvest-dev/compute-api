@@ -5,6 +5,11 @@ application/engine pipeline을 반복 실행한다. 목적은 결과 결정성�
 시간, raw sample, 요약 통계를 남기는 것이다. 성능 최적화, production latency SLO, 공식 baseline을
 정의하는 도구가 아니다. 실제 요청의 처리량과 상태를 보는 runtime observability와도 별개다.
 
+CLI의 인자·오류·stdout/exit 처리는 `app/benchmark.py`, 입력 로딩→warm 측정→report 저장의
+조율은 `benchmarking/runner.py`가 맡는다. App이 executor factory와 Engine version supplier를
+전달하므로 runner는 app 설정이나 concrete storage를 import하지 않는다.
+기존 동작 보존과 fixed-fixture 검증은 [AR-11E](BENCHMARK_CLI_BOUNDARY.md)에 기록한다.
+
 ## 입력 소유권과 준비
 
 fixture definition, expected manifest, 여섯 scenario는 sibling `integration/performance/`가 소유한다.

@@ -59,6 +59,31 @@ RULES = (
     DependencyRule("refinvest", ("tests", "integration", "refinvest.core", "refinvest.web")),
     DependencyRule("refinvest.__init__", (), ("refinvest.app.main.main",)),
     DependencyRule(
+        "refinvest.benchmarking.runner",
+        (
+            "refinvest.app",
+            "refinvest.api",
+            "refinvest.persistence",
+            "refinvest.ingestion",
+            "argparse",
+            "subprocess",
+            *NETWORK_PACKAGES,
+        ),
+        (
+            "refinvest.benchmarking",
+            "refinvest.application.backtest_executor.DailyBarBacktestExecutor",
+        ),
+    ),
+    DependencyRule(
+        "refinvest.app.benchmark",
+        (
+            "refinvest.benchmarking.inputs.load_fixture",
+            "refinvest.benchmarking.inputs.load_scenario",
+            "refinvest.benchmarking.measurement.run_warm_benchmark",
+            "refinvest.benchmarking.report",
+        ),
+    ),
+    DependencyRule(
         "refinvest.trading_review",
         (
             "refinvest.api",
@@ -349,6 +374,16 @@ def test_architecture_check_reports_absolute_relative_and_external_violations(
         ("__init__.py", "from refinvest.app.config import get_settings\n"),
         ("__init__.py", "from fastapi import FastAPI\n"),
         ("__init__.py", "import uvicorn\n"),
+        ("benchmarking/runner.py", "from refinvest.app.config import get_settings\n"),
+        (
+            "benchmarking/runner.py",
+            "from refinvest.persistence.object_storage import snapshot_artifacts\n",
+        ),
+        ("benchmarking/runner.py", "from refinvest.api.routes import backtests\n"),
+        ("benchmarking/runner.py", "import argparse\n"),
+        ("benchmarking/runner.py", "import subprocess\n"),
+        ("app/benchmark.py", "from refinvest.benchmarking.inputs import load_fixture\n"),
+        ("app/benchmark.py", "from refinvest.benchmarking.report import write_report_atomic\n"),
         ("engine/new.py", "import fastapi\n"),
         ("engine/new.py", "from urllib.request import urlopen\n"),
         ("engine/new.py", "from refinvest.marketdata import adapters\n"),
@@ -444,6 +479,13 @@ def test_pure_interfaces_contracts_and_composition_providers_are_allowed(tmp_pat
             "def main():\n from refinvest.app.main import main as api_main\n api_main()\n"
         ),
         "engine/validation/models.py": "from dataclasses import dataclass\n",
+        "benchmarking/runner.py": (
+            "from refinvest.benchmarking.inputs import load_fixture, load_scenario\n"
+            "from refinvest.benchmarking.measurement import run_warm_benchmark\n"
+            "from refinvest.benchmarking.report import build_report, write_report_atomic\n"
+            "from refinvest.application.backtest_executor import DailyBarBacktestExecutor\n"
+        ),
+        "app/benchmark.py": "from refinvest.benchmarking.runner import run_warm_benchmark_report\n",
         "engine/execution/__init__.py": "from .entry import Entry\n",
         "engine/new.py": "from refinvest.marketdata.ports import SessionCalendarPort\n",
         "trading_review/new.py": "from .model import MoneyAmount\n",
