@@ -393,6 +393,10 @@ downloader·strict parser로 검증하고 느린 전송·grant 만료·실험 wa
 사본의 RSS 관측이며, 큰 구조적 JSON·최대 결과·production OS/동시성·DB/Core gate는 남아 있다.
 AR-08 정책·수치 승인과 AR-09/10 체크박스는 변경하지 않는다.
 
+[구조적 입력·결과 후속 실측](ANALYTICS_STRUCTURED_RESOURCE_BASELINE.md)은 Evidence·후보 수를
+늘린 전체 pipeline과 cap/watchdog를 검증하고 마지막 관측을 보존한다. 운영 수치·최대 계약 입력/
+결과·DB 발행·동시성·Core E2E gate는 계속 남아 있으며 AR-08~10 완료로 표시하지 않는다.
+
 ### AR-09 / AR-10 — Analytics 격리 준비와 production 연결
 
 - [ ] AR-09: executor·입력/outcome을 구현하고 정상·프로세스 crash·IPC 오류·큰 결과를 검증한다.

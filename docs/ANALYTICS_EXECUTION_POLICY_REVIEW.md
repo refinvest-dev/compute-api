@@ -70,6 +70,10 @@ network/DB/동시성 검증은 남아 있으며 이 자료로 운영 수치나 �
 기본 artifact별 512MiB·trickle·grant 만료·크기 거부·watchdog를 검사한다. Whitespace로 바이트
 크기를 분리한 자료이며 큰 JSON tree·전체 Engine/output·TLS/Core/DB·운영 수치 승인을 대신하지 않는다.
 
+[구조적 JSON·결과 실측](ANALYTICS_STRUCTURED_RESOURCE_BASELINE.md)은 기존 생성기로 최대
+1,024 episode·65,536 Evidence 참조를 만들고 전체 직렬화·암호화까지 검사했다. 마지막 단계
+관측과 cap/watchdog 실패를 보존하지만 최대 계약 입력/output·DB/Core·운영 격리 검증은 남아 있다.
+
 ## 5. 후속 커밋·PR 순서
 
 | 순서 | 소유·범위 | 해당 PR의 검증 | 다음 단계에 남기는 연결 |
