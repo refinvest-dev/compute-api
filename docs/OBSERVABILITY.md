@@ -9,7 +9,7 @@ labels or exposition.
 
 | Metric | Type / unit | Owner | Recording point; bounded labels |
 |---|---|---|---|
-| `refinvest_compute_http_requests_total` | Counter / requests | API | Response or error; `operation=submit,status,assets,series,other`; `status_class=2xx,3xx,4xx,5xx` |
+| `refinvest_compute_http_requests_total` | Counter / requests | API | Response or error; `operation=submit,status,assets,series,trading_review,other`; `status_class=2xx,3xx,4xx,5xx` |
 | `refinvest_compute_http_request_duration_seconds` | Histogram / seconds | API | Request start through response creation/error; same `operation` |
 | `refinvest_compute_backtest_jobs_accepted_total` | Counter / jobs | API | New durable acceptance; no labels |
 | `refinvest_compute_backtest_idempotency_replays_total` | Counter / replays | API | Existing acceptance returned; no labels |
@@ -22,8 +22,15 @@ labels or exposition.
 | `refinvest_compute_worker_timeouts_total` | Counter / outcomes | Worker | Process executor returned `EXECUTION_TIMEOUT`, even if terminal persistence later fails; no labels |
 | `refinvest_compute_worker_failures_total` | Counter / transitions | Worker | Successful DB failed transition; `error_code=MISSING_REQUIRED_DATA,DATASET_CORRUPTION,CALENDAR_RESOLUTION_FAILED,PRICE_DATA_MISSING,EXECUTION_TIMEOUT,DSL_INVALID,UNSPECIFIED` |
 
-Health and the separate metrics endpoint are excluded from HTTP counts. Unknown API paths map to
-`other`; raw URL paths never become labels. API acceptance counts Compute jobs, not Core user
+HTTP observation and label classification live in `api/http_metrics.py`. App composition owns the
+registry, listener lifespan and registration, and supplies a callback for the enabled setting at
+request completion. The collector, buckets and loopback listener remain in `observability/metrics.py`.
+See [AR-11C](HTTP_METRICS_BOUNDARY.md) for the behavior-preserving move and verification.
+
+Health and the separate metrics endpoint are excluded from HTTP counts. Paths that match none of
+the existing operation rules map to `other`; the existing `/assets` and `/series` prefix rules also
+cover paths such as `/assets-shadow` and `/series-shadow`. These are metrics groups, not routing or
+authorization decisions. Raw URL paths never become labels. API acceptance counts Compute jobs, not Core user
 submissions; replay and rejection never increment acceptance. Failed DB updates and lease loss do
 not increment terminal or retry counters. Worker duration includes spawn, child execution, IPC,
 timeout/kill handling, and heartbeat shutdown, but excludes terminal/retry DB persistence; it is

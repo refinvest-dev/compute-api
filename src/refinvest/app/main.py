@@ -1,16 +1,14 @@
 """FastAPI application entrypoint."""
 
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from time import monotonic
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.responses import Response
 
-from refinvest.api import exception_handlers
+from refinvest.api import exception_handlers, http_metrics
 from refinvest.api.routes.assets import router as assets_router
 from refinvest.api.routes.backtests import router as backtests_router
 from refinvest.api.routes.health import router as health_router
@@ -18,7 +16,7 @@ from refinvest.api.routes.series import router as series_router
 from refinvest.api.routes.trading_analytics_jobs import router as trading_analytics_jobs_router
 from refinvest.api.routes.trading_review_jobs import router as trading_review_jobs_router
 from refinvest.app.config import get_settings
-from refinvest.observability.metrics import ApiMetrics, safe_record, serve_metrics
+from refinvest.observability.metrics import ApiMetrics, serve_metrics
 
 
 def create_app() -> FastAPI:
@@ -33,23 +31,9 @@ def create_app() -> FastAPI:
     application = FastAPI(title="refinvest Compute API", version="0.1.0", lifespan=lifespan)
     application.state.metrics = metrics
 
-    async def observe_request(
-        request: Request, call_next: Callable[[Request], Awaitable[Response]]
-    ) -> Response:
-        started = monotonic()
-        status_code = 500
-        try:
-            response = await call_next(request)  # type: ignore[operator]
-            status_code = response.status_code
-            return response
-        finally:
-            path = request.scope.get("path", "")
-            method = request.method
-            operation = _operation(method, str(path))
-            if operation is not None and get_settings().api_metrics.enabled:
-                safe_record(_record_http, metrics, operation, status_code, monotonic() - started)
-
-    application.middleware("http")(observe_request)
+    http_metrics.install_http_metrics(
+        application, metrics, lambda: get_settings().api_metrics.enabled
+    )
 
     # Deployment probes are deliberately unauthenticated. Future Core-facing
     # contract routes must apply api.security.require_internal_api_key.
@@ -66,28 +50,6 @@ def create_app() -> FastAPI:
         StarletteHTTPException, exception_handlers.internal_http_error_handler
     )
     return application
-
-
-def _operation(method: str, path: str) -> str | None:
-    if path == "/health":
-        return None
-    if method == "POST" and path == "/backtests":
-        return "submit"
-    if method == "GET" and path.startswith("/backtests/") and path.count("/") == 2:
-        return "status"
-    if method == "GET" and path.startswith("/assets"):
-        return "assets"
-    if method == "GET" and path.startswith("/series"):
-        return "series"
-    if path.startswith("/trading-review/"):
-        return "trading_review"
-    return "other"
-
-
-def _record_http(metrics: ApiMetrics, operation: str, status: int, seconds: float) -> None:
-    status_class = f"{status // 100}xx" if 200 <= status < 600 else "5xx"
-    metrics.requests.labels(operation, status_class).inc()
-    metrics.duration.labels(operation).observe(seconds)
 
 
 app = create_app()

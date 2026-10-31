@@ -32,6 +32,7 @@ refinvest-compute/
 │   ├── schemas/
 │   ├── dependencies/
 │   ├── exception_handlers.py
+│   ├── http_metrics.py
 │   └── security.py
 │
 ├── engine/
@@ -110,6 +111,11 @@ Core 전용 HTTP 인증은 `api/security.py`가 소유한다. Route는 이 inbou
 전역 request validation·HTTP 예외의 응답 투영은 `api/exception_handlers.py`가 소유한다.
 `app/main.py`는 framework 예외와 handler를 등록한다. 기존 contract schema mapper는
 `api/schemas/errors.py`, route 고유의 오류 투영은 해당 route에 유지하며 새 catch-all 정책은 추가하지 않는다.
+
+HTTP 관측 middleware와 bounded operation/status label 분류는 `api/http_metrics.py`가 소유한다.
+App은 process-local registry를 만들고 listener lifespan과 middleware 등록을 조립한다.
+요청 완료 시점의 enabled 설정은 app이 전달하는 콜백으로 읽으며 API 모듈은 app/config를 import하지 않는다.
+Prometheus collector와 loopback listener 구현은 기존 `observability/metrics.py`에 유지한다.
 
 ## 4. Engine Pipeline
 

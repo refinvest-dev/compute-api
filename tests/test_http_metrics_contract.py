@@ -17,7 +17,7 @@ from refinvest.observability.metrics import MetricsConfig
 
 @pytest.fixture
 def observer_module():
-    return import_module("refinvest.app.main")
+    return import_module("refinvest.api.http_metrics")
 
 
 @pytest.fixture

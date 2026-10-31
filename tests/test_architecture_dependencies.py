@@ -220,8 +220,30 @@ RULES = (
         ("fastapi", "starlette", "refinvest.api.schemas.errors"),
     ),
     DependencyRule(
+        "refinvest.api.http_metrics",
+        (
+            "refinvest.app",
+            "refinvest.application",
+            "refinvest.persistence",
+            "refinvest.api.routes",
+            "refinvest.api.dependencies",
+            *NETWORK_PACKAGES,
+        ),
+        (
+            "fastapi",
+            "starlette",
+            "refinvest.observability.metrics.ApiMetrics",
+            "refinvest.observability.metrics.safe_record",
+        ),
+    ),
+    DependencyRule(
         "refinvest.app.main",
-        ("refinvest.api.schemas", "fastapi.responses.JSONResponse"),
+        (
+            "refinvest.api.schemas",
+            "fastapi.responses.JSONResponse",
+            "time.monotonic",
+            "refinvest.observability.metrics.safe_record",
+        ),
     ),
     DependencyRule(
         "refinvest.api.security",
@@ -347,6 +369,12 @@ def test_architecture_check_reports_absolute_relative_and_external_violations(
         ("api/exception_handlers.py", "from refinvest.persistence.postgres import jobs\n"),
         ("api/exception_handlers.py", "from refinvest.api.routes import backtests\n"),
         ("api/exception_handlers.py", "from refinvest.app.main import create_app\n"),
+        ("api/http_metrics.py", "from refinvest.app.config import get_settings\n"),
+        ("api/http_metrics.py", "from refinvest.persistence.postgres import jobs\n"),
+        ("api/http_metrics.py", "from refinvest.api.dependencies import backtests\n"),
+        ("api/http_metrics.py", "from refinvest.observability.metrics import serve_metrics\n"),
+        ("app/main.py", "from time import monotonic\n"),
+        ("app/main.py", "from refinvest.observability.metrics import safe_record\n"),
         (
             "app/main.py",
             "from refinvest.api.schemas.errors import map_transport_validation_error\n",
@@ -443,7 +471,12 @@ def test_pure_interfaces_contracts_and_composition_providers_are_allowed(tmp_pat
             "from starlette.responses import JSONResponse\n"
             "from refinvest.api.schemas.errors import map_transport_validation_error\n"
         ),
-        "app/main.py": "from refinvest.api import exception_handlers\n",
+        "api/http_metrics.py": (
+            "from fastapi import FastAPI, Request\n"
+            "from starlette.responses import Response\n"
+            "from refinvest.observability.metrics import ApiMetrics, safe_record\n"
+        ),
+        "app/main.py": "from refinvest.api import exception_handlers, http_metrics\n",
         "api/schemas/new.py": "from refinvest.contracts.normalization import Identity\n",
         "persistence/postgres/new.py": "from psycopg import connect\n",
         "adapters/backtest/new.py": (
