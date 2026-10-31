@@ -66,6 +66,10 @@ AES-GCM·DB lock 경합·동시 실행을 포함한다. Bytes cap을 지키는 �
 메모리와 결과 증폭, Evidence 확장·출력 cap 실패를 기록한다. Linux/최대 입력·출력·실제
 network/DB/동시성 검증은 남아 있으며 이 자료로 운영 수치나 정책을 승인하지 않는다.
 
+[실제 HTTP 입력 실측](ANALYTICS_HTTP_RESOURCE_BASELINE.md)은 local loopback과 fresh client에서
+기본 artifact별 512MiB·trickle·grant 만료·크기 거부·watchdog를 검사한다. Whitespace로 바이트
+크기를 분리한 자료이며 큰 JSON tree·전체 Engine/output·TLS/Core/DB·운영 수치 승인을 대신하지 않는다.
+
 ## 5. 후속 커밋·PR 순서
 
 | 순서 | 소유·범위 | 해당 PR의 검증 | 다음 단계에 남기는 연결 |

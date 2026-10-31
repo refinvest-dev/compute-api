@@ -96,3 +96,5 @@ MemoryError는 성공이나 결정론 통과로 계산하지 않는다.
 512MiB 상한·60초 watchdog 등의 CLI 범위는 실험 보호값이다. 큰 입력은 주소 공간 제한을 둔
 격리 Linux 프로세스에서 순차 실행하고, RLIMIT_AS와 RSS/cgroup 한도를 구분한다. 운영 T/G/S/P·
 hard limit·동시성 승인이나 실제 Core Analytics E2E의 증거로 사용하지 않는다.
+
+실행 profile·검증 결과와 한계는 [HTTP 실측 기록](../docs/ANALYTICS_HTTP_RESOURCE_BASELINE.md)에 정리한다.

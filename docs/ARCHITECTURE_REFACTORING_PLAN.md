@@ -388,6 +388,11 @@ AR-08의 나머지 체크박스는 승인·수치 검증 후 갱신한다.
 8개 profile을 검증했다. Production systemd/메모리 격리·최대 허용 입력·동시 worker·실제 Core
 E2E gate는 남아 있으며 AR-08~10 완료나 운영 수치 승인으로 해석하지 않는다.
 
+[실제 HTTP 후속 실측](ANALYTICS_HTTP_RESOURCE_BASELINE.md)은 기본 artifact별 512MiB를 실제
+downloader·strict parser로 검증하고 느린 전송·grant 만료·실험 watchdog를 구분한다. 입력 byte
+사본의 RSS 관측이며, 큰 구조적 JSON·최대 결과·production OS/동시성·DB/Core gate는 남아 있다.
+AR-08 정책·수치 승인과 AR-09/10 체크박스는 변경하지 않는다.
+
 ### AR-09 / AR-10 — Analytics 격리 준비와 production 연결
 
 - [ ] AR-09: executor·입력/outcome을 구현하고 정상·프로세스 crash·IPC 오류·큰 결과를 검증한다.
