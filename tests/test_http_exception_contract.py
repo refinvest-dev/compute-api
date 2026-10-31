@@ -20,7 +20,7 @@ TRACE_ID = "00000000-0000-4000-8000-000000000002"
 
 @pytest.fixture
 def handler_module(monkeypatch: pytest.MonkeyPatch):
-    module = import_module("refinvest.app.main")
+    module = import_module("refinvest.api.exception_handlers")
     monkeypatch.setattr(module, "uuid4", lambda: UUID(TRACE_ID))
     return module
 

@@ -406,13 +406,15 @@ Analytics 결과 구성의 scalar 반복 변환·전체 필터링은
 - [ ] 사용하지 않는 re-export·이전 경로·테스트의 import monkeypatch 경로를 정리한다.
 - [ ] `app/`의 조립 외 책임, application의 concrete adapter 의존, persistence의 app 역참조를 검사한다.
 - [x] AR-11A: HTTP 인증을 inbound `api/security.py`로 옮기고 이전 app 경로·route 예외를 제거한다.
+- [x] AR-11B: 전역 HTTP 오류 handler를 `api/exception_handlers.py`로 옮기고 app에는 등록만 둔다.
 - [ ] Ingestion·cleanup·benchmark CLI의 업무 조율은 해당 기능에 둔다.
 - [ ] 남은 실질적 구현 이동은 기능별 PR로 분리하며 최종 정리 PR에 몰지 않는다.
 - [ ] 실제 프로세스·의존 방향·계약 ownership을 `docs/ARCHITECTURE.md`와 runbook에 반영한다.
 - [ ] 남은 정책 공백·미검증 시나리오·지원하지 않는 조합을 기록한다.
 
 [HTTP 인증 경계 정리](HTTP_AUTH_BOUNDARY.md)는 17개 계약 operation의 인증 응답과
-runtime OpenAPI·설정/오류 처리·공개 probe를 보존한다. App의 오류 handler·CLI 업무 조율과
+runtime OpenAPI·설정/오류 처리·공개 probe를 보존한다. [HTTP 오류 handler 정리](HTTP_ERROR_BOUNDARY.md)도
+기존 응답을 유지하며 완료했다. App의 HTTP 관측 middleware·CLI 업무 조율과
 최종 architecture/runbook 전체 정리는 후속 개별 범위이며 AR-11 전체를 완료로 표시하지 않는다.
 
 다음 항목은 별도 후속 후보이며 기본 구조 개선의 완료를 가로막지 않는다.
