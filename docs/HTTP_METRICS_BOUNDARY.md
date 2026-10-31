@@ -74,13 +74,13 @@ Native Linux는 bootstrap 없이 실행한다. Skip은 통과로 계산하지 �
 
 ## 5. 후속 범위
 
-Ingestion·cleanup·benchmark CLI 업무 조율, package root 진입점/re-export 검토와 최종
+Ingestion·cleanup·benchmark CLI 업무 조율과 최종
 architecture/runbook 정리는 별도 PR로 진행한다. AR-11 전체를 완료 처리하지 않는다.
 ADR-071 DRAFT의 실행 제한 수치, production process 격리와 Core Analytics runtime E2E gate는
 이번 HTTP 계측 경계 정리로 해소되지 않는다.
 
-현재 package root `__init__.py`는 `app/main.py`를 즉시 import한다. 개별 계산·worker 모듈의
-import도 HTTP 조립을 동반하는 기존 부수 효과는 남아 있다. 공개 package 진입점 호환성과
-spawn 경로를 함께 검토할 별도 범위이며, 위의 최초 프로세스 테스트 실패 원인으로 단정하지 않는다.
+AR-11C 시점에 남아 있던 package root의 즉시 HTTP import는 후속
+[AR-11D](PACKAGE_ENTRYPOINT_BOUNDARY.md)에서 제거하고 spawn 경로와 진입점을 검증했다.
+위의 최초 프로세스 테스트 실패 원인으로 단정하지 않으며, 실행 제한 정책을 변경한 것도 아니다.
 
 Determinism impact: none. Point-in-Time impact: none. Temporal/Execution impact: none.

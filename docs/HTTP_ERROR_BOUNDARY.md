@@ -60,7 +60,8 @@ Linux의 native 검증은 구분하며, 환경 미구성·기존 PoC skip을 통
 ## 4. 남은 작업
 
 HTTP 관측 middleware는 후속 [AR-11C](HTTP_METRICS_BOUNDARY.md)에서 API 경계로 이동했다.
-AR-11의 CLI 업무 조율·package root 진입점/re-export와 최종 architecture/runbook 정리는
+Package root의 즉시 HTTP import는 [AR-11D](PACKAGE_ENTRYPOINT_BOUNDARY.md)에서 제거했다.
+AR-11의 CLI 업무 조율과 최종 architecture/runbook 정리는
 후속 개별 범위다. AR-11B의 완료 범위는 전역 HTTP 오류 응답이다.
 ADR-071은 계속 DRAFT이며 Analytics 실행 제한 수치·production Linux/systemd 격리·Core Analytics
 dispatch/publication/ACK E2E의 기존 gate를 완료한 것으로 해석하지 않는다.
