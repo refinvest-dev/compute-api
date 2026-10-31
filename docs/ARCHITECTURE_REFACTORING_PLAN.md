@@ -409,6 +409,7 @@ Analytics 결과 구성의 scalar 반복 변환·전체 필터링은
 - [x] AR-11B: 전역 HTTP 오류 handler를 `api/exception_handlers.py`로 옮기고 app에는 등록만 둔다.
 - [x] AR-11C: HTTP 관측 middleware·label 분류를 `api/http_metrics.py`로 옮기고 app은 registry/listener·등록을 조립한다.
 - [x] AR-11D: package root의 HTTP 즉시 조립·FastAPI app 재수출을 제거하고 console main·정식 ASGI 경로를 검증한다.
+- [x] AR-11E: benchmark 실행·report 조율을 `benchmarking/runner.py`로 옮기고 app에는 CLI·조립을 둔다.
 - [ ] Ingestion·cleanup·benchmark CLI의 업무 조율은 해당 기능에 둔다.
 - [ ] 남은 실질적 구현 이동은 기능별 PR로 분리하며 최종 정리 PR에 몰지 않는다.
 - [ ] 실제 프로세스·의존 방향·계약 ownership을 `docs/ARCHITECTURE.md`와 runbook에 반영한다.
@@ -418,7 +419,9 @@ Analytics 결과 구성의 scalar 반복 변환·전체 필터링은
 runtime OpenAPI·설정/오류 처리·공개 probe를 보존한다. [HTTP 오류 handler 정리](HTTP_ERROR_BOUNDARY.md)도
 기존 응답을 유지하며 완료했다. [HTTP 계측 경계 정리](HTTP_METRICS_BOUNDARY.md)는 기존 label·측정 경계와
 요청 완료 시점의 enabled 설정 조회를 유지한다. [Package 진입점 정리](PACKAGE_ENTRYPOINT_BOUNDARY.md)는
-정식 CLI·ASGI 경로를 유지하고 root의 FastAPI app 별칭을 제거한다. CLI 업무 조율과
+정식 CLI·ASGI 경로를 유지하고 root의 FastAPI app 별칭을 제거한다.
+[Benchmark CLI 정리](BENCHMARK_CLI_BOUNDARY.md)는 기존 exit·출력·correctness gate와 측정 경계를 유지한다.
+Ingestion·cleanup 등 나머지 CLI 업무 조율과
 최종 architecture/runbook 전체 정리는 후속 개별 범위이며 AR-11 전체를 완료로 표시하지 않는다.
 
 다음 항목은 별도 후속 후보이며 기본 구조 개선의 완료를 가로막지 않는다.

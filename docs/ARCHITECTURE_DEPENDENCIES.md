@@ -22,6 +22,7 @@ AR-05A는 Analytics HTTP adapter의 app/API/DB/worker 의존도 차단한다. �
 |---|---|---|
 | 모든 production package | 자신의 역할에 맞는 package | tests, integration, Core/Web source import |
 | package root __init__ | 표준 라이브러리, 호출 시 app.main.main 진입점 | FastAPI app 재수출, app.config·외부 framework 직접 import |
+| benchmarking.runner | 표준 라이브러리, benchmarking, DailyBarBacktestExecutor 타입 | app·API·persistence·ingestion 직접 의존, argparse·직접 네트워크·subprocess |
 | engine | 표준 라이브러리, engine, marketdata.domain/ports/errors | FastAPI·DB·SDK, app/application, ingestion, marketdata adapter |
 | trading_review | 표준 라이브러리, trading_review | 다른 refinvest 계층, 외부 SDK |
 | marketdata.domain/errors | 표준 라이브러리와 자신 | application, adapter, SDK |
@@ -68,6 +69,11 @@ AR-11D에서 package root의 즉시 HTTP composition import를 제거했다. 정
 모든 console 진입점 로딩의 HTTP composition 재유입을 확인한다. 함수 내부 import와 module-level
 호출의 차이를 정적 allowlist만으로 보장한다고 해석하지 않는다. Benchmark의 기존 API DTO 의존은
 이번 범위 밖이며 모든 CLI가 FastAPI 자체에 독립적이라고 주장하지 않는다.
+
+AR-11E의 benchmark runner는 인자 parser·설정·storage adapter를 조립하지 않는다.
+App이 executor factory와 Engine version supplier를 전달하며 runner는 기존 입력·측정·report
+기능을 조율한다. App이 다시 fixture/scenario 로딩·측정·report 저장을 직접 import하는 경로를
+차단한다. 기존 benchmark 입력·측정 모듈의 API DTO 재사용을 이번에 제거한 것으로 해석하지 않는다.
 
 Dependency provider는 객체 조립을 위해 concrete adapter를 import할 수 있다.
 같은 import를 새로운 HTTP handler에 추가하면 실패한다. 함수가 provider 역할이라는 이유로
@@ -128,7 +134,7 @@ AR-05B에서 Backtest process adapter 이동과 worker 조립 전환도 완료�
 | snapshot_storage.py | Filesystem/S3 factory와 storage 설정 해석 | 조립 유지, 조회 provider 연결 완료; AR-07 |
 | snapshot_ingestion.py | CLI 입력, Vendor/발행 구성과 ingestion 조율 | 얇은 CLI와 ingestion application 구분; AR-11 기능별 PR |
 | integration_fixture.py, reference_data_smoke.py | 합성 fixture 구성·발행과 참조 데이터 진단 CLI | 검증 도구 책임 유지, 필요시 feature별 구성 분리 AR-11 |
-| benchmark.py | benchmark CLI와 기존 benchmarking 모듈 조립 | 얇은 composition 진입점 유지; AR-11 최종 확인 |
+| benchmark.py | 인자·오류·출력 처리, executor/version 조립 | 실행 조율은 benchmarking.runner로 이동 완료; AR-11E |
 | refinvest/__init__.py (package root) | FastAPI app/main eager export | 기존 진입점 호환성을 보존하며 bootstrap 분리 검토; AR-11 |
 
 `__init__.py`는 package 초기화로 유지한다. AR-11에서 남은 실질적인 구현 이동을 발견하면
