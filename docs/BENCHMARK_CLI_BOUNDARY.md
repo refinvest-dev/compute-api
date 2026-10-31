@@ -76,7 +76,8 @@ PR_BODY.md는 커밋하지 않는다.
 
 ## 4. 남은 범위
 
-AR-11 전체는 미완료다. Ingestion 조율, cleanup의 실제 필요 경계와 남은 re-export 검토,
+Ingestion 조율은 후속 [AR-11F](INGESTION_CLI_BOUNDARY.md)에서 feature CLI adapter로 옮겼다.
+AR-11 전체는 미완료다. Cleanup의 실제 필요 경계와 남은 re-export 검토,
 architecture/runbook 최종 정리는 후속 범위다. ADR-071은 DRAFT이며 Analytics의 운영 격리·실행
 한도·실제 Core Analytics runtime E2E gate를 이번 CLI 정리로 완료 처리하지 않는다.
 

@@ -23,6 +23,7 @@ AR-05A는 Analytics HTTP adapter의 app/API/DB/worker 의존도 차단한다. �
 | 모든 production package | 자신의 역할에 맞는 package | tests, integration, Core/Web source import |
 | package root __init__ | 표준 라이브러리, 호출 시 app.main.main 진입점 | FastAPI app 재수출, app.config·외부 framework 직접 import |
 | benchmarking.runner | 표준 라이브러리, benchmarking, DailyBarBacktestExecutor 타입 | app·API·persistence·ingestion 직접 의존, argparse·직접 네트워크·subprocess |
+| ingestion.snapshot.cli | 표준 라이브러리, ingestion.snapshot.mvp | app·API·DB·Engine·vendor/calendar 구현 직접 import와 네트워크 |
 | engine | 표준 라이브러리, engine, marketdata.domain/ports/errors | FastAPI·DB·SDK, app/application, ingestion, marketdata adapter |
 | trading_review | 표준 라이브러리, trading_review | 다른 refinvest 계층, 외부 SDK |
 | marketdata.domain/errors | 표준 라이브러리와 자신 | application, adapter, SDK |
@@ -79,6 +80,12 @@ Dependency provider는 객체 조립을 위해 concrete adapter를 import할 수
 같은 import를 새로운 HTTP handler에 추가하면 실패한다. 함수가 provider 역할이라는 이유로
 route 파일 전체를 면제하지 않는다. AR-07에서 마지막 조회 조립도 provider로 옮겼다.
 
+AR-11F에서는 feature의 CLI adapter가 argparse와 UTF-8 override 파일을 해석하고 발행을 조율한다.
+App의 Settings를 전달하지 않고 명시적 설정값·clock/nonce·storage path/coordinator callback을 받는다.
+App은 vendor·calendar·DB 구현을 조립할 수 있지만 parser·JSON·path 읽기·ID regex·발행 계측과
+MvpSnapshotRequest 구성을 다시 소유하지 못하게 import를 검사한다. CLI adapter는 순수 domain이
+아니며 파일 입력·로그·JSON 출력이 허용된다. Legacy 이행 예외는 추가하지 않는다.
+
 ## 2. 현재 이행 예외
 
 AR-01 시작 시점의 예외는 7개 파일, 18개 import group, 31개 심볼 의존성이다.
@@ -132,7 +139,7 @@ AR-05B에서 Backtest process adapter 이동과 worker 조립 전환도 완료�
 | backtest_job_cleanup.py | cleanup CLI·DB 조립·운영 출력 | 얇은 진입점 유지, 조율 책임 정리 AR-06/11 |
 | trading_review_cleanup.py, trading_analytics_cleanup.py | 각 기능 cleanup CLI·조립 | 기능별 정책 유지, 조율 분리 AR-06/11 |
 | snapshot_storage.py | Filesystem/S3 factory와 storage 설정 해석 | 조립 유지, 조회 provider 연결 완료; AR-07 |
-| snapshot_ingestion.py | CLI 입력, Vendor/발행 구성과 ingestion 조율 | 얇은 CLI와 ingestion application 구분; AR-11 기능별 PR |
+| snapshot_ingestion.py | Settings·clock/nonce·vendor/DB/storage 조립, console·호환 진입점 | 입력·발행 조율은 ingestion.snapshot.cli로 이동 완료; AR-11F |
 | integration_fixture.py, reference_data_smoke.py | 합성 fixture 구성·발행과 참조 데이터 진단 CLI | 검증 도구 책임 유지, 필요시 feature별 구성 분리 AR-11 |
 | benchmark.py | 인자·오류·출력 처리, executor/version 조립 | 실행 조율은 benchmarking.runner로 이동 완료; AR-11E |
 | refinvest/__init__.py (package root) | FastAPI app/main eager export | 기존 진입점 호환성을 보존하며 bootstrap 분리 검토; AR-11 |

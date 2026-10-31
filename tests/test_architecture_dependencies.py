@@ -59,6 +59,30 @@ RULES = (
     DependencyRule("refinvest", ("tests", "integration", "refinvest.core", "refinvest.web")),
     DependencyRule("refinvest.__init__", (), ("refinvest.app.main.main",)),
     DependencyRule(
+        "refinvest.ingestion.snapshot.cli",
+        (
+            "refinvest.app",
+            "refinvest.api",
+            "refinvest.persistence",
+            "refinvest.engine",
+            "refinvest.ingestion.vendors",
+            "refinvest.ingestion.calendars",
+            *NETWORK_PACKAGES,
+        ),
+        ("refinvest.ingestion.snapshot.mvp",),
+    ),
+    DependencyRule(
+        "refinvest.app.snapshot_ingestion",
+        (
+            "argparse",
+            "json",
+            "re",
+            "pathlib",
+            "time.monotonic",
+            "refinvest.ingestion.snapshot.mvp.MvpSnapshotRequest",
+        ),
+    ),
+    DependencyRule(
         "refinvest.benchmarking.runner",
         (
             "refinvest.app",
@@ -374,6 +398,21 @@ def test_architecture_check_reports_absolute_relative_and_external_violations(
         ("__init__.py", "from refinvest.app.config import get_settings\n"),
         ("__init__.py", "from fastapi import FastAPI\n"),
         ("__init__.py", "import uvicorn\n"),
+        ("ingestion/snapshot/cli.py", "from refinvest.app.config import Settings\n"),
+        (
+            "ingestion/snapshot/cli.py",
+            "from refinvest.persistence.postgres import dataset_snapshots\n",
+        ),
+        ("ingestion/snapshot/cli.py", "from refinvest.api.schemas import errors\n"),
+        ("ingestion/snapshot/cli.py", "from refinvest.ingestion.vendors import massive_etf\n"),
+        ("ingestion/snapshot/cli.py", "import fastapi\n"),
+        ("ingestion/snapshot/cli.py", "from urllib.request import urlopen\n"),
+        ("app/snapshot_ingestion.py", "import argparse\n"),
+        (
+            "app/snapshot_ingestion.py",
+            "from refinvest.ingestion.snapshot.mvp import MvpSnapshotRequest\n",
+        ),
+        ("app/snapshot_ingestion.py", "from time import monotonic\n"),
         ("benchmarking/runner.py", "from refinvest.app.config import get_settings\n"),
         (
             "benchmarking/runner.py",
@@ -479,6 +518,15 @@ def test_pure_interfaces_contracts_and_composition_providers_are_allowed(tmp_pat
             "def main():\n from refinvest.app.main import main as api_main\n api_main()\n"
         ),
         "engine/validation/models.py": "from dataclasses import dataclass\n",
+        "ingestion/snapshot/cli.py": (
+            "import argparse\nfrom pathlib import Path\n"
+            "from refinvest.ingestion.snapshot.mvp import "
+            "MvpSnapshotIngestionCoordinator, MvpSnapshotRequest\n"
+        ),
+        "app/snapshot_ingestion.py": (
+            "from refinvest.ingestion.snapshot import cli\n"
+            "from refinvest.ingestion.snapshot.mvp import MvpSnapshotIngestionCoordinator\n"
+        ),
         "benchmarking/runner.py": (
             "from refinvest.benchmarking.inputs import load_fixture, load_scenario\n"
             "from refinvest.benchmarking.measurement import run_warm_benchmark\n"
