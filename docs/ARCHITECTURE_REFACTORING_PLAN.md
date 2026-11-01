@@ -410,6 +410,11 @@ AR-08 정책 승인·운영 profile·Analytics Core E2E gate는 유지한다.
 
 ### AR-09 / AR-10 — Analytics 격리 준비와 production 연결
 
+구현 전에 [AR-08 실행 정책 결정 검토](ANALYTICS_EXECUTION_DECISION_REVIEW.md)의 권장안·
+운영 입력·승인 조건을 확인한다. 배포 예제의 active-job 20·stop 대기 10분을 실행 동시성·
+attempt timeout으로 복사하지 않는다. 정본의 승인·계약·운영 gate를 유지하며 이번 문서로
+아래 구현을 선제 착수하거나 완료 처리하지 않는다.
+
 - [ ] AR-09: executor·입력/outcome을 구현하고 정상·프로세스 crash·IPC 오류·큰 결과를 검증한다.
 - [ ] AR-09: 강제 중단 가능한 timeout·취소·lease 상실 시나리오를 검증한다.
 - [ ] AR-10: worker에 연결하고 부모만 heartbeat·조건부 발행·실패 처리를 수행하게 한다.
