@@ -7,7 +7,7 @@ from pathlib import Path
 import yaml
 from jsonschema import Draft202012Validator
 
-from refinvest.api.routes.trading_review_jobs import _http_error
+from refinvest.api.dependencies.trading_identity import trading_http_error
 from refinvest.app.main import app
 from refinvest.application.normalization_payload import build_normalization_payload
 from refinvest.trading_review import normalize_and_reconstruct
@@ -90,5 +90,5 @@ def test_terminal_payload_and_error_shape_validate_against_openapi() -> None:
         result_hash_specification_version="TRADING_NORMALIZATION_RESULT_HASH_V2",
     )
     _schema("NormalizationTerminalPayload").validate(v2)
-    response = _http_error(409, "RESULT_NOT_AVAILABLE", "Result is not available.")
+    response = trading_http_error(409, "RESULT_NOT_AVAILABLE", "Result is not available.")
     _schema("ErrorResponse").validate(json.loads(response.body))

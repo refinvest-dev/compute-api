@@ -3,6 +3,8 @@
 import importlib
 from datetime import timedelta
 
+import pytest
+
 from refinvest.application.normalization_execution import (
     CompletedNormalization,
     FailedNormalization,
@@ -133,3 +135,43 @@ def test_rejected_stale_publication_does_not_record_committed_terminal_metrics()
     )
     assert _host(repo, Executor(outcome), Metrics()).run_once()
     assert repo.transition == "" and terminal == []
+
+
+@pytest.mark.parametrize("fatal_retry", [False, True])
+def test_parent_guard_tracks_payload_lifetime_after_publication_failure(
+    fatal_retry,
+):
+    releases = []
+
+    class Repo(Jobs):
+        def publish_completed(self, claim, **fields):
+            assert fields["payload"] == b"protected-result"
+            raise ValueError("publication unavailable")
+
+        def schedule_retry(self, *args):
+            if fatal_retry:
+                raise OSError("retry store unavailable")
+            return super().schedule_retry(*args)
+
+    class Tracker:
+        def release_execution(self, claim):
+            releases.append(claim.lease_owner)
+
+    repo = Repo(_claim())
+    host = _host(
+        repo,
+        Executor(
+            CompletedNormalization(
+                b"protected-result", "application/json", "a" * 64, "b" * 64, "c" * 64, "d" * 64
+            )
+        ),
+    )
+    host.execution_tracker = Tracker()
+    if fatal_retry:
+        with pytest.raises(OSError) as caught:
+            host.run_once()
+        assert isinstance(caught.value.__context__, ValueError)
+        assert releases == []
+    else:
+        assert host.run_once() and repo.transition == "RETRY"
+        assert releases == ["lease-owner"]

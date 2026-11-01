@@ -3,6 +3,9 @@
 import logging
 
 from refinvest.app.config import get_settings
+from refinvest.persistence.postgres.normalization_deletion import (
+    PostgresNormalizationRuntimeDeletion,
+)
 from refinvest.persistence.postgres.trading_review_jobs import PostgresTradingReviewJobRepository
 
 _LOG = logging.getLogger(__name__)
@@ -16,3 +19,7 @@ def trading_review_cleanup_main() -> None:
         settings.trading_review_cleanup_batch_size
     )
     _LOG.info("trading_review_cleanup_completed deleted_jobs=%d", deleted)
+    deleted_receipts = PostgresNormalizationRuntimeDeletion(
+        settings.database_url
+    ).delete_expired_receipts(settings.trading_review_cleanup_batch_size)
+    _LOG.info("trading_runtime_deletion_cleanup_completed deleted_receipts=%d", deleted_receipts)

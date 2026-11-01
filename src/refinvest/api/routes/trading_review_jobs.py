@@ -2,18 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import re
-from collections.abc import Callable, Coroutine
-from hmac import compare_digest
-from typing import Annotated, Any, cast
-from uuid import uuid4
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, Request, status
 from fastapi.responses import JSONResponse, Response
-from fastapi.routing import APIRoute
 
 from refinvest.api.dependencies.trading_analytics_jobs import get_optional_analytics_repository
+from refinvest.api.dependencies.trading_identity import TradingIdentityRoute, trading_http_error
 from refinvest.api.dependencies.trading_review_jobs import get_trading_review_repository
 from refinvest.api.schemas.trading_analytics_jobs import AcknowledgeAnalyticsTransport
 from refinvest.api.schemas.trading_review_jobs import (
@@ -63,96 +59,12 @@ from refinvest.application.trading_review_jobs import (
 )
 from refinvest.observability.metrics import ApiMetrics, safe_record
 
-
-def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    values: dict[str, object] = {}
-    for key, value in pairs:
-        if key in values:
-            raise ValueError("Duplicate JSON key.")
-        values[key] = value
-    return values
-
-
-class _UniqueIdentityKeysRoute(APIRoute):
-    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
-        handler = super().get_route_handler()
-
-        async def reject_duplicate_keys(request: Request) -> Response:
-            if request.method == "POST" and request.url.path.startswith("/trading-review/"):
-                settings_provider = cast(
-                    Callable[[], Settings],
-                    request.app.dependency_overrides.get(get_settings, get_settings),
-                )
-                configured_key = settings_provider().internal_api_key
-                supplied_key = request.headers.get("X-Internal-Api-Key")
-                if (
-                    configured_key is not None
-                    and supplied_key is not None
-                    and compare_digest(configured_key, supplied_key)
-                ):
-                    try:
-                        body = await request.body()
-                        document: object = {}
-                        if body:
-                            document = json.loads(body, object_pairs_hook=_unique_json_object)
-                    except (ValueError, UnicodeDecodeError):
-                        return _http_error(422, "REQUEST_INVALID", "Malformed request body.")
-                    if request.url.path == "/trading-review/normalization-jobs":
-                        if not isinstance(document, dict):
-                            return _http_error(422, "REQUEST_INVALID", "Malformed request body.")
-                        version_request = cast(dict[str, object], document)
-                        schema = version_request.get("resultSchemaVersion")
-                        specification = version_request.get("resultHashSpecificationVersion")
-                        if schema is None or specification is None:
-                            return _http_error(
-                                422, "REQUEST_INVALID", "Result version pin is required."
-                            )
-                        known_schema = {
-                            "TRADING_NORMALIZATION_RESULT_V1",
-                            "TRADING_NORMALIZATION_RESULT_V2",
-                        }
-                        known_specification = {
-                            "TRADING_NORMALIZATION_RESULT_HASH_V1",
-                            "TRADING_NORMALIZATION_RESULT_HASH_V2",
-                        }
-                        if (
-                            not isinstance(schema, str)
-                            or not isinstance(specification, str)
-                            or schema not in known_schema
-                            or specification not in known_specification
-                        ):
-                            return _http_error(
-                                422, "RESULT_SCHEMA_UNSUPPORTED", "Result version is unsupported."
-                            )
-                        if schema[-2:] != specification[-2:]:
-                            return _http_error(
-                                422,
-                                "RESULT_VERSION_PAIR_INVALID",
-                                "Result version pair is invalid.",
-                            )
-            return await handler(request)
-
-        return reject_duplicate_keys
-
-
 router = APIRouter(
     tags=["trading-review-jobs"],
     dependencies=[Depends(require_internal_api_key)],
-    route_class=_UniqueIdentityKeysRoute,
+    route_class=TradingIdentityRoute,
 )
 _KEY = re.compile(r"^[A-Za-z0-9._~-]{1,128}$")
-
-
-def _http_error(code: int, reason: str, message: str, retryable: bool = False) -> JSONResponse:
-    return JSONResponse(
-        status_code=code,
-        content={
-            "code": reason,
-            "message": message,
-            "traceId": str(uuid4()),
-            "retryable": retryable,
-        },
-    )
 
 
 def _key(value: str | None) -> str | None:
@@ -251,27 +163,29 @@ def create_trading_normalization_job(
 ) -> TradingComputeJobAcceptedTransport | JSONResponse:
     key = _key(idempotency_key)
     if key is None:
-        return _http_error(400, "REQUEST_INVALID", "Invalid Idempotency-Key.")
+        return trading_http_error(400, "REQUEST_INVALID", "Invalid Idempotency-Key.")
     try:
         accepted = submit_normalization_job(_submission_command(body), key, repository)
     except NormalizationRequestInvalid as error:
-        return _http_error(422, error.code, str(error))
+        return trading_http_error(422, error.code, str(error))
     except TradingReviewIdempotencyConflict:
         _record_submission(http_request, "conflict")
-        return _http_error(
+        return trading_http_error(
             409,
             "IDEMPOTENCY_PAYLOAD_CONFLICT",
             "Idempotency-Key conflicts with an existing request.",
         )
+    except TradingReviewJobStateConflict:
+        return trading_http_error(409, "RUN_DELETED", "Normalization Run has been deleted")
     except TradingReviewCapacityExceeded:
         _record_submission(http_request, "capacity")
-        response = _http_error(
+        response = trading_http_error(
             503, "TRADING_REVIEW_CAPACITY_EXCEEDED", "Trading Review capacity is full.", True
         )
         response.headers["Retry-After"] = str(settings.trading_review_capacity_retry_after_seconds)
         return response
     except TradingReviewGrantInvalid:
-        return _http_error(422, "ARTIFACT_REFERENCE_EXPIRED", "Artifact grant is invalid.")
+        return trading_http_error(422, "ARTIFACT_REFERENCE_EXPIRED", "Artifact grant is invalid.")
     _record_submission(http_request, "accepted" if accepted.newly_created else "replay")
     return TradingComputeJobAcceptedTransport(
         jobId=accepted.job_id,
@@ -299,7 +213,7 @@ def update_trading_normalization_job_grants(
 ) -> dict[str, object] | JSONResponse:
     key = _key(idempotency_key)
     if key is None:
-        return _http_error(400, "REQUEST_INVALID", "Invalid Idempotency-Key.")
+        return trading_http_error(400, "REQUEST_INVALID", "Invalid Idempotency-Key.")
     try:
         receipt = update_normalization_grants(
             jobId,
@@ -311,17 +225,19 @@ def update_trading_normalization_job_grants(
             repository,
         )
     except NormalizationRequestInvalid as error:
-        return _http_error(422, error.code, str(error))
+        return trading_http_error(422, error.code, str(error))
     except TradingReviewIdempotencyConflict:
         _record_grant_update(http_request, "conflict")
-        return _http_error(409, "IDEMPOTENCY_CONFLICT", "Grant update key conflicts.")
+        return trading_http_error(409, "IDEMPOTENCY_CONFLICT", "Grant update key conflicts.")
     except TradingReviewGrantInvalid:
-        return _http_error(422, "ARTIFACT_REFERENCE_EXPIRED", "Artifact grant is invalid.")
+        return trading_http_error(422, "ARTIFACT_REFERENCE_EXPIRED", "Artifact grant is invalid.")
     except TradingReviewJobStateConflict:
         _record_grant_update(http_request, "conflict")
-        return _http_error(409, "GRANT_UPDATE_CONFLICT", "Grant update conflicts with job state.")
+        return trading_http_error(
+            409, "GRANT_UPDATE_CONFLICT", "Grant update conflicts with job state."
+        )
     if receipt is None:
-        return _http_error(404, "JOB_NOT_FOUND", "Job was not found.")
+        return trading_http_error(404, "JOB_NOT_FOUND", "Job was not found.")
     _record_grant_update(http_request, "accepted")
     return {
         "jobId": receipt.job_id,
@@ -345,11 +261,11 @@ def get_trading_normalization_job_status(
     try:
         view = get_normalization_job_status(jobId, repository)
     except NormalizationJobIdentityUnavailable:
-        return _http_error(409, "VERSION_INCOMPATIBLE", "Job identity is unavailable.")
+        return trading_http_error(409, "VERSION_INCOMPATIBLE", "Job identity is unavailable.")
     return (
         _status(view)
         if view is not None
-        else _http_error(404, "JOB_NOT_FOUND", "Job was not found.")
+        else trading_http_error(404, "JOB_NOT_FOUND", "Job was not found.")
     )
 
 
@@ -365,11 +281,11 @@ def get_trading_normalization_job_result(
     try:
         descriptor = get_normalization_result(jobId, repository)
     except NormalizationJobIdentityUnavailable:
-        return _http_error(409, "VERSION_INCOMPATIBLE", "Job identity is unavailable.")
+        return trading_http_error(409, "VERSION_INCOMPATIBLE", "Job identity is unavailable.")
     except NormalizationJobNotFound:
-        return _http_error(404, "JOB_NOT_FOUND", "Job was not found.")
+        return trading_http_error(404, "JOB_NOT_FOUND", "Job was not found.")
     except NormalizationResultUnavailable:
-        return _http_error(409, "RESULT_NOT_AVAILABLE", "Completed result is not available.")
+        return trading_http_error(409, "RESULT_NOT_AVAILABLE", "Completed result is not available.")
     return {
         "jobId": descriptor.job_id,
         "coreLogicalJobId": descriptor.core_logical_job_id,
@@ -410,17 +326,17 @@ def cancel_trading_normalization_job(
 ) -> dict[str, object] | JSONResponse:
     key = _key(idempotency_key)
     if key is None:
-        return _http_error(400, "REQUEST_INVALID", "Invalid Idempotency-Key.")
+        return trading_http_error(400, "REQUEST_INVALID", "Invalid Idempotency-Key.")
     try:
         view = cancel_normalization_job(jobId, key, repository)
     except TradingReviewIdempotencyConflict:
-        return _http_error(
+        return trading_http_error(
             409, "IDEMPOTENCY_CONFLICT", "Idempotency-Key conflicts with an existing request."
         )
     return (
         _status(view)
         if view is not None
-        else _http_error(404, "JOB_NOT_FOUND", "Job was not found.")
+        else trading_http_error(404, "JOB_NOT_FOUND", "Job was not found.")
     )
 
 
@@ -470,7 +386,7 @@ def acknowledge_trading_review_job_result(
 ) -> Response:
     key = _key(idempotency_key)
     if key is None:
-        return _http_error(400, "REQUEST_INVALID", "Invalid Idempotency-Key.")
+        return trading_http_error(400, "REQUEST_INVALID", "Invalid Idempotency-Key.")
     command: NormalizationAcknowledgement | AnalyticsAcknowledgement
     if isinstance(body, AcknowledgeAnalyticsTransport):
         command = AnalyticsAcknowledgement(
@@ -503,7 +419,7 @@ def _delivery_error(error: TerminalDeliveryFailure) -> JSONResponse:
         DeliveryFailureKind.INVALID: 422,
         DeliveryFailureKind.UNAVAILABLE: 503,
     }[error.kind]
-    return _http_error(status_code, error.code, str(error), error.retryable)
+    return trading_http_error(status_code, error.code, str(error), error.retryable)
 
 
 def _record_submission(request: Request, outcome: str) -> None:

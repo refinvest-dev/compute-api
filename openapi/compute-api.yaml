@@ -240,6 +240,42 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /trading-review/normalization-runs/{coreNormalizationRunId}/deletion:
+    put:
+      operationId: deleteTradingNormalizationRuntime
+      tags: [trading-review-jobs]
+      summary: Core Run의 영구 생성 차단과 실제 runtime 삭제 확인
+      description: |
+        ADR-061의 삭제 확인 capability다. 같은 Run의 create와 직렬화하여 payload-free tombstone을
+        먼저 저장하므로 job ID를 받지 못한 경우와 늦은 create/replay도 차단한다.
+        반복 PUT은 멱등적으로 미완료 작업만 진행한다. 200은 접수 성공이며 state=ABSENT일 때만
+        실행 자원 종료, job/request/grant/terminal payload 제거가 확인됐다. 취소 접수, CANCELLED,
+        lease/TTL 만료 또는 job 조회 404만으로 ABSENT를 만들지 않는다.
+        원래 Run에 pin한 sourceDeletionGeneration과 삭제 대상 scope의 deletionGeneration은 별개다.
+        source identity가 다르거나 같은 deletionRequestId의 generation을 바꾸면 409이며 변경하지 않는다.
+        동일 Run의 tombstone은 마지막 확인 후 최소 P180D 유지하며 restore 전에 replay한다.
+      parameters:
+        - name: coreNormalizationRunId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TradingNormalizationRuntimeDeletionRequest' }
+      responses:
+        '200':
+          description: 삭제 접수 또는 실제 부재 확인 결과. PENDING은 오류가 아니다.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TradingNormalizationRuntimeDeletionResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   # ============ Trading Review analytics ============
   /trading-review/analytics-jobs:
     post:
@@ -587,6 +623,40 @@ components:
       format: double
       description: 0.001 = 0.1% 형태의 소수 비율.
       example: 0.001
+
+    TradingNormalizationRuntimeDeletionRequest:
+      type: object
+      additionalProperties: false
+      required: [coreImportSessionId, sourceDeletionGeneration, deletionRequestId, deletionGeneration]
+      properties:
+        coreImportSessionId: { type: string, minLength: 1, maxLength: 128 }
+        sourceDeletionGeneration: { type: integer, minimum: 0 }
+        deletionRequestId: { type: string, minLength: 1, maxLength: 128 }
+        deletionGeneration: { type: integer, minimum: 1 }
+    TradingNormalizationRuntimeDeletionResponse:
+      type: object
+      additionalProperties: false
+      required: [coreNormalizationRunId, coreImportSessionId, sourceDeletionGeneration, deletionRequestId, deletionGeneration, state, verifiedAbsentAt, retryAfterSeconds]
+      properties:
+        coreNormalizationRunId: { type: string, minLength: 1, maxLength: 128 }
+        coreImportSessionId: { type: string, minLength: 1, maxLength: 128 }
+        sourceDeletionGeneration: { type: integer, minimum: 0 }
+        deletionRequestId: { type: string, minLength: 1, maxLength: 128 }
+        deletionGeneration: { type: integer, minimum: 1 }
+        state: { type: string, enum: [PENDING, ABSENT] }
+        verifiedAbsentAt: { type: [string, 'null'], format: date-time }
+        retryAfterSeconds: { type: [integer, 'null'], minimum: 1, maximum: 60 }
+      allOf:
+        - if:
+            properties: { state: { const: ABSENT } }
+          then:
+            properties:
+              verifiedAbsentAt: { type: string, format: date-time }
+              retryAfterSeconds: { type: 'null' }
+          else:
+            properties:
+              verifiedAbsentAt: { type: 'null' }
+              retryAfterSeconds: { type: integer, minimum: 1, maximum: 60 }
 
     # ---- Trading Review common/runtime ----
     TradingDecimalString:

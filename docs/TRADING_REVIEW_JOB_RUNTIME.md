@@ -104,3 +104,28 @@ publication, ACK and version-pin E2E is recorded in
 [Normalization persistence](NORMALIZATION_PERSISTENCE.md). This is historical implementation
 evidence; this documentation audit does not rerun it. Actual Core Analytics runtime E2E
 remains a separate gate in the [final audit](ARCHITECTURE_FINAL_AUDIT.md).
+
+## Fenced runtime deletion
+
+The Run-scoped cleanup contract is defined in [Context PR #44](https://github.com/refinvest-dev/context/pull/44).
+The API schema and dependency provider live in `api/schemas` and `api/dependencies`.
+Cleanup needs the database and internal authentication independently of payload-key or capacity configuration.
+
+Migration 0018 stores Run tombstones, deletion receipts, and execution-resource guards separately from
+queue leases. A child waits until its process identity is durably bound before fetching bytes. The parent
+releases the guard after child termination and dropping the returned payload. A propagating failure
+traceback keeps the guard open. A local observer reconciles an exited parent and terminates its tracked
+orphan child; unknown hosts and legacy resources remain pending.
+
+Cancellation, terminal status, expired leases, TTL and missing Jobs are not absence receipts. Run
+creation and deletion share a fence; source generation and deletion-scope generation stay independent.
+Confirmed control receipts expire 180 days after completion; unresolved resources do not expire automatically.
+
+The 2026-11-01 candidate passed real Core-to-Compute HTTP cutover ORCH-024 through 028, including queued
+and unknown-create deletion completion, six Core checkpoints, absence checks, capacity return and
+late-create rejection. PostgreSQL tests also cover live children, parent payload ownership, orphan
+reconciliation, expired leases and scope isolation.
+
+The pre-pin rehearsal uses the existing `psql -f` runner for migration 0017. Its separate atomic-runner
+diagnostic still exposes SQLSTATE 55006 and is rolled back; successful rehearsal does not imply support
+for an arbitrary single-transaction deployment runner.

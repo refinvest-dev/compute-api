@@ -338,3 +338,8 @@ def execution_failure(
         ),
         retryable,
     )
+
+
+class NormalizationExecutionTracker(Protocol):
+    def bind_process(self, claim: ClaimedTradingReviewJob, pid: int, identity: str) -> bool: ...
+    def release_execution(self, claim: ClaimedTradingReviewJob) -> None: ...

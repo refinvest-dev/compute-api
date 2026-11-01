@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from datetime import UTC, datetime, timedelta
 from threading import Event
 from time import monotonic
@@ -10,6 +11,7 @@ from typing import Protocol
 
 from refinvest.application.normalization_execution import (
     CompletedNormalization,
+    NormalizationExecutionTracker,
     NormalizationExecutor,
 )
 from refinvest.application.trading_review_jobs import (
@@ -50,6 +52,7 @@ class TradingReviewWorkerHost:
         retention: timedelta,
         max_attempts: int = 3,
         metrics: NormalizationWorkerMetrics | None = None,
+        execution_tracker: NormalizationExecutionTracker | None = None,
     ) -> None:
         if heartbeat_interval <= timedelta(0) or heartbeat_interval >= lease_duration:
             raise ValueError("Heartbeat interval must be positive and shorter than the lease.")
@@ -63,6 +66,7 @@ class TradingReviewWorkerHost:
             raise ValueError("Attempt budget must be positive.")
         self.max_attempts = max_attempts
         self.metrics = metrics
+        self.execution_tracker = execution_tracker
 
     def run_once(self) -> bool:
         claim = self.repository.claim_next(self.worker_id, self.lease_duration)
@@ -168,6 +172,13 @@ class TradingReviewWorkerHost:
                 self.repository.schedule_retry(claim, delay, failure)
             else:
                 self.repository.mark_failed(claim, failure)
+        finally:
+            # Drop canonical transport bytes before certifying the parent resource as released.
+            outcome = None
+            # A propagating publication/retry exception may retain payload bytes in
+            # its traceback. Keep the resource guard until this parent really exits.
+            if self.execution_tracker is not None and sys.exception() is None:
+                self.execution_tracker.release_execution(claim)
         return True
 
     def run_forever(self, stop: Event, poll_interval: timedelta) -> None:
