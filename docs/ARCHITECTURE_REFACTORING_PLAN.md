@@ -403,6 +403,11 @@ terminal commit·descriptor·payload read/decrypt·ACK, row-lock 대기와 두 p
 Core durable publication E2E는 남아 있으며 운영 수치·ADR 승인과 AR-09/10 구현을 대신하지 않는다.
 Descriptor·ACK의 불필요한 전체 BYTEA 조회는 별도 후속 최적화 후보로 기록한다.
 
+[전달 메타데이터 조회 최적화](ANALYTICS_DELIVERY_QUERY_OPTIMIZATION.md)는 이 후속 후보를
+별도 범위로 다룬다. Descriptor·ACK의 BYTEA 반환을 제거하고 실제 DB의 만료·ACK replay/충돌과
+전후 실측으로 검증한다. Payload 다운로드·publication·계약·실행 정책은 보존하며
+AR-08 정책 승인·운영 profile·Analytics Core E2E gate는 유지한다.
+
 ### AR-09 / AR-10 — Analytics 격리 준비와 production 연결
 
 - [ ] AR-09: executor·입력/outcome을 구현하고 정상·프로세스 crash·IPC 오류·큰 결과를 검증한다.

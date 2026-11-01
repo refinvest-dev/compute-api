@@ -565,7 +565,9 @@ class PostgresAnalyticsJobRepository:
         with self._connection() as connection, connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT p.descriptor,p.expires_at,p.encrypted_bytes FROM trading_analytics_jobs j
+                SELECT p.descriptor,p.expires_at,
+                    octet_length(p.encrypted_bytes)>0 AS payload_available
+                FROM trading_analytics_jobs j
                 JOIN trading_analytics_payloads p ON p.payload_id=j.terminal_payload_id
                 WHERE j.job_id=%s AND j.status='COMPLETED'
                 """,
@@ -576,7 +578,7 @@ class PostgresAnalyticsJobRepository:
                 return None
             if row["expires_at"] <= _db_time(cursor):
                 raise AnalyticsJobUnavailable("RESULT_PAYLOAD_EXPIRED")
-            return cast(dict[str, object], row["descriptor"]) if row["encrypted_bytes"] else None
+            return cast(dict[str, object], row["descriptor"]) if row["payload_available"] else None
 
     def payload_bytes(self, payload_id: str) -> bytes | None:
         with self._connection() as connection, connection.cursor() as cursor:
@@ -623,7 +625,9 @@ class PostgresAnalyticsJobRepository:
             ):
                 raise AnalyticsJobConflict("ACK_CONFLICT")
             cursor.execute(
-                "SELECT * FROM trading_analytics_payloads WHERE job_id=%s FOR UPDATE", (job_id,)
+                "SELECT descriptor,expires_at FROM trading_analytics_payloads "
+                "WHERE job_id=%s FOR UPDATE",
+                (job_id,),
             )
             payload = cursor.fetchone()
             if payload is None or payload["expires_at"] <= _db_time(cursor):
