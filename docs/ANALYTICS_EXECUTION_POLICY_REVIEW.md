@@ -74,6 +74,12 @@ network/DB/동시성 검증은 남아 있으며 이 자료로 운영 수치나 �
 1,024 episode·65,536 Evidence 참조를 만들고 전체 직렬화·암호화까지 검사했다. 마지막 단계
 관측과 cap/watchdog 실패를 보존하지만 최대 계약 입력/output·DB/Core·운영 격리 검증은 남아 있다.
 
+[DB 발행 경계 실측](ANALYTICS_PUBLICATION_RESOURCE_BASELINE.md)은 기존 repository의 terminal
+transaction·descriptor·payload 복호화·ACK와 실제 row-lock 대기, 두 publication client의
+호출 구간 겹침을 검사한다. Windows local DB의 부분 경계 관측이며 최대 결과·shared queue의
+worker 동시성·production deadline/메모리·Core E2E 검증을 대신하지 않는다. Descriptor와 ACK가
+전체 encrypted payload를 조회하는 현재 비용도 기록하며, 최적화와 정책 승인은 후속 단계다.
+
 ## 5. 후속 커밋·PR 순서
 
 | 순서 | 소유·범위 | 해당 PR의 검증 | 다음 단계에 남기는 연결 |

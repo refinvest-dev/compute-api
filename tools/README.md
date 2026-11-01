@@ -112,3 +112,48 @@ MemoryError는 성공이나 결정론 통과로 계산하지 않는다.
 hard limit·동시성 승인이나 실제 Core Analytics E2E의 증거로 사용하지 않는다.
 
 실행 profile·검증 결과와 한계는 [HTTP 실측 기록](../docs/ANALYTICS_HTTP_RESOURCE_BASELINE.md)에 정리한다.
+
+## Analytics DB publication probe
+
+`analytics_publication_baseline.py`는 기존 synthetic generator·Engine·projection으로 준비한
+결과를 **새 client 프로세스**에서 실제 PostgreSQL repository에 발행한다. 암호화부터 terminal
+transaction commit, descriptor 조회, payload read/decrypt, ACK commit을 각각 측정한다.
+각 sample의 바이트·SHA-256, 새 connection에서 job/attempt/payload의 완료 상태, ACK 후 bytes
+제거와 receipt를 검증한다. ACK의 `PERSISTED`는 합성 입력이며 Core 영속화 증거가 아니다.
+
+DB 준비·credential 설정은 [Integration 정본](../../../integration/README.md)의 절차를 따른다.
+`initialize-compute-schema.ps1 -Schema ar08_pub_<unique> -ComputeApiPath <checkout>`으로
+**sample/client마다 새로운 schema**에 모든 migration을 적용하고,
+`Set-ComputeIntegrationEnvironment`가 만든 URL을 `REFINVEST_TEST_DATABASE_URL`로 전달한다.
+URL을 CLI, log, Git 파일에 넣지 않는다. 전용 loopback `refinvest_integration` DB와 정확한
+`ar08_pub_` search_path만 허용하며 기존 job이 있는 schema는 거부한다.
+
+```powershell
+# $evidenceRoot는 저장소 밖의 새로운 로컬 증적 경로다. DB 설정은 Integration 정본에서 준비한다.
+.venv/Scripts/python.exe -m tools.analytics_publication_baseline prepare "$evidenceRoot/p32" --episodes 32
+.venv/Scripts/python.exe -m tools.analytics_publication_baseline measure "$evidenceRoot/p32"
+# 다음 sample은 새 schema/URL을 준비한 뒤 실행한다.
+.venv/Scripts/python.exe -m tools.analytics_publication_baseline measure "$evidenceRoot/p32" --lock-seconds 2
+```
+
+`--lock-seconds`는 실제 publisher의 PostgreSQL lock wait를 관측한 뒤 해당 job row lock을
+0~3초 유지한다. release 전 RUNNING/payload 0과 release 후 terminal commit을 검증한다.
+DB connection 5초·lock 10초·statement 15초, 결과 cap 64MiB, episode 4~512는 도구 보호값이다.
+새 production deadline·lease/lock 정책·지원 상한을 정의하지 않는다. 실행은 외부 watchdog를
+사용하고 실패 표본을 성공 통계에서 제외한다. CLI 오류는 credential 노출 방지를 위해 class만
+기록하므로 원인 분석은 별도 보호된 로컬 증적으로 수행한다.
+
+두 fresh client를 각자 다른 schema에서 실행할 때 같은 가까운 epoch를 `--start-at`으로
+전달할 수 있다. 준비 완료가 시점을 놓치면 실패하며 publication 시작/끝 epoch로 **실제 시간
+겹침을 별도로 확인**한다. 같은 DB instance의 I/O 경쟁 관측이며 shared queue admission이나
+전체 worker 동시성 실험이 아니다. RSS에는 준비 결과 JSON/body와 DB client만 포함된다.
+Engine graph가 함께 살아 있는 worker, PostgreSQL 서버 메모리, HTTP/TLS·Core, 최대 계약 결과,
+production OS/자원 제한 검증을 대체하지 않는다. Job ID/time/token과 암호화 nonce는 sample마다
+달라지므로 body SHA는 sample 내부에서 검증하고 반복 간에는 input/result hash를 비교한다.
+
+Unit 검사는 `tests/test_analytics_publication_baseline.py`, opt-in 실 DB 검사는
+`tests/integration/test_analytics_publication_baseline.py`다. 후자는 기존 DB 회귀와 **다른 새
+schema**의 URL을 `REFINVEST_PUBLICATION_TEST_DATABASE_URL`로 요구한다. 증적·prepared JSON과
+DB credential은 커밋하지 않는다.
+
+환경·표본별 검증·결과·후속 위험은 [DB 발행 실측 기록](../docs/ANALYTICS_PUBLICATION_RESOURCE_BASELINE.md)에 정리한다.
