@@ -397,6 +397,12 @@ AR-08 정책·수치 승인과 AR-09/10 체크박스는 변경하지 않는다.
 늘린 전체 pipeline과 cap/watchdog를 검증하고 마지막 관측을 보존한다. 운영 수치·최대 계약 입력/
 결과·DB 발행·동시성·Core E2E gate는 계속 남아 있으며 AR-08~10 완료로 표시하지 않는다.
 
+[DB 발행 경계 실측](ANALYTICS_PUBLICATION_RESOURCE_BASELINE.md)은 실제 repository의 암호화·
+terminal commit·descriptor·payload read/decrypt·ACK, row-lock 대기와 두 publication client를
+전용 integration schema에서 검증한다. 최대 계약 결과·전체 worker 동시성·production OS/자원·
+Core durable publication E2E는 남아 있으며 운영 수치·ADR 승인과 AR-09/10 구현을 대신하지 않는다.
+Descriptor·ACK의 불필요한 전체 BYTEA 조회는 별도 후속 최적화 후보로 기록한다.
+
 ### AR-09 / AR-10 — Analytics 격리 준비와 production 연결
 
 - [ ] AR-09: executor·입력/outcome을 구현하고 정상·프로세스 crash·IPC 오류·큰 결과를 검증한다.

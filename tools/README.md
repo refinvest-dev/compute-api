@@ -155,3 +155,5 @@ Unit 검사는 `tests/test_analytics_publication_baseline.py`, opt-in 실 DB 검
 `tests/integration/test_analytics_publication_baseline.py`다. 후자는 기존 DB 회귀와 **다른 새
 schema**의 URL을 `REFINVEST_PUBLICATION_TEST_DATABASE_URL`로 요구한다. 증적·prepared JSON과
 DB credential은 커밋하지 않는다.
+
+환경·표본별 검증·결과·후속 위험은 [DB 발행 실측 기록](../docs/ANALYTICS_PUBLICATION_RESOURCE_BASELINE.md)에 정리한다.
