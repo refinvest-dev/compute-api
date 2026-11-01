@@ -80,6 +80,10 @@ transaction·descriptor·payload 복호화·ACK와 실제 row-lock 대기, 두 p
 worker 동시성·production deadline/메모리·Core E2E 검증을 대신하지 않는다. Descriptor와 ACK가
 전체 encrypted payload를 조회하는 현재 비용도 기록하며, 최적화와 정책 승인은 후속 단계다.
 
+[전달 메타데이터 조회 후속 개선](ANALYTICS_DELIVERY_QUERY_OPTIMIZATION.md)은 descriptor·ACK의
+전체 BYTEA 반환을 제거하고 동작 보존·전후 비용을 검증한다. 실제 payload 다운로드의 메모리와
+계산 격리·deadline·운영 profile·Core Analytics E2E는 이 개선의 완료 범위에 포함하지 않는다.
+
 ## 5. 후속 커밋·PR 순서
 
 | 순서 | 소유·범위 | 해당 PR의 검증 | 다음 단계에 남기는 연결 |

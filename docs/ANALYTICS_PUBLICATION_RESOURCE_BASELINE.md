@@ -115,3 +115,7 @@ BYTEA 조회 제거와 동일 profile의 전후 검증이다. 운영 profile·�
 Core/Integration E2E gate는 계속 남긴다.
 
 Determinism impact: none. Point-in-Time impact: none.
+
+후속 [전달 메타데이터 조회 최적화](ANALYTICS_DELIVERY_QUERY_OPTIMIZATION.md)는 더 최신 main을
+기준으로 같은 도구·입력의 변경 전후를 새로 비교한다. 위 표는 PR #131 당시의 원래 관측값으로
+보존하며, 서로 다른 기준 코드의 수치를 직접 개선율로 해석하지 않는다.
